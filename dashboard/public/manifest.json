@@ -1,0 +1,15 @@
+{
+  "short_name": "Aiden Dashboard",
+  "name": "Aiden AI Voice Assistant Dashboard",
+  "icons": [
+    {
+      "src": "favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#4c82f7",
+  "background_color": "#0a0a0a"
+} 
