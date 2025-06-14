@@ -21,7 +21,7 @@ from src.utils.config_manager import ConfigManager
 from src.utils.voice_system import VoiceSystem
 from src.utils.llm_connector import LLMConnector
 from src.utils.command_dispatcher import CommandDispatcher
-from src.utils.stt_system import STTSystem
+from src.utils.speech_recognition_system import SpeechRecognitionSystem
 from src.dashboard_backend import AidenDashboardBackend
 
 class AidenTrayApp:
@@ -39,7 +39,7 @@ class AidenTrayApp:
             self.config_manager = ConfigManager()
             self.voice_system = VoiceSystem(self.config_manager)
             self.llm_connector = LLMConnector(self.config_manager)
-            self.stt_system = STTSystem(self.config_manager)
+            self.stt_system = SpeechRecognitionSystem(self.config_manager)
             self.command_dispatcher = CommandDispatcher(
                 self.config_manager, 
                 self.voice_system

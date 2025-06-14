@@ -254,9 +254,14 @@ If the user wants natural conversation without a specific command, use:
             return self._default_error_response()
     
     def _clean_tgpt_output(self, output: str) -> str:
-        """Clean and process the raw output from tgpt"""
+        """Clean and parse the output from tgpt command
         
-        # Log the original output for debugging
+        Args:
+            output: Raw output from tgpt command
+            
+        Returns:
+            Cleaned output string
+        """
         logging.info(f"Raw tgpt output: {output[:100]}...")
         print(f"Original tgpt output: {output}")
         
@@ -355,6 +360,8 @@ If the user wants natural conversation without a specific command, use:
             elif any(phrase in command_lower for phrase in ["stop conversation", "end conversation", "stop talking", "end this", "that's enough", "finish conversation"]):
                 return f"""{{\"action\": \"end_conversation\", \"parameters\": {{\"original_query\": \"{self.last_command}\"}}, \"response\": \"Conversation ended, Boss. I'll be here when you need me.\"}}"""
             elif command_lower.strip() == "stop" or command_lower.strip() == "exit" or command_lower.strip() == "quit":
+                return f"""{{\"action\": \"end_conversation\", \"parameters\": {{\"original_query\": \"{self.last_command}\"}}, \"response\": \"Stopping, Boss. I'll be here when you need me.\"}}"""
+            elif command_lower.startswith("stop ") or "stop the" in command_lower:
                 return f"""{{\"action\": \"end_conversation\", \"parameters\": {{\"original_query\": \"{self.last_command}\"}}, \"response\": \"Stopping, Boss. I'll be here when you need me.\"}}"""
             elif any(phrase in command_lower for phrase in ["stop it", "cancel", "nevermind", "never mind"]):
                 return f"""{{\"action\": \"stop_current_task\", \"parameters\": {{\"original_query\": \"{self.last_command}\"}}, \"response\": \"Stopped, Boss. What would you like to do instead?\"}}"""

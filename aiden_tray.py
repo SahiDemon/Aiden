@@ -11,12 +11,32 @@ from PIL import Image, ImageDraw
 import pystray
 from pystray import MenuItem as item
 
+# Hide console window on Windows
+if sys.platform == "win32":
+    try:
+        import ctypes
+        import ctypes.wintypes
+        
+        # Get console window handle
+        kernel32 = ctypes.windll.kernel32
+        user32 = ctypes.windll.user32
+        
+        # Get console window
+        console_window = kernel32.GetConsoleWindow()
+        
+        # Hide the console window (but don't close it, so dashboard still works)
+        if console_window:
+            user32.ShowWindow(console_window, 0)  # 0 = SW_HIDE
+    except Exception as e:
+        print(f"Could not hide console: {e}")
+
 # Add the project root to the path
 sys.path.insert(0, os.path.abspath('.'))
 
 # Import Aiden components
 from src.utils.config_manager import ConfigManager
 from src.utils.voice_system import VoiceSystem
+from src.utils.hotkey_listener import HotkeyListener
 from src.dashboard_backend import AidenDashboardBackend
 
 class AidenTrayApp:
@@ -24,6 +44,7 @@ class AidenTrayApp:
         self.running = False
         self.dashboard_backend = None
         self.dashboard_thread = None
+        self.hotkey_listener = None
         self.initialization_complete = False
         
         try:
@@ -76,12 +97,34 @@ class AidenTrayApp:
                 time.sleep(2)
                 print("Dashboard started successfully")
                 
+                # Start the hotkey listener after dashboard is ready
+                self.start_hotkey_listener()
+                
             except Exception as e:
                 print(f"Error starting dashboard: {e}")
     
-    def activate_assistant(self, icon, item):
+    def start_hotkey_listener(self):
+        """Start the global hotkey listener"""
+        if self.hotkey_listener is None and self.dashboard_backend:
+            try:
+                print("Starting hotkey listener...")
+                self.hotkey_listener = HotkeyListener(
+                    self.config_manager,
+                    self._on_hotkey_activated
+                )
+                success = self.hotkey_listener.start_listening()
+                if success:
+                    print("Hotkey listener started successfully")
+                    print("Press * key to activate Aiden!")
+                else:
+                    print("Failed to start hotkey listener")
+            except Exception as e:
+                print(f"Error starting hotkey listener: {e}")
+    
+    def _on_hotkey_activated(self):
+        """Handle hotkey activation - this is for ONE-SHOT mode"""
         try:
-            print("Activating Aiden assistant...")
+            print("Hotkey activated - ONE-SHOT mode")
             
             if not self.initialization_complete:
                 self.show_notification("Aiden Error", "Assistant not properly initialized")
@@ -90,11 +133,36 @@ class AidenTrayApp:
             # Start dashboard if not already running
             if self.dashboard_backend is None:
                 self.start_dashboard()
+                time.sleep(1)  # Give it time to start
             
-            # Trigger hotkey activation through dashboard
+            # Trigger ONE-SHOT hotkey activation through dashboard
+            if self.dashboard_backend:
+                self.dashboard_backend._on_hotkey_activated_oneshot()
+                self.show_notification("Aiden Activated", "I'm listening! Give me one command...")
+            else:
+                self.show_notification("Aiden Error", "Dashboard not available")
+                
+        except Exception as e:
+            print(f"Error in hotkey activation: {e}")
+            self.show_notification("Aiden Error", f"Hotkey activation failed: {str(e)}")
+    
+    def activate_assistant(self, icon, item):
+        try:
+            print("Activating Aiden assistant from tray menu...")
+            
+            if not self.initialization_complete:
+                self.show_notification("Aiden Error", "Assistant not properly initialized")
+                return
+            
+            # Start dashboard if not already running
+            if self.dashboard_backend is None:
+                self.start_dashboard()
+                time.sleep(1)  # Give it time to start
+            
+            # Trigger regular activation through dashboard (continuous conversation)
             if self.dashboard_backend:
                 self.dashboard_backend._on_hotkey_activated()
-                self.show_notification("Aiden Activated", "I'm listening! Speak your command...")
+                self.show_notification("Aiden Activated", "I'm listening! Start a conversation...")
             else:
                 self.show_notification("Aiden Error", "Dashboard not available")
                 
@@ -120,6 +188,13 @@ class AidenTrayApp:
         print("Shutting down Aiden...")
         self.show_notification("Aiden", "Shutting down AI Assistant")
         self.running = False
+        
+        # Stop hotkey listener
+        if self.hotkey_listener:
+            try:
+                self.hotkey_listener.stop_listening()
+            except:
+                pass
         
         # Stop dashboard gracefully
         if self.dashboard_backend:
@@ -160,7 +235,7 @@ class AidenTrayApp:
         """Speak the startup message"""
         try:
             if self.voice_system and self.initialization_complete:
-                startup_message = "Aiden is active! Call me when you're ready."
+                startup_message = "Aiden is active! Press star key or use the tray menu to call me."
                 print(f"Speaking: {startup_message}")
                 self.voice_system.speak(startup_message)
         except Exception as e:
@@ -182,8 +257,11 @@ class AidenTrayApp:
             
             print("Starting Aiden system tray application...")
             
+            # Start dashboard early to enable hotkey functionality
+            self.start_dashboard()
+            
             # Show startup notification
-            self.show_notification("Aiden Started", "AI Assistant is ready! Right-click tray icon for options")
+            self.show_notification("Aiden Started", "AI Assistant is ready! Press * key or use tray menu")
             
             # Speak startup message in a separate thread so it doesn't block the tray
             if self.initialization_complete:

@@ -58,6 +58,10 @@ class AidenDashboardBackend:
         self.pending_action = None
         self.conversation_context = {}
         
+        # Add mode tracking for hotkey vs dashboard activation
+        self.hotkey_mode = False  # True when activated by hotkey (one-shot mode)
+        self.dashboard_mode = False  # True when activated by dashboard (continuous mode)
+        
         # Setup routes and socket handlers
         self._setup_routes()
         self._setup_socket_handlers()
@@ -175,10 +179,14 @@ class AidenDashboardBackend:
         
         @self.app.route('/api/voice/start-listening', methods=['POST'])
         def start_voice_listening():
-            """Start voice listening"""
+            """Start voice listening - this is dashboard mode"""
             try:
                 if self.is_listening:
                     return jsonify({'error': 'Already listening', 'success': False}), 400
+                
+                # Set dashboard mode when started from API
+                self.dashboard_mode = True
+                self.hotkey_mode = False
                 
                 # Start listening in a separate thread
                 thread = threading.Thread(target=self._start_voice_interaction)
@@ -285,12 +293,35 @@ class AidenDashboardBackend:
             except Exception as e:
                 return jsonify({'error': str(e), 'success': False}), 500
         
+        @self.app.route('/api/esp32/smart-status')
+        def esp32_smart_status():
+            """Get smart fan status with current speed and state"""
+            try:
+                status_info = self.esp32_controller.get_status()
+                human_readable = self.esp32_controller.get_human_readable_status()
+                
+                return jsonify({
+                    'success': status_info['success'],
+                    'raw_status': status_info.get('raw_status', ''),
+                    'parsed': status_info.get('parsed', {}),
+                    'human_readable': human_readable,
+                    'error': status_info.get('error'),
+                    'ip_address': self.esp32_controller.ip_address
+                })
+            except Exception as e:
+                return jsonify({
+                    'success': False,
+                    'error': str(e),
+                    'ip_address': self.esp32_controller.ip_address
+                })
+        
         @self.app.route('/api/esp32/control', methods=['POST'])
         def esp32_control():
-            """Control ESP32 fan"""
+            """Control ESP32 fan with smart features"""
             try:
                 data = request.get_json()
                 action = data.get('action')
+                speed = data.get('speed')  # Optional speed parameter
                 
                 result = False
                 message = ""
@@ -304,6 +335,17 @@ class AidenDashboardBackend:
                 elif action == 'change_mode':
                     result = self.esp32_controller.change_mode()
                     message = "Fan mode changed"
+                elif action == 'cycle_speed':
+                    # Use smart cycling based on current status
+                    result = self.esp32_controller.cycle_speed()
+                    message = "Fan speed cycled intelligently"
+                elif action == 'set_speed':
+                    # Set specific speed
+                    if speed and speed in [1, 2, 3]:
+                        result = self.esp32_controller.set_speed(int(speed))
+                        message = f"Fan set to speed {speed}"
+                    else:
+                        return jsonify({'error': 'Invalid speed. Must be 1, 2, or 3', 'success': False}), 400
                 elif action == 'test_connection':
                     # Test connection by trying a simple command
                     result = self.esp32_controller.check_connection()
@@ -348,8 +390,11 @@ class AidenDashboardBackend:
         
         @self.socketio.on('start_voice')
         def handle_start_voice():
-            """Handle start voice command from client"""
+            """Handle start voice command from client - this is dashboard mode"""
             if not self.is_listening:
+                # Set dashboard mode when started from web interface
+                self.dashboard_mode = True
+                self.hotkey_mode = False
                 thread = threading.Thread(target=self._start_voice_interaction)
                 thread.daemon = True
                 thread.start()
@@ -375,10 +420,18 @@ class AidenDashboardBackend:
                 item = data.get('item')
                 action_type = data.get('action_type')
                 
-                if action_type == 'app_list':
-                    # Launch the selected app
+                if action_type == 'app_list' or action_type == 'app_selection':
+                    # Launch the selected app using the intelligent app manager
                     app_name = item.get('name', item) if isinstance(item, dict) else item
-                    success = self._launch_app_from_dashboard(app_name)
+                    
+                    # Use the command dispatcher's intelligent app launching
+                    parameters = {
+                        "app_name": app_name.lower().strip(),
+                        "operation": "launch",
+                        "original_query": f"open {app_name}"
+                    }
+                    
+                    success = self.command_dispatcher._handle_app_control(parameters)
                     emit('action_result', {'success': success, 'message': f"{'Launched' if success else 'Failed to launch'} {app_name}"})
                 
                 elif action_type == 'project_list':
@@ -402,12 +455,16 @@ class AidenDashboardBackend:
                 emit('action_result', {'success': False, 'message': 'Failed to handle action'})
     
     def _on_hotkey_activated(self):
-        """Handle hotkey activation"""
-        print("Hotkey activated - starting voice interaction")
+        """Handle hotkey activation - continuous conversation mode (from tray menu)"""
+        print("Hotkey activated - CONTINUOUS CONVERSATION mode")
+        
+        # Set mode flags
+        self.hotkey_mode = False
+        self.dashboard_mode = True
         
         # Notify all connected clients
         self.socketio.emit('hotkey_activated', {
-            'message': 'Hotkey activated - Voice listening started',
+            'message': 'Voice conversation started - Continuous mode',
             'timestamp': datetime.now().isoformat()
         })
         
@@ -417,11 +474,35 @@ class AidenDashboardBackend:
             thread.daemon = True
             thread.start()
     
+    def _on_hotkey_activated_oneshot(self):
+        """Handle hotkey activation - one-shot mode (from actual hotkey press)"""
+        print("Hotkey activated - ONE-SHOT mode")
+        
+        # Set mode flags
+        self.hotkey_mode = True
+        self.dashboard_mode = False
+        
+        # Notify all connected clients
+        self.socketio.emit('hotkey_activated', {
+            'message': 'Hotkey activated - One command mode',
+            'timestamp': datetime.now().isoformat()
+        })
+        
+        # Start voice interaction in one-shot mode
+        if not self.is_listening:
+            thread = threading.Thread(target=self._start_voice_interaction_oneshot)
+            thread.daemon = True
+            thread.start()
+    
     def _start_voice_interaction(self):
         """Start a voice interaction session"""
         try:
             self.is_listening = True
             self.conversation_active = True
+            
+            # Ensure we're in dashboard mode (continuous conversation)
+            self.dashboard_mode = True
+            self.hotkey_mode = False
             
             # Notify clients about conversation start
             self.socketio.emit('voice_status', {
@@ -515,6 +596,105 @@ class AidenDashboardBackend:
         finally:
             self.is_listening = False
             self.conversation_active = False
+            self.dashboard_mode = False  # Reset mode flag
+            self.socketio.emit('voice_status', {
+                'listening': False,
+                'conversation_active': False,
+                'speaking': False,
+                'status': 'idle'
+            })
+    
+    def _start_voice_interaction_oneshot(self):
+        """Start a ONE-SHOT voice interaction session (for hotkey activation)"""
+        try:
+            self.is_listening = True
+            self.conversation_active = True
+            
+            # Notify clients about conversation start
+            self.socketio.emit('voice_status', {
+                'listening': True,
+                'conversation_active': True,
+                'speaking': False,
+                'status': 'listening'
+            })
+            
+            # REMOVED: Don't play greeting, just update UI silently for one-shot mode
+            self._emit_ai_message("Listening for one command...", "system")
+            
+            # ONE-SHOT mode: Start with one command, but may continue if needed
+            while self.conversation_active and self.is_listening:
+                # Play ready sound and update status to listening
+                self.voice_system.play_ready_sound()
+                self.socketio.emit('voice_status', {
+                    'listening': True,
+                    'conversation_active': True,
+                    'speaking': False,
+                    'status': 'listening'
+                })
+                
+                # Listen for voice input
+                success, text, error = self.stt_system.listen()
+                
+                if success and text:
+                    # Update status to processing
+                    self.socketio.emit('voice_status', {
+                        'listening': False,
+                        'conversation_active': True,
+                        'speaking': False,
+                        'status': 'processing'
+                    })
+                    
+                    # Process the voice command
+                    self._process_voice_message(text)
+                    
+                    # In one-shot mode, the smart logic will decide whether to continue
+                    # If conversation ended, break the loop
+                    if not self.conversation_active:
+                        print(f"ONE-SHOT mode: Command '{text}' completed, ending conversation")
+                        break
+                    else:
+                        print(f"ONE-SHOT mode: Command '{text}' needs follow-up, continuing...")
+                        # Continue the loop for follow-up
+                        
+                elif error:
+                    # Handle different types of errors
+                    if error == "timeout":
+                        # Silent timeout - user didn't speak, go to standby
+                        print("ONE-SHOT mode: Silent timeout - ending")
+                        self.conversation_active = False
+                        break
+                    else:
+                        # Actual speech recognition error - provide feedback but still end
+                        self.socketio.emit('voice_status', {
+                            'listening': False,
+                            'conversation_active': True,
+                            'speaking': True,
+                            'status': 'speaking'
+                        })
+                        
+                        # Provide user-friendly error messages
+                        if "network" in error.lower():
+                            friendly_error = "Having trouble with the speech service. Please try again later."
+                        elif "microphone" in error.lower():
+                            friendly_error = "Having trouble accessing your microphone. Please check your microphone settings."
+                        else:
+                            friendly_error = "I couldn't understand that. Please try again."
+                        
+                        self._emit_ai_message(friendly_error, "error")
+                        self.voice_system.speak(friendly_error)
+                        
+                        # End conversation even on error in one-shot mode
+                        print(f"ONE-SHOT mode: Speech recognition error, ending: {error}")
+                        self.conversation_active = False
+                        break
+                
+        except Exception as e:
+            print(f"Error in one-shot voice interaction: {e}")
+            self._emit_ai_message(f"Error in voice interaction: {str(e)}", "error")
+        finally:
+            self.is_listening = False
+            self.conversation_active = False
+            self.hotkey_mode = False  # Reset mode flag
             self.socketio.emit('voice_status', {
                 'listening': False,
                 'conversation_active': False,
@@ -544,7 +724,11 @@ class AidenDashboardBackend:
                 # Try to handle as pending action response first
                 if self.handle_pending_action_response(text):
                     # Successfully handled as pending action response
-                    if self._should_ask_follow_up(text):
+                    if self.hotkey_mode:
+                        # In hotkey mode, always end after handling pending action
+                        print("HOTKEY MODE: Pending action handled, ending conversation")
+                        self.conversation_active = False
+                    elif self._should_ask_follow_up(text):
                         self._ask_for_follow_up()
                     else:
                         self.conversation_active = False
@@ -598,7 +782,7 @@ class AidenDashboardBackend:
                     'speaking': True,
                     'status': 'speaking'
                 })
-                
+            
                 # For ALL provide_information actions, speak here and prevent dispatcher speech
                 # This includes simple greetings, conversational responses, etc.
                 if command.get("action") == "provide_information":
@@ -606,6 +790,8 @@ class AidenDashboardBackend:
                     self.voice_system.speak(ai_response)
                     # Set a flag to prevent dispatcher from speaking again
                     command["_already_spoken"] = True
+                    # Also add the flag to parameters for the handler
+                    command.get("parameters", {})["_prevent_speech"] = True
             
             # Execute the command
             result = self.command_dispatcher.dispatch(command)
@@ -630,7 +816,16 @@ class AidenDashboardBackend:
             )
             
             # Handle follow-up based on command success and type
-            if is_project_or_app_listing:
+            if self.hotkey_mode:
+                # In hotkey mode, be smart about when to end conversation
+                should_end_conversation = self._should_end_hotkey_conversation(text, command)
+                if should_end_conversation:
+                    print("HOTKEY MODE: Task completed, ending conversation")
+                    self.conversation_active = False
+                else:
+                    print("HOTKEY MODE: Continuing conversation (greeting/needs follow-up)")
+                    # Continue conversation for greetings, clarifications, etc.
+            elif is_project_or_app_listing:
                 # Always continue conversation for project/app listing to get selection
                 self.conversation_active = True
                 # Don't ask follow-up immediately - let the user respond to the list
@@ -671,31 +866,71 @@ class AidenDashboardBackend:
             "sure", "yes", "yeah", "yep", "bye", "goodbye", "stop", "exit", "quit"
         ]
         
-        # Never ask follow-ups for very short responses (under 10 characters)
-        if len(text_lower) <= 10:
-            return False
-        
-        # Never ask follow-ups if it contains simple responses
         for simple in simple_responses:
             if simple in text_lower:
                 return False
         
-        # Don't ask follow-ups for simple informational queries
-        info_queries = ["what time", "what's the time", "what date", "what's the date", "weather"]
-        if any(query in text_lower for query in info_queries):
+        # Don't ask follow-ups for very short responses (likely acknowledgments)
+        if len(text.strip()) < 5:
             return False
         
-        # Only ask follow-ups for substantial commands that might need clarification
-        substantial_commands = [
-            "create", "make", "build", "setup", "install", "configure", "search for", 
-            "find", "help me", "show me", "explain", "how to", "tutorial"
+        # Ask follow-ups for longer, more substantial interactions
+        return len(text.strip()) > 10
+    
+    def _should_end_hotkey_conversation(self, text: str, command: dict) -> bool:
+        """Determine if hotkey conversation should end based on the command type and user input"""
+        text_lower = text.lower().strip()
+        action = command.get("action", "")
+        
+        # FIRST: Check for completed actions (highest priority)
+        completed_actions = [
+            "app_control", "file_operation", "system_command", "web_search",
+            "fan_control", "change_settings"
         ]
+        if action in completed_actions:
+            print(f"HOTKEY MODE: Action '{action}' completed - ending")
+            return True
         
-        # Check if it's a substantial command
-        has_substantial_command = any(cmd in text_lower for cmd in substantial_commands)
+        # SECOND: Check for completed information requests
+        information_requests = [
+            "what time", "current time", "time is", "what date", "current date", "date is",
+            "weather", "temperature", "how's the weather"
+        ]
+        if action == "provide_information":
+            for info_request in information_requests:
+                if info_request in text_lower:
+                    print(f"HOTKEY MODE: Information request '{info_request}' completed - ending")
+                    return True
         
-        # Only continue for substantial commands or longer interactions
-        return has_substantial_command and len(text_lower) > 20
+        # THIRD: Check for questions that need clarification or project/app selection
+        if any(phrase in text_lower for phrase in [
+            "list my projects", "show my projects", "my projects", "project list", "show projects", "what projects",
+            "list apps", "show apps", "available apps", "open project", "which project"
+        ]):
+            print("HOTKEY MODE: Detected project/app query - continuing for selection")
+            return False
+        
+        # FOURTH: Check for greetings - these should continue conversation
+        # Be more specific with greeting detection to avoid false positives
+        greeting_patterns = [
+            "^hi$", "^hello$", "^hey$", "^good morning", "^good afternoon", "^good evening",
+            "how are you", "how r u", "how's it going", "what's up", "whats up"
+        ]
+        import re
+        for pattern in greeting_patterns:
+            if re.search(pattern, text_lower):
+                print(f"HOTKEY MODE: Detected greeting pattern '{pattern}' - continuing conversation")
+                return False
+        
+        # For conversational responses that don't fall into completed categories, continue
+        if action == "provide_information" and len(text.strip()) > 5:
+            # This is a conversational response, not a simple info request
+            print("HOTKEY MODE: Conversational response - continuing")
+            return False
+        
+        # Default: if unclear, continue conversation (safer)
+        print("HOTKEY MODE: Unclear command type - continuing conversation to be safe")
+        return False
     
     def _schedule_proactive_suggestions(self, user_text: str):
         """Schedule proactive suggestions to be delivered after a delay"""
@@ -778,7 +1013,6 @@ class AidenDashboardBackend:
                     if result.returncode == 0:
                         logging.info(f"Successfully opened {project_path} in VSCode using {cmd}")
                         return True
-                        
                 except (FileNotFoundError, subprocess.TimeoutExpired):
                     continue
                 except Exception as e:
@@ -793,7 +1027,7 @@ class AidenDashboardBackend:
                     return True
             except Exception as e:
                 logging.error(f"Error opening file explorer: {e}")
-                
+            
             return False
                 
         except Exception as e:
@@ -1012,7 +1246,7 @@ class AidenDashboardBackend:
     def _handle_app_selection(self, app_name: str, context: dict) -> bool:
         """Handle app selection response"""
         try:
-            # Use the command dispatcher's app control functionality
+            # Use the command dispatcher's intelligent app control functionality
             parameters = {
                 "app_name": app_name.lower().strip(),
                 "operation": "launch",
@@ -1020,6 +1254,13 @@ class AidenDashboardBackend:
             }
             
             success = self.command_dispatcher._handle_app_control(parameters)
+            
+            # Provide voice feedback
+            if success:
+                self.voice_system.speak(f"I've launched {app_name} for you.")
+            else:
+                self.voice_system.speak(f"I couldn't launch {app_name}. Please check if it's properly installed.")
+            
             return success
             
         except Exception as e:
@@ -1105,7 +1346,7 @@ Created on: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
         except Exception as e:
             logging.error(f"Error handling clarification response: {e}")
             return False
-
+    
     def _get_conversation_suggestions(self):
         """Generate personalized conversation suggestions based on user history and context"""
         try:

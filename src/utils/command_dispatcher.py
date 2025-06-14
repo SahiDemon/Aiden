@@ -9,8 +9,9 @@ import webbrowser
 import threading
 from typing import Dict, Any, Callable, Optional
 
-# Import ESP32 controller
+# Import ESP32 controller and App Manager
 from src.utils.esp32_controller import ESP32Controller
+from src.utils.app_manager import AppManager
 
 class CommandDispatcher:
     """Dispatches commands to appropriate handlers"""
@@ -32,6 +33,9 @@ class CommandDispatcher:
         general_config = config_manager.get_config("general")
         esp32_enabled = general_config.get("esp32", {}).get("enabled", False)
         self.esp32_controller = ESP32Controller(config_manager) if esp32_enabled else None
+        
+        # Initialize App Manager for intelligent app discovery and launching
+        self.app_manager = AppManager(config_manager)
         
         # Command handlers dictionary
         self.handlers = {
@@ -133,6 +137,9 @@ class CommandDispatcher:
         """
         query = parameters.get("query", "").lower() if parameters.get("query") else ""
         
+        # Check if speech should be prevented (already spoken by dashboard)
+        prevent_speech = parameters.get("_prevent_speech", False)
+        
         # Check for time-related queries
         if any(word in query for word in ["time", "clock", "hour"]):
             import datetime
@@ -145,7 +152,8 @@ class CommandDispatcher:
             if self.dashboard_backend:
                 self.dashboard_backend._emit_ai_message(response_text, "response")
             
-            self.voice_system.speak(response_text)
+            if not prevent_speech:
+                self.voice_system.speak(response_text)
             return True
             
         # Check for date-related queries
@@ -159,8 +167,20 @@ class CommandDispatcher:
             if self.dashboard_backend:
                 self.dashboard_backend._emit_ai_message(response_text, "response")
             
-            self.voice_system.speak(response_text)
+            if not prevent_speech:
+                self.voice_system.speak(response_text)
             return True
+            
+        # Check for app listing queries
+        elif any(phrase in query for phrase in ["list apps", "show apps", "available apps", "installed applications", "list applications", "show applications"]):
+            # Use the enhanced app listing functionality
+            return self._show_available_apps_enhanced()
+            
+        # Check for project listing queries
+        elif any(phrase in query for phrase in ["list my projects", "show my projects", "my projects", "project list", "show projects", "what projects"]):
+            # Use the project listing functionality
+            github_path = "G:\\GitHub"
+            return self._show_projects(github_path)
             
         # Check for weather-related queries
         elif any(word in query for word in ["weather", "temperature", "forecast"]):
@@ -170,7 +190,8 @@ class CommandDispatcher:
             if self.dashboard_backend:
                 self.dashboard_backend._emit_ai_message(response_text, "response")
             
-            self.voice_system.speak(response_text)
+            if not prevent_speech:
+                self.voice_system.speak(response_text)
             return True
             
         # Check for owner/creator queries
@@ -191,7 +212,8 @@ class CommandDispatcher:
             if self.dashboard_backend:
                 self.dashboard_backend._emit_ai_message(response_text, "response")
             
-            self.voice_system.speak(response_text)
+            if not prevent_speech:
+                self.voice_system.speak(response_text)
             return True
         
         # Check for project listing queries
@@ -206,9 +228,10 @@ class CommandDispatcher:
                 error_msg = f"I had trouble accessing your projects. Error: {str(e)}"
                 if self.dashboard_backend:
                     self.dashboard_backend._emit_ai_message(error_msg, "error")
-                self.voice_system.speak("I had trouble accessing your projects.")
+                if not prevent_speech:
+                    self.voice_system.speak("I had trouble accessing your projects.")
                 return False
-            
+        
         # Check for project/coding help queries
         elif any(phrase in query for phrase in ["project ideas", "what should i build", "what should i code", "suggest a project", "coding project", "development ideas", "programming ideas", "what to work on"]):
             
@@ -234,7 +257,8 @@ Which type of project interests you most? I'm here to help you bring your ideas 
             # Shorter spoken response
             spoken_response = "I'd love to help with project ideas! I've got some exciting suggestions ranging from web apps to AI projects. I can help you create folders, open tools, find tutorials, and get everything set up. What type of project sounds interesting to you?"
             
-            self.voice_system.speak(spoken_response)
+            if not prevent_speech:
+                self.voice_system.speak(spoken_response)
             return True
             
         # Check for capabilities/what can you do queries
@@ -290,7 +314,8 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
             if self.dashboard_backend:
                 self.dashboard_backend._emit_ai_message(capabilities_text, "response")
             
-            self.voice_system.speak(spoken_response)
+            if not prevent_speech:
+                self.voice_system.speak(spoken_response)
             return True
             
         # Handle any other general information queries
@@ -298,22 +323,25 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
             original_query = parameters.get('original_query', '')
             query = parameters.get('query', '')
             
+            # For simple greetings and conversational responses, don't duplicate speech
+            # The dashboard backend should handle these
+            if any(word in original_query.lower() for word in ["hello", "hi", "hey", "good morning", "good afternoon"]) or \
+               any(phrase in original_query.lower() for phrase in ["how are you", "how r u"]):
+                # Don't speak here - let dashboard backend handle simple conversational responses
+                return True
+            
             # Check if it's a specific type of query we can answer
             if any(word in original_query.lower() for word in ["fastest", "car", "speed", "vehicle"]):
                 response_text = "The fastest production car in the world is currently the Bugatti Chiron Super Sport 300+, which has achieved a top speed of 304.773 mph (490.484 km/h). However, there are also experimental and prototype vehicles that have reached even higher speeds. Would you like me to tell you more about fast cars or search for the latest speed records?"
-            elif any(word in original_query.lower() for word in ["hello", "hi", "hey", "good morning", "good afternoon"]):
-                response_text = "Hello! Great to hear from you. How can I help you today?"
-            elif any(phrase in original_query.lower() for phrase in ["how are you", "how r u"]):
-                response_text = "I'm doing well, Boss! Thank you for asking. How can I help you today?"
+                
+                if not prevent_speech:
+                    self.voice_system.speak(response_text)
             else:
                 response_text = f"I heard you say '{original_query}'. Let me help you with that! What would you like me to do?"
-            
-            # Emit to dashboard if available
-            if self.dashboard_backend:
-                self.dashboard_backend._emit_ai_message(response_text, "response")
-            
-            self.voice_system.speak(response_text)
-            return True
+                
+                if not prevent_speech:
+                    self.voice_system.speak(response_text)
+        return True
     
     def _get_personalized_suggestions(self) -> str:
         """Generate personalized suggestions based on user history"""
@@ -583,7 +611,7 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
             return False
     
     def _handle_app_control(self, parameters: Dict[str, Any]) -> bool:
-        """Handle application control commands
+        """Handle application control commands using intelligent app discovery
         
         Args:
             parameters: Command parameters including app_name, operation, etc.
@@ -591,12 +619,12 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
         Returns:
             True if handled successfully, False otherwise
         """
-        app_name = parameters.get("app_name", "").lower()
+        app_name = parameters.get("app_name", "").lower().strip()
         operation = parameters.get("operation", "launch")
         
         # Handle "open app" without specifying which one - show available apps
         if not app_name or app_name in ["app", "application", "program"]:
-            return self._show_available_apps()
+            return self._show_available_apps_enhanced()
         
         # Check if it's a website/URL request
         if self._is_website_request(app_name):
@@ -608,79 +636,153 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
         
         # Check if operation requires confirmation
         if operation == "launch" and self.security_config.get("confirm_app_launch", True):
-            # In a full implementation, this would ask for confirmation
-            # For MVP, we'll just proceed with a warning
             logging.warning(f"App launch without confirmation: {app_name}")
         
         try:
             if operation == "launch":
-                # Map common app names to their actual executable names/commands
-                app_mapping = {
-                    "chrome": "chrome" if os.name == 'nt' else "google-chrome",
-                    "firefox": "firefox" if os.name == 'nt' else "firefox",
-                    "edge": "msedge" if os.name == 'nt' else "microsoft-edge",
-                    "vscode": "code" if os.name == 'nt' else "code",
-                    "visual studio code": "code" if os.name == 'nt' else "code",
-                    "word": "winword" if os.name == 'nt' else "libreoffice --writer",
-                    "excel": "excel" if os.name == 'nt' else "libreoffice --calc",
-                    "powerpoint": "powerpnt" if os.name == 'nt' else "libreoffice --impress",
-                    "notepad": "notepad" if os.name == 'nt' else "gedit",
-                    "calculator": "calc" if os.name == 'nt' else "gnome-calculator",
-                    "terminal": "cmd" if os.name == 'nt' else "gnome-terminal",
-                    "file explorer": "explorer" if os.name == 'nt' else "nautilus",
-                    "explorer": "explorer" if os.name == 'nt' else "nautilus",
-                }
-                
-                # Get the actual executable name
-                exe_name = app_mapping.get(app_name, app_name)
-                
-                # Launch app with better error handling
-                if os.name == 'nt':  # Windows
-                    try:
-                        # Try with start command first (works for most apps)
-                        subprocess.Popen(f"start {exe_name}", shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                        logging.info(f"Successfully launched {app_name} with start command")
-                    except Exception as e:
-                        logging.error(f"Failed to launch {app_name} with start command: {e}")
-                        try:
-                            # Fallback: try direct execution
-                            subprocess.Popen(f"{exe_name}.exe", shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                            logging.info(f"Successfully launched {app_name} with direct execution")
-                        except Exception as e2:
-                            logging.error(f"Failed to launch {app_name} with direct execution: {e2}")
-                            raise e2
-                else:  # Unix-like
-                    subprocess.Popen(exe_name, shell=True)
-                
-                # Show action card in dashboard
-                if self.dashboard_backend:
-                    action_card = {
-                        "type": "action_success",
-                        "title": f"Opened {app_name.title()}",
-                        "message": f"Successfully launched {app_name}",
-                        "status": "Success"
-                    }
-                    self.dashboard_backend._emit_ai_message(action_card, "action_card")
-                
-                self.voice_system.speak(f"I've launched {app_name} for you.")
-                return True
+                # Use AppManager to find and launch the app
+                return self._launch_app_intelligent(app_name)
                 
             elif operation == "close":
-                # This is a simplified implementation
-                # A full implementation would need to find the window and close it properly
-                if os.name == 'nt':  # Windows
-                    subprocess.Popen(f"taskkill /im {app_name}.exe", shell=True)
-                else:  # Unix-like
-                    subprocess.Popen(f"pkill {app_name}", shell=True)
-                return True
+                return self._close_app_intelligent(app_name)
                 
             else:
                 self.voice_system.speak(f"I don't know how to {operation} applications.")
                 return False
                 
-        except Exception as e:
+                    except Exception as e:
             logging.error(f"Error in app control: {e}")
             self.voice_system.speak(f"I had trouble controlling {app_name}.")
+            return False
+    
+    def _launch_app_intelligent(self, app_name: str) -> bool:
+        """Launch an app using intelligent search and discovery
+        
+        Args:
+            app_name: Name of the app to launch
+            
+        Returns:
+            True if launched successfully, False otherwise
+        """
+        try:
+            # Search for the app using AppManager
+            search_results = self.app_manager.search_apps(app_name, limit=5)
+            
+            if not search_results:
+                # No apps found, provide helpful feedback
+                self.voice_system.speak(f"I couldn't find an application named '{app_name}'. Would you like me to show you available applications?")
+                
+                # Show action card with suggestion
+                if self.dashboard_backend:
+                    action_card = {
+                        "type": "app_not_found",
+                        "title": f"App '{app_name}' Not Found",
+                        "message": "I couldn't find that application. Here are some suggestions:",
+                        "suggestions": [
+                            "Try a different name (e.g., 'Chrome' instead of 'Google Chrome')",
+                            "Check if the app is installed",
+                            "Ask me to show available apps"
+                        ],
+                        "status": "Not Found"
+                    }
+                    self.dashboard_backend._emit_ai_message(action_card, "action_card")
+                
+                return False
+            
+            # Get the best match (first result)
+            best_match = search_results[0]
+            app_display_name = best_match['name']
+            
+            # Launch the app
+            success = self.app_manager.launch_app(best_match)
+            
+            if success:
+                # Show success action card
+                if self.dashboard_backend:
+                    action_card = {
+                        "type": "action_success",
+                        "title": f"Opened {app_display_name}",
+                        "message": f"Successfully launched {app_display_name}",
+                        "app_info": {
+                            "name": best_match['name'],
+                            "version": best_match['version'],
+                            "publisher": best_match['publisher']
+                        },
+                        "status": "Success"
+                    }
+                    self.dashboard_backend._emit_ai_message(action_card, "action_card")
+                
+                # Provide voice feedback
+                if app_display_name.lower() != app_name.lower():
+                    self.voice_system.speak(f"I found {app_display_name} and launched it for you.")
+                else:
+                    self.voice_system.speak(f"I've launched {app_display_name} for you.")
+                
+                return True
+            else:
+                # Launch failed
+                self.voice_system.speak(f"I found {app_display_name} but couldn't launch it. Please check if it's properly installed.")
+                
+                if self.dashboard_backend:
+                    action_card = {
+                        "type": "action_error",
+                        "title": f"Failed to Launch {app_display_name}",
+                        "message": "The application was found but couldn't be launched",
+                        "status": "Error"
+                    }
+                    self.dashboard_backend._emit_ai_message(action_card, "action_card")
+                
+                return False
+                
+        except Exception as e:
+            logging.error(f"Error in intelligent app launch: {e}")
+            self.voice_system.speak(f"I had trouble launching {app_name}.")
+            return False
+    
+    def _close_app_intelligent(self, app_name: str) -> bool:
+        """Close an app using intelligent search
+        
+        Args:
+            app_name: Name of the app to close
+            
+        Returns:
+            True if closed successfully, False otherwise
+        """
+        try:
+            # Search for the app to get its executable name
+            search_results = self.app_manager.search_apps(app_name, limit=1)
+            
+            if search_results:
+                app_data = search_results[0]
+                executable = app_data.get('executable', app_name)
+                app_display_name = app_data['name']
+            else:
+                executable = app_name
+                app_display_name = app_name
+            
+            # Close the app
+                if os.name == 'nt':  # Windows
+                subprocess.Popen(f"taskkill /im {executable}.exe /f", shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                else:  # Unix-like
+                subprocess.Popen(f"pkill {executable}", shell=True)
+            
+            self.voice_system.speak(f"I've closed {app_display_name} for you.")
+            
+            # Show action card
+            if self.dashboard_backend:
+                action_card = {
+                    "type": "action_success",
+                    "title": f"Closed {app_display_name}",
+                    "message": f"Successfully closed {app_display_name}",
+                    "status": "Success"
+                }
+                self.dashboard_backend._emit_ai_message(action_card, "action_card")
+            
+            return True
+                
+        except Exception as e:
+            logging.error(f"Error closing app: {e}")
+            self.voice_system.speak(f"I had trouble closing {app_name}.")
             return False
     
     def _handle_web_search(self, parameters: Dict[str, Any]) -> bool:
@@ -778,7 +880,7 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
             return False
     
     def _handle_fan_control(self, parameters: Dict[str, Any]) -> bool:
-        """Handle fan control commands
+        """Handle fan control commands with smart status checking
         
         Args:
             parameters: Command parameters including operation, speed, etc.
@@ -795,25 +897,29 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
         speed = parameters.get("speed", "").lower()
         
         try:
-            if operation == "on" or operation == "turn_on" or operation == "start":
+            # Handle "status" or "check" commands with smart status reporting
+            if "status" in operation or "check" in operation or "state" in operation:
+                status_message = self.esp32_controller.get_human_readable_status()
+                logging.info(f"Fan status check: {status_message}")
+                # The LLM will handle the response, so we just log it
+                return True
+                
+            elif operation == "on" or operation == "turn_on" or operation == "start":
                 # Turn on the fan
                 success = self.esp32_controller.turn_on()
-                # Don't speak here - the LLM response is already spoken
                 return success
                 
             elif operation == "off" or operation == "turn_off" or operation == "stop":
                 # Turn off the fan
                 success = self.esp32_controller.turn_off()
-                # Don't speak here - the LLM response is already spoken
                 return success
                 
             elif "mode" in operation:
                 # Change fan mode - more forgiving with command wording
                 success = self.esp32_controller.change_mode()
-                # Don't speak here - the LLM response is already spoken
                 return success
                 
-            elif "speed" in operation:
+            elif "speed" in operation or "cycle" in operation:
                 # More forgiving speed detection
                 # If speed not explicitly provided, check if it's part of the operation
                 if not speed:
@@ -824,27 +930,26 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
                         speed = "2" 
                     elif "3" in operation or "three" in operation or "high" in operation:
                         speed = "3"
+                    elif "cycle" in operation or "change" in operation or "next" in operation:
+                        # Use /on endpoint for smart cycling (ESP32 handles speed increment)
+                        success = self.esp32_controller.cycle_speed()
+                        return success
                 
-                # Set fan speed based on parameter
+                # Set fan speed based on parameter using the new set_speed method
                 if speed == "1" or speed == "one" or speed == "low":
-                    success = self.esp32_controller.set_speed_1()
-                    speed_name = "low"
+                    success = self.esp32_controller.set_speed(1)
                 elif speed == "2" or speed == "two" or speed == "medium":
-                    success = self.esp32_controller.set_speed_2()
-                    speed_name = "medium"
+                    success = self.esp32_controller.set_speed(2)
                 elif speed == "3" or speed == "three" or speed == "high":
-                    success = self.esp32_controller.set_speed_3()
-                    speed_name = "high"
+                    success = self.esp32_controller.set_speed(3)
                 else:
-                    # If no specific speed, cycle through speeds
-                    success = self.esp32_controller.change_speed()
-                    speed_name = "next"
+                    # If no specific speed, use /on endpoint for cycling
+                    success = self.esp32_controller.cycle_speed()
                 
                 return success
                 
             else:
                 # Only speak this if there's an actual error understanding the command
-                # Do not speak this when a valid command is detected
                 self.voice_system.speak("I'm not sure how to control the fan that way.")
                 return False
                 
@@ -969,37 +1074,58 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
             # Brief spoken follow-up
             self.voice_system.speak(f"By the way, {suggestion}")
     
-    def _show_available_apps(self) -> bool:
-        """Show a list of available applications that can be opened"""
+    def _show_available_apps_enhanced(self) -> bool:
+        """Show a list of available applications using enhanced app discovery"""
         try:
-            # Get list of installed apps
-            apps = self._get_system_apps()
+            # Get installed apps using AppManager
+            apps = self.app_manager.get_installed_apps()
             
-            # Create action card for dashboard
+            # Get apps organized by categories
+            categories = self.app_manager.get_app_categories()
+            
+            # Get recently used apps
+            recent_apps = self.app_manager.get_recently_used_apps(limit=5)
+            
+            # Create enhanced action card for dashboard
             if self.dashboard_backend:
                 action_card = {
-                    "type": "app_list",
+                    "type": "enhanced_app_list",
                     "title": "Available Applications",
-                    "subtitle": f"Found {len(apps)} applications",
-                    "message": "Here are the applications I can open for you. Click on any app to launch it:",
-                    "items": apps,
+                    "subtitle": f"Found {len(apps)} installed applications",
+                    "message": "Here are your installed applications organized by category:",
+                    "categories": categories,
+                    "recent_apps": recent_apps,
+                    "total_count": len(apps),
                     "status": "Ready"
                 }
                 self.dashboard_backend._emit_ai_message(action_card, "action_card")
                 
                 # Set pending action for app selection
                 self.dashboard_backend.set_pending_action("app_selection", {
-                    "apps": apps
+                    "apps": apps,
+                    "categories": categories
                 }, "Which app would you like me to open?")
             
-            # Spoken response
+            # Spoken response with category breakdown
+            category_counts = {cat: len(apps) for cat, apps in categories.items() if apps}
+            top_categories = sorted(category_counts.items(), key=lambda x: x[1], reverse=True)[:3]
+            
+            if top_categories:
+                category_summary = ", ".join([f"{count} {cat.lower()}" for cat, count in top_categories])
+                self.voice_system.speak(f"I found {len(apps)} applications including {category_summary}. Which app would you like me to open?")
+            else:
             self.voice_system.speak(f"I found {len(apps)} applications available. Which app would you like me to open?")
+            
             return True
             
         except Exception as e:
             logging.error(f"Error showing available apps: {e}")
             self.voice_system.speak("I had trouble finding available applications.")
             return False
+    
+    def _show_available_apps(self) -> bool:
+        """Legacy method - redirect to enhanced version"""
+        return self._show_available_apps_enhanced()
     
     def _get_system_apps(self) -> list:
         """Get list of installed system applications"""
@@ -1243,7 +1369,7 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
                 
                 logging.info("Emitting action card to dashboard...")
                 self.dashboard_backend._emit_ai_message(action_card, "action_card")
-                
+            
                 logging.info("Emitting response text to dashboard...")
                 self.dashboard_backend._emit_ai_message(response_text, "response")
                 

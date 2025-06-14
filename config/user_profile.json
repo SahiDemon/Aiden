@@ -3,7 +3,7 @@
     "name": "Sahi",
     "form_of_address": "Boss",
     "created_date": "2025-06-05",
-    "last_login": "2025-06-10T21:55:38.055722"
+    "last_login": "2025-06-10T22:50:27.688711"
   },
   "preferences": {
     "voice": {
@@ -1759,21 +1759,518 @@
         "parameters": {
           "original_query": "hello"
         }
+      },
+      {
+        "timestamp": "2025-06-10T22:48:00.305698",
+        "type": "provide_information",
+        "text": "hi how are you",
+        "parameters": {
+          "original_query": "hi how are you",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-10T22:48:15.025808",
+        "type": "provide_information",
+        "text": "I am good",
+        "parameters": {
+          "original_query": "I am good",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-10T22:48:30.083644",
+        "type": "provide_information",
+        "text": "can you",
+        "parameters": {
+          "original_query": "can you",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-10T22:48:45.732689",
+        "type": "fan_control",
+        "text": "can you turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "can you turn off the fan"
+        }
+      },
+      {
+        "timestamp": "2025-06-10T22:48:58.532783",
+        "type": "provide_information",
+        "text": "thank you stop now",
+        "parameters": {
+          "original_query": "thank you stop now"
+        }
+      },
+      {
+        "timestamp": "2025-06-10T23:18:04.241556",
+        "type": "provide_information",
+        "text": "hay how r u",
+        "parameters": {
+          "original_query": "hay how r u",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-10T23:18:16.737780",
+        "type": "fan_control",
+        "text": "turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan"
+        }
+      },
+      {
+        "timestamp": "2025-06-10T23:18:27.211135",
+        "type": "provide_information",
+        "text": "stop the conden",
+        "parameters": {
+          "original_query": "stop the conden"
+        }
+      },
+      {
+        "timestamp": "2025-06-10T23:35:34.575796",
+        "type": "provide_information",
+        "text": "turn off the fan",
+        "parameters": {
+          "original_query": "turn off the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-10T23:35:47.588463",
+        "type": "provide_information",
+        "text": "turn off the phone",
+        "parameters": {
+          "original_query": "turn off the phone",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-10T23:35:59.111382",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan"
+        }
+      },
+      {
+        "timestamp": "2025-06-10T23:36:06.796251",
+        "type": "fan_control",
+        "text": "turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan"
+        }
+      },
+      {
+        "timestamp": "2025-06-10T23:36:17.652793",
+        "type": "provide_information",
+        "text": "in the conversation",
+        "parameters": {
+          "original_query": "in the conversation",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-11T00:55:05.487855",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan"
+        }
+      },
+      {
+        "timestamp": "2025-06-11T00:57:16.327300",
+        "type": "fan_control",
+        "text": "turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan"
+        }
+      },
+      {
+        "timestamp": "2025-06-11T00:57:30.813842",
+        "type": "provide_information",
+        "text": "top conversation",
+        "parameters": {
+          "original_query": "top conversation"
+        }
+      },
+      {
+        "timestamp": "2025-06-11T03:17:18.567894",
+        "type": "fan_control",
+        "text": "turn the fan off",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn the fan off"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T15:59:19.392631",
+        "type": "provide_information",
+        "text": "hey how are you",
+        "parameters": {
+          "original_query": "hey how are you",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T16:00:20.027972",
+        "type": "provide_information",
+        "text": "Khushi hona",
+        "parameters": {
+          "query": "Khushi hona",
+          "original_query": "Khushi hona",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T16:00:38.753843",
+        "type": "provide_information",
+        "text": "I need to know who is your",
+        "parameters": {
+          "original_query": "I need to know who is your",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T16:00:52.483882",
+        "type": "provide_information",
+        "text": "who is your owner",
+        "parameters": {
+          "query": "owner",
+          "original_query": "who is your owner"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T16:13:38.675558",
+        "type": "provide_information",
+        "text": "how are you",
+        "parameters": {
+          "original_query": "how are you",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T16:13:51.190673",
+        "type": "provide_information",
+        "text": "in conversation",
+        "parameters": {
+          "original_query": "in conversation",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T16:14:04.048651",
+        "type": "provide_information",
+        "text": "conversation",
+        "parameters": {
+          "original_query": "conversation"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T16:18:17.665238",
+        "type": "provide_information",
+        "text": "hi how are you",
+        "parameters": {
+          "original_query": "hi how are you",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T16:23:43.543581",
+        "type": "provide_information",
+        "text": "how r u",
+        "parameters": {
+          "original_query": "how r u"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T16:24:16.942628",
+        "type": "provide_information",
+        "text": "how are you",
+        "parameters": {
+          "original_query": "how are you",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T16:24:31.812343",
+        "type": "app_control",
+        "text": "open Chrome",
+        "parameters": {
+          "app_name": "chrome",
+          "operation": "launch",
+          "original_query": "open Chrome"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T16:54:43.620476",
+        "type": "fan_control",
+        "text": "turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T16:54:58.037030",
+        "type": "fan_control",
+        "text": "increase the speed",
+        "parameters": {
+          "operation": "speed_up",
+          "original_query": "increase the speed"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T16:55:10.279175",
+        "type": "fan_control",
+        "text": "increase the fan",
+        "parameters": {
+          "operation": "increase_speed",
+          "original_query": "increase the fan"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T16:55:26.312362",
+        "type": "fan_control",
+        "text": "what is the what is the fan status",
+        "parameters": {
+          "operation": "status",
+          "original_query": "what is the fan status"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T16:56:23.068591",
+        "type": "fan_control",
+        "text": "what is the fan status",
+        "parameters": {
+          "operation": "status",
+          "original_query": "what is the fan status"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T17:00:56.871086",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T17:03:01.656501",
+        "type": "fan_control",
+        "text": "turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T17:06:49.580414",
+        "type": "app_control",
+        "text": "Open Steam",
+        "parameters": {
+          "app_name": "steam",
+          "operation": "launch",
+          "original_query": "Open Steam"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T17:08:15.368589",
+        "type": "app_control",
+        "text": "Open Steam",
+        "parameters": {
+          "app_name": "steam",
+          "operation": "launch",
+          "original_query": "Open Steam"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T17:30:34.171146",
+        "type": "provide_information",
+        "text": "show available apps",
+        "parameters": {
+          "query": "list installed applications",
+          "original_query": "show available apps",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T17:31:27.959409",
+        "type": "app_control",
+        "text": "open discord",
+        "parameters": {
+          "app_name": "discord",
+          "operation": "launch",
+          "original_query": "open discord"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T17:32:01.506092",
+        "type": "app_control",
+        "text": "Open Steam",
+        "parameters": {
+          "app_name": "steam",
+          "operation": "launch",
+          "original_query": "Open Steam"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T17:32:51.984722",
+        "type": "app_control",
+        "text": "open Chrome",
+        "parameters": {
+          "app_name": "chrome",
+          "operation": "launch",
+          "original_query": "open Chrome"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T17:33:20.696213",
+        "type": "provide_information",
+        "text": "open post",
+        "parameters": {
+          "original_query": "open post",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T17:33:36.414425",
+        "type": "app_control",
+        "text": "postman",
+        "parameters": {
+          "app_name": "postman",
+          "operation": "launch",
+          "original_query": "postman"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T17:34:20.968320",
+        "type": "app_control",
+        "text": "launch calculator",
+        "parameters": {
+          "app_name": "calculator",
+          "operation": "launch",
+          "original_query": "launch calculator"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T17:34:42.203017",
+        "type": "app_control",
+        "text": "open chrome",
+        "parameters": {
+          "app_name": "chrome",
+          "operation": "launch",
+          "original_query": "open chrome"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T17:34:55.199849",
+        "type": "provide_information",
+        "text": "steam",
+        "parameters": {
+          "original_query": "steam"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T17:36:36.824926",
+        "type": "app_control",
+        "text": "open spotify",
+        "parameters": {
+          "app_name": "spotify",
+          "operation": "launch",
+          "original_query": "open spotify"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T17:37:24.814089",
+        "type": "app_control",
+        "text": "Open Steam",
+        "parameters": {
+          "app_name": "steam",
+          "operation": "launch",
+          "original_query": "Open Steam"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T17:54:45.243986",
+        "type": "provide_information",
+        "text": "show installed apps",
+        "parameters": {
+          "query": "show installed apps",
+          "original_query": "show installed apps",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T17:55:16.207424",
+        "type": "app_control",
+        "text": "show installed apps",
+        "parameters": {
+          "app_name": "spotify",
+          "operation": "launch",
+          "original_query": "Open Spotify"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T17:55:51.865611",
+        "type": "provide_information",
+        "text": "show available apps",
+        "parameters": {
+          "query": "show available apps",
+          "original_query": "show available apps",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T17:56:35.651235",
+        "type": "app_control",
+        "text": "open vs",
+        "parameters": {
+          "app_name": "vscode",
+          "operation": "launch",
+          "original_query": "open vs"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T17:57:03.211437",
+        "type": "app_control",
+        "text": "open steam",
+        "parameters": {
+          "app_name": "steam",
+          "operation": "launch",
+          "original_query": "open steam"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T17:57:14.164999",
+        "type": "provide_information",
+        "text": "establishing",
+        "parameters": {
+          "original_query": "establishing"
+        }
       }
     ],
-    "total_sessions": 63,
-    "total_commands": 208,
+    "total_sessions": 64,
+    "total_commands": 262,
     "last_commands": [
-      "no thank you",
-      "stop",
-      "how r u",
-      "hi how are you",
-      "stop the conversation",
-      "hi how are you",
-      "hi how are you",
-      "end the conver",
-      "hi how are you",
-      "hello"
+      "open chrome",
+      "steam",
+      "open spotify",
+      "Open Steam",
+      "show installed apps",
+      "show installed apps",
+      "show available apps",
+      "open vs",
+      "open steam",
+      "establishing"
     ]
   },
   "patterns": {

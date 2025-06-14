@@ -7,7 +7,7 @@ import keyboard  # Added for keyboard input detection
 # ==============================================================================
 # IMPORTANT: Replace this with the IP address of your ESP32
 # You can find this in the Arduino Serial Monitor when the ESP32 starts up.
-ESP32_IP_ADDRESS = "192.168.1.6" # e.g., "192.168.1.123"
+ESP32_IP_ADDRESS = "192.168.1.180" # e.g., "192.168.1.123"
 # ==============================================================================
 
 

@@ -213,7 +213,7 @@ class VoiceSystem:
             # Play sound effect if requested
             if play_sound_effect and effect:
                 self._play_sound_effect(effect)
-            
+                
             # Use edge-tts's built-in rate parameter instead of SSML
             # Edge-TTS Communicate class supports rate parameter directly
             rate_value = "+15%"  # Moderately faster speech
@@ -468,23 +468,23 @@ class VoiceSystem:
                     sample_rate = 22050
                     duration = 0.3  # seconds
                     frequency = 800  # Hz
-                    
+                
                     # Generate sine wave
                     frames = int(duration * sample_rate)
                     t = np.linspace(0, duration, frames)
                     arr = np.sin(2 * np.pi * frequency * t)
-                    
+                
                     # Apply fade to avoid clicks
                     fade_frames = int(0.05 * sample_rate)
                     arr[:fade_frames] *= np.linspace(0, 1, fade_frames)
                     arr[-fade_frames:] *= np.linspace(1, 0, fade_frames)
-                    
+                
                     # Convert to 16-bit stereo
                     arr = (arr * 16383).astype(np.int16)
                     stereo_arr = np.zeros((frames, 2), dtype=np.int16)
                     stereo_arr[:, 0] = arr
                     stereo_arr[:, 1] = arr
-                    
+                
                     # Play the sound
                     sound = pygame.sndarray.make_sound(stereo_arr)
                     sound.play()

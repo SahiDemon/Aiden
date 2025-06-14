@@ -50,7 +50,7 @@ If you're having trouble with the ESP32 fan control:
 1. **Check ESP32 Connection**
    - Make sure your ESP32 is powered on and connected to your network
    - Verify the IP address in `config/config.json` is correct
-   - Try accessing the ESP32 directly from a web browser (e.g., http://192.168.1.6/on)
+   - Try accessing the ESP32 directly from a web browser (e.g., http://192.168.1.180/on)
 
 2. **Test ESP32 Commands Directly**
    - Run `python test_esp32.py` to test direct communication with the ESP32

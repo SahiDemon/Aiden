@@ -22,7 +22,7 @@ The ESP32 fan control feature allows you to control a fan connected to an ESP32 
 ```json
 "general": {
   "esp32": {
-    "ip_address": "192.168.1.6",  // Replace with your ESP32's IP address
+    "ip_address": "192.168.1.180",  // Replace with your ESP32's IP address
     "enabled": true
   }
 }
@@ -64,7 +64,7 @@ If you experience issues with the fan control:
 
 1. Check that the ESP32 is powered on and connected to your network
 2. Verify the IP address in your config.json file is correct
-3. Try accessing the ESP32 from a web browser (e.g., http://192.168.1.6/on)
+3. Try accessing the ESP32 from a web browser (e.g., http://192.168.1.180/on)
 4. Check the logs for any connection errors
 5. Make sure the ESP32 firmware is properly installed and running
 

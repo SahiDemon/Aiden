@@ -22,7 +22,7 @@ class ESP32Controller:
         self.esp32_config = general_config.get("esp32", {})
         
         # Set ESP32 IP address (default or from config)
-        self.ip_address = self.esp32_config.get("ip_address", "192.168.1.6")
+        self.ip_address = self.esp32_config.get("ip_address", "192.168.1.180")
         self.base_url = f"http://{self.ip_address}"
         
         logging.info(f"ESP32 controller initialized with IP: {self.ip_address}")
@@ -89,30 +89,178 @@ class ESP32Controller:
         return self.turn_on()
     
     def set_speed_2(self) -> bool:
-        """Set fan to speed 2 (same as turn_on)
+        """Set fan to speed 2
         
         Returns:
             True if successful, False otherwise
         """
-        return self.turn_on()
+        return self._send_command("speed2")
     
     def set_speed_3(self) -> bool:
-        """Set fan to speed 3 (same as turn_on)
+        """Set fan to speed 3
         
         Returns:
             True if successful, False otherwise
         """
-        return self.turn_on()
+        return self._send_command("speed3")
     
-    def change_speed(self) -> bool:
-        """Change fan speed by cycling through available speeds
+    def set_speed(self, speed: int) -> bool:
+        """Set fan to specific speed
+        
+        Args:
+            speed: Speed level (1, 2, or 3)
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if speed == 1:
+            return self.turn_on()  # /on endpoint for speed 1
+        elif speed == 2:
+            return self.set_speed_2()  # /speed2 endpoint
+        elif speed == 3:
+            return self.set_speed_3()  # /speed3 endpoint
+        else:
+            logging.error(f"Invalid speed level: {speed}. Must be 1, 2, or 3")
+            return False
+    
+    def cycle_speed(self) -> bool:
+        """Intelligently cycle through fan speeds using /on endpoint
+        
+        The /on endpoint automatically increments speed based on current state:
+        - Off → Speed 1
+        - Speed 1 → Speed 2  
+        - Speed 2 → Speed 3
+        - Speed 3 → Speed 1 (cycles back)
         
         Returns:
             True if successful, False otherwise
         """
-        # Since the ESP32 currently doesn't support speed cycling directly,
-        # we'll just turn it on which will maintain its current speed or start at default
-        return self._send_command("on")
+        try:
+            # Get current status for logging purposes
+            status_info = self.get_status()
+            
+            if status_info['success']:
+                current_state = status_info['parsed']['state']
+                current_speed = status_info['parsed']['speed']
+                logging.info(f"Current fan state: {current_state}, speed: {current_speed}")
+                
+                if current_state == 'off':
+                    logging.info("Fan is off, /on will turn on at speed 1")
+                elif current_speed == '1':
+                    logging.info("Fan at speed 1, /on will increase to speed 2")
+                elif current_speed == '2':
+                    logging.info("Fan at speed 2, /on will increase to speed 3")
+                elif current_speed == '3':
+                    logging.info("Fan at speed 3, /on will cycle back to speed 1")
+                else:
+                    logging.info(f"Fan state: {current_state}, /on will handle cycling")
+            else:
+                logging.warning("Cannot get fan status, but /on will still work")
+            
+            # Use /on endpoint for intelligent speed cycling
+            # The ESP32 handles the logic internally
+            return self.turn_on()
+                
+        except Exception as e:
+            logging.error(f"Error in smart speed cycling: {e}")
+            # Fallback to /on command
+            return self.turn_on()
+    
+    def get_human_readable_status(self) -> str:
+        """Get a human-readable status description
+        
+        Returns:
+            String describing current fan status
+        """
+        status_info = self.get_status()
+        
+        if not status_info['success']:
+            return f"Unable to connect to fan (IP: {self.ip_address}). Error: {status_info.get('error', 'Unknown error')}"
+        
+        parsed = status_info['parsed']
+        state = parsed['state']
+        speed = parsed['speed']
+        message = parsed.get('message', '')
+        
+        if state == 'off':
+            return f"Fan is currently OFF. {message}"
+        elif state == 'on':
+            if speed in ['1', '2', '3']:
+                return f"Fan is ON at speed {speed}. {message}"
+            elif speed == 'mode_changed':
+                return f"Fan is ON and mode was recently changed. {message}"
+            else:
+                return f"Fan is ON at unknown speed. {message}"
+        elif state == 'unknown':
+            if 'just started' in message:
+                return f"Fan controller just started up. No commands sent yet."
+            else:
+                return f"Fan status is unknown. {message}"
+        else:
+            return f"Fan status: {message}"
+    
+    def get_status(self) -> Dict[str, Any]:
+        """Get current fan status from ESP32
+        
+        Returns:
+            Dictionary with current fan status information
+        """
+        try:
+            url = f"{self.base_url}/status"
+            response = requests.get(url, timeout=5)
+            
+            if response.status_code == 200:
+                status_text = response.text.strip()
+                logging.info(f"ESP32 status: {status_text}")
+                
+                # Parse the status to determine current state
+                parsed_status = self._parse_status(status_text)
+                return {
+                    'success': True,
+                    'raw_status': status_text,
+                    'parsed': parsed_status
+                }
+            else:
+                logging.error(f"ESP32 status error: status code {response.status_code}")
+                return {
+                    'success': False,
+                    'error': f'HTTP {response.status_code}',
+                    'parsed': {'state': 'unknown', 'speed': 'unknown'}
+                }
+                
+        except requests.exceptions.RequestException as e:
+            logging.error(f"ESP32 status connection error: {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'parsed': {'state': 'unknown', 'speed': 'unknown'}
+            }
+    
+    def _parse_status(self, status_text: str) -> Dict[str, str]:
+        """Parse the status text from ESP32 to extract fan state
+        
+        Args:
+            status_text: Raw status text from ESP32
+            
+        Returns:
+            Dictionary with parsed state and speed information
+        """
+        status_text = status_text.lower()
+        
+        if "device just started" in status_text or "no command sent" in status_text:
+            return {'state': 'unknown', 'speed': 'unknown', 'message': 'Device just started'}
+        elif "power off" in status_text or "off" in status_text:
+            return {'state': 'off', 'speed': '0', 'message': 'Fan is off'}
+        elif "speed 1" in status_text or "on" in status_text:
+            return {'state': 'on', 'speed': '1', 'message': 'Fan on speed 1'}
+        elif "speed 2" in status_text:
+            return {'state': 'on', 'speed': '2', 'message': 'Fan on speed 2'}
+        elif "speed 3" in status_text:
+            return {'state': 'on', 'speed': '3', 'message': 'Fan on speed 3'}
+        elif "mode change" in status_text:
+            return {'state': 'on', 'speed': 'mode_changed', 'message': 'Fan mode changed'}
+        else:
+            return {'state': 'unknown', 'speed': 'unknown', 'message': f'Unknown status: {status_text}'}
 
     def check_connection(self) -> bool:
         """Check if ESP32 is reachable without changing fan state
