@@ -3,7 +3,7 @@
     "name": "Sahi",
     "form_of_address": "Boss",
     "created_date": "2025-06-05",
-    "last_login": "2025-06-10T22:50:27.688711"
+    "last_login": "2025-06-14T20:38:58.498008"
   },
   "preferences": {
     "voice": {
@@ -2256,21 +2256,505 @@
         "parameters": {
           "original_query": "establishing"
         }
+      },
+      {
+        "timestamp": "2025-06-14T20:02:31.168537",
+        "type": "provide_information",
+        "text": "hi how are you",
+        "parameters": {
+          "original_query": "hi how are you",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:02:43.681933",
+        "type": "app_control",
+        "text": "open Chrome",
+        "parameters": {
+          "app_name": "chrome",
+          "operation": "launch",
+          "original_query": "open Chrome"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:03:13.463124",
+        "type": "app_control",
+        "text": "Open Steam",
+        "parameters": {
+          "app_name": "steam",
+          "operation": "launch",
+          "original_query": "Open Steam"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:04:30.289478",
+        "type": "app_control",
+        "text": "open speed Gate",
+        "parameters": {
+          "app_name": "SpeedGate",
+          "operation": "launch",
+          "original_query": "open speed Gate"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:05:33.958411",
+        "type": "provide_information",
+        "text": "split Gate to",
+        "parameters": {
+          "original_query": "split Gate to",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:05:53.552792",
+        "type": "app_control",
+        "text": "open split gate",
+        "parameters": {
+          "app_name": "split gate",
+          "operation": "launch",
+          "original_query": "open split gate"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:06:16.742992",
+        "type": "provide_information",
+        "text": "thank",
+        "parameters": {
+          "original_query": "thank",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:08:52.960776",
+        "type": "provide_information",
+        "text": "list apps",
+        "parameters": {
+          "query": "list installed applications",
+          "original_query": "list apps"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:14:44.779002",
+        "type": "provide_information",
+        "text": "how are you hi",
+        "parameters": {
+          "original_query": "how are you hi",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:15:03.848419",
+        "type": "provide_information",
+        "text": "please my installed apps",
+        "parameters": {
+          "query": "list my installed apps",
+          "original_query": "please my installed apps",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:15:33.556994",
+        "type": "provide_information",
+        "text": "list apps",
+        "parameters": {
+          "query": "list apps",
+          "original_query": "list apps",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:17:02.918391",
+        "type": "app_control",
+        "text": "open Chrome",
+        "parameters": {
+          "app_name": "chrome",
+          "operation": "launch",
+          "original_query": "open Chrome"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:17:26.680097",
+        "type": "provide_information",
+        "text": "allopathy",
+        "parameters": {
+          "original_query": "allopathy",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:17:53.965841",
+        "type": "app_control",
+        "text": "open Notepad",
+        "parameters": {
+          "app_name": "notepad",
+          "operation": "open",
+          "original_query": "open Notepad"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:18:11.864429",
+        "type": "app_control",
+        "text": "open split gate",
+        "parameters": {
+          "app_name": "split gate",
+          "operation": "launch",
+          "original_query": "open split gate"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:18:31.641416",
+        "type": "app_control",
+        "text": "open vah frame",
+        "parameters": {
+          "app_name": "vah frame",
+          "operation": "open",
+          "original_query": "open vah frame"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:19:02.681093",
+        "type": "provide_information",
+        "text": "open vah frame",
+        "parameters": {
+          "original_query": "open vah frame",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:19:17.804058",
+        "type": "app_control",
+        "text": "open vah frame",
+        "parameters": {
+          "app_name": "vah frame",
+          "operation": "open",
+          "original_query": "open vah frame"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:20:13.470807",
+        "type": "app_control",
+        "text": "open speed Gate",
+        "parameters": {
+          "app_name": "speed Gate",
+          "operation": "open",
+          "original_query": "open speed Gate"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:20:48.376775",
+        "type": "provide_information",
+        "text": "open",
+        "parameters": {
+          "original_query": "open",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:21:01.656339",
+        "type": "app_control",
+        "text": "open Chrome",
+        "parameters": {
+          "app_name": "chrome",
+          "operation": "launch",
+          "original_query": "open Chrome"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:21:15.628476",
+        "type": "app_control",
+        "text": "open everything",
+        "parameters": {
+          "app_name": "chrome",
+          "operation": "launch",
+          "original_query": "open everything"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:21:29.886992",
+        "type": "provide_information",
+        "text": "open",
+        "parameters": {
+          "original_query": "open",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:21:44.234387",
+        "type": "app_control",
+        "text": "open Brave",
+        "parameters": {
+          "app_name": "brave",
+          "operation": "launch",
+          "original_query": "open Brave"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:22:03.893176",
+        "type": "app_control",
+        "text": "open everything app",
+        "parameters": {
+          "app_name": "everything",
+          "operation": "launch",
+          "original_query": "open everything app"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:22:26.005219",
+        "type": "app_control",
+        "text": "open spotify",
+        "parameters": {
+          "app_name": "spotify",
+          "operation": "launch",
+          "original_query": "open Spotify"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:22:46.158113",
+        "type": "app_control",
+        "text": "Open Steam",
+        "parameters": {
+          "app_name": "steam",
+          "operation": "launch",
+          "original_query": "Open Steam"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:24:39.693006",
+        "type": "provide_information",
+        "text": "shortlist",
+        "parameters": {
+          "original_query": "shortlist",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:24:56.546486",
+        "type": "provide_information",
+        "text": "show app list",
+        "parameters": {
+          "query": "show app list",
+          "original_query": "show app list",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:25:38.799401",
+        "type": "provide_information",
+        "text": "show installed application",
+        "parameters": {
+          "original_query": "show installed application",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:26:08.325814",
+        "type": "provide_information",
+        "text": "show instead application",
+        "parameters": {
+          "original_query": "show instead application"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:27:39.142797",
+        "type": "app_control",
+        "text": "Open Steam",
+        "parameters": {
+          "app_name": "steam",
+          "operation": "launch",
+          "original_query": "Open Steam"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:27:54.900589",
+        "type": "app_control",
+        "text": "open cursor",
+        "parameters": {
+          "app_name": "VSCode",
+          "operation": "launch",
+          "original_query": "open cursor"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:38:20.587754",
+        "type": "provide_information",
+        "text": "list projects",
+        "parameters": {
+          "query": "list my projects",
+          "original_query": "list projects"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:39:47.701909",
+        "type": "provide_information",
+        "text": "open curs",
+        "parameters": {
+          "original_query": "open curs",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:40:00.789520",
+        "type": "provide_information",
+        "text": "open cursor",
+        "parameters": {
+          "original_query": "open cursor",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:40:13.057505",
+        "type": "provide_information",
+        "text": "open curs",
+        "parameters": {
+          "original_query": "open curs",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:40:25.356494",
+        "type": "provide_information",
+        "text": "open curs",
+        "parameters": {
+          "original_query": "open curs"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:41:10.080923",
+        "type": "app_control",
+        "text": "open vs",
+        "parameters": {
+          "app_name": "vscode",
+          "operation": "launch",
+          "original_query": "open vs"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:41:23.845449",
+        "type": "app_control",
+        "text": "open curs",
+        "parameters": {
+          "app_name": "curs",
+          "operation": "launch",
+          "original_query": "open curs"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:41:52.991113",
+        "type": "app_control",
+        "text": "open discord",
+        "parameters": {
+          "app_name": "discord",
+          "operation": "launch",
+          "original_query": "open discord"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:42:56.024810",
+        "type": "app_control",
+        "text": "open discord",
+        "parameters": {
+          "app_name": "discord",
+          "operation": "launch",
+          "original_query": "open discord"
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:44:34.017289",
+        "type": "provide_information",
+        "text": "list applications",
+        "parameters": {
+          "original_query": "list applications",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:46:34.071466",
+        "type": "provide_information",
+        "text": "show installed application",
+        "parameters": {
+          "query": "show installed application",
+          "original_query": "show installed application",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:48:28.060183",
+        "type": "provide_information",
+        "text": "installed applications",
+        "parameters": {
+          "original_query": "installed applications",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:50:10.209669",
+        "type": "provide_information",
+        "text": "list applications",
+        "parameters": {
+          "original_query": "list applications",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-14T20:55:43.135991",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan"
+        }
+      },
+      {
+        "timestamp": "2025-06-15T12:45:24.958620",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan"
+        }
+      },
+      {
+        "timestamp": "2025-06-15T12:52:32.119988",
+        "type": "fan_control",
+        "text": "turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan"
+        }
+      },
+      {
+        "timestamp": "2025-06-15T12:53:21.884312",
+        "type": "provide_information",
+        "text": "what's the fan",
+        "parameters": {
+          "query": "what's the fan",
+          "original_query": "what's the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-15T12:53:41.530414",
+        "type": "fan_control",
+        "text": "what's the fan status",
+        "parameters": {
+          "operation": "status",
+          "original_query": "what's the fan status"
+        }
       }
     ],
-    "total_sessions": 64,
-    "total_commands": 262,
+    "total_sessions": 66,
+    "total_commands": 313,
     "last_commands": [
-      "open chrome",
-      "steam",
-      "open spotify",
-      "Open Steam",
-      "show installed apps",
-      "show installed apps",
-      "show available apps",
-      "open vs",
-      "open steam",
-      "establishing"
+      "open discord",
+      "list applications",
+      "show installed application",
+      "installed applications",
+      "list applications",
+      "turn off the fan",
+      "turn off the fan",
+      "turn on the fan",
+      "what's the fan",
+      "what's the fan status"
     ]
   },
   "patterns": {

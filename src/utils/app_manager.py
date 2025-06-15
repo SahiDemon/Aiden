@@ -33,6 +33,7 @@ class AppManager:
             # Development tools
             "vscode": ["Visual Studio Code", "Code", "VS Code", "Microsoft Visual Studio Code"],
             "code": ["Visual Studio Code", "Code", "VS Code", "Microsoft Visual Studio Code"],
+            "cursor": ["Cursor", "cursor"],
             "visual studio": ["Microsoft Visual Studio", "Visual Studio"],
             "atom": ["Atom", "atom"],
             "sublime": ["Sublime Text", "sublime"],

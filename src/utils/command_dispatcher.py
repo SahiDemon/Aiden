@@ -12,6 +12,7 @@ from typing import Dict, Any, Callable, Optional
 # Import ESP32 controller and App Manager
 from src.utils.esp32_controller import ESP32Controller
 from src.utils.app_manager import AppManager
+from src.utils.powershell_app_launcher import PowerShellAppLauncher
 
 class CommandDispatcher:
     """Dispatches commands to appropriate handlers"""
@@ -34,7 +35,10 @@ class CommandDispatcher:
         esp32_enabled = general_config.get("esp32", {}).get("enabled", False)
         self.esp32_controller = ESP32Controller(config_manager) if esp32_enabled else None
         
-        # Initialize App Manager for intelligent app discovery and launching
+        # Initialize PowerShell App Launcher as PRIMARY app launcher
+        self.powershell_launcher = PowerShellAppLauncher(config_manager)
+        
+        # Initialize App Manager for fallback app discovery and launching
         self.app_manager = AppManager(config_manager)
         
         # Command handlers dictionary
@@ -51,7 +55,7 @@ class CommandDispatcher:
             "unknown": self._handle_unknown
         }
         
-        logging.info("Command dispatcher initialized")
+        logging.info("Command dispatcher initialized with PowerShell app launcher")
     
     def dispatch(self, command: Dict[str, Any]) -> bool:
         """Dispatch a command based on its action
@@ -172,7 +176,7 @@ class CommandDispatcher:
             return True
             
         # Check for app listing queries
-        elif any(phrase in query for phrase in ["list apps", "show apps", "available apps", "installed applications", "list applications", "show applications"]):
+        elif any(phrase in query for phrase in ["list apps", "show apps", "available apps", "installed applications", "list applications", "show applications", "app list", "show app list", "what apps", "which apps", "available applications"]):
             # Use the enhanced app listing functionality
             return self._show_available_apps_enhanced()
             
@@ -611,28 +615,20 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
             return False
     
     def _handle_app_control(self, parameters: Dict[str, Any]) -> bool:
-        """Handle application control commands using intelligent app discovery
+        """Handle app control commands (launch, close, etc.) using PowerShell launcher as primary
         
         Args:
-            parameters: Command parameters including app_name, operation, etc.
+            parameters: Command parameters including app_name and operation
             
         Returns:
             True if handled successfully, False otherwise
         """
-        app_name = parameters.get("app_name", "").lower().strip()
+        app_name = parameters.get("app_name", "")
         operation = parameters.get("operation", "launch")
         
-        # Handle "open app" without specifying which one - show available apps
-        if not app_name or app_name in ["app", "application", "program"]:
-            return self._show_available_apps_enhanced()
-        
-        # Check if it's a website/URL request
-        if self._is_website_request(app_name):
-            return self._handle_website_opening(app_name)
-        
-        # Handle project-related requests
-        if app_name in ["project", "folder"] or "project" in app_name:
-            return self._handle_project_request(parameters)
+        if not app_name:
+            self.voice_system.speak("I need to know which application you want me to work with.")
+            return False
         
         # Check if operation requires confirmation
         if operation == "launch" and self.security_config.get("confirm_app_launch", True):
@@ -640,23 +636,27 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
         
         try:
             if operation == "launch":
-                # Use AppManager to find and launch the app
-                return self._launch_app_intelligent(app_name)
+                # Use PowerShell launcher as PRIMARY, AppManager as fallback
+                return self._launch_app_with_powershell_primary(app_name)
                 
             elif operation == "close":
                 return self._close_app_intelligent(app_name)
+                
+            elif operation == "list":
+                # Show available apps using PowerShell launcher
+                return self._show_available_apps_powershell()
                 
             else:
                 self.voice_system.speak(f"I don't know how to {operation} applications.")
                 return False
                 
-                    except Exception as e:
+        except Exception as e:
             logging.error(f"Error in app control: {e}")
             self.voice_system.speak(f"I had trouble controlling {app_name}.")
             return False
-    
-    def _launch_app_intelligent(self, app_name: str) -> bool:
-        """Launch an app using intelligent search and discovery
+
+    def _launch_app_with_powershell_primary(self, app_name: str) -> bool:
+        """Launch an app using PowerShell launcher as primary, AppManager as fallback
         
         Args:
             app_name: Name of the app to launch
@@ -665,39 +665,80 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
             True if launched successfully, False otherwise
         """
         try:
+            # Primary: Use PowerShell launcher (fast, 15-second timeout)
+            logging.info(f"PRIMARY: Launching {app_name} with PowerShell launcher")
+            ps_result = self.powershell_launcher.launch_app(app_name)
+            
+            if ps_result["success"]:
+                # Success with PowerShell launcher
+                method = ps_result.get("method", "powershell")
+                exec_time = ps_result.get("execution_time", 0)
+                actual_name = ps_result.get("actual_name", app_name)
+                app_info = ps_result.get("app_info", {})
+                is_steam_game = ps_result.get("is_steam_game", False)
+                
+                # Create appropriate success message based on launch method
+                if method == "steam_protocol":
+                    voice_message = f"I've launched {actual_name} through Steam for you."
+                    detail_message = f"Launched {actual_name} via Steam protocol"
+                elif method == "uwp_app":
+                    voice_message = f"I've opened {actual_name} for you."
+                    detail_message = f"Launched {actual_name} (Windows Store app)"
+                elif method == "common_app":
+                    voice_message = f"I've opened {actual_name} for you."
+                    detail_message = f"Launched {actual_name} (quick launch)"
+                elif method == "hardcoded_path":
+                    voice_message = f"I've opened {actual_name} for you."
+                    detail_message = f"Launched {actual_name} (direct path)"
+                else:
+                    voice_message = f"I've launched {actual_name} for you."
+                    detail_message = f"Successfully launched {actual_name}"
+                
+                # Show enhanced action card
+                if self.dashboard_backend:
+                    action_card = {
+                        "type": "action_success",
+                        "title": f"Opened {actual_name}",
+                        "message": detail_message,
+                        "app_info": {
+                            "name": actual_name,
+                            "original_request": app_name,
+                            "launch_method": method,
+                            "execution_time": f"{exec_time:.1f}s",
+                            "is_steam_game": is_steam_game
+                        },
+                        "performance": {
+                            "search_time": f"{exec_time:.1f}s",
+                            "method": "PowerShell Launcher"
+                        },
+                        "status": "Success"
+                    }
+                    self.dashboard_backend._emit_ai_message(action_card, "action_card")
+                
+                # Provide clean voice feedback (no mention of technical details)
+                self.voice_system.speak(voice_message)
+                
+                return True
+            
+            # PowerShell failed - try fallback with AppManager
+            logging.info(f"FALLBACK: PowerShell launcher failed, trying AppManager for {app_name}")
+            
             # Search for the app using AppManager
             search_results = self.app_manager.search_apps(app_name, limit=5)
             
             if not search_results:
-                # No apps found, provide helpful feedback
-                self.voice_system.speak(f"I couldn't find an application named '{app_name}'. Would you like me to show you available applications?")
-                
-                # Show action card with suggestion
-                if self.dashboard_backend:
-                    action_card = {
-                        "type": "app_not_found",
-                        "title": f"App '{app_name}' Not Found",
-                        "message": "I couldn't find that application. Here are some suggestions:",
-                        "suggestions": [
-                            "Try a different name (e.g., 'Chrome' instead of 'Google Chrome')",
-                            "Check if the app is installed",
-                            "Ask me to show available apps"
-                        ],
-                        "status": "Not Found"
-                    }
-                    self.dashboard_backend._emit_ai_message(action_card, "action_card")
-                
+                # No apps found anywhere
+                self._handle_app_not_found(app_name)
                 return False
             
-            # Get the best match (first result)
+            # Get the best match and launch
             best_match = search_results[0]
             app_display_name = best_match['name']
             
-            # Launch the app
             success = self.app_manager.launch_app(best_match)
             
             if success:
-                # Show success action card
+                # Success with fallback - but don't mention "fallback" to user
                 if self.dashboard_backend:
                     action_card = {
                         "type": "action_success",
@@ -705,40 +746,103 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
                         "message": f"Successfully launched {app_display_name}",
                         "app_info": {
                             "name": best_match['name'],
-                            "version": best_match['version'],
-                            "publisher": best_match['publisher']
+                            "publisher": best_match.get('publisher', 'Unknown'),
+                            "original_request": app_name
+                        },
+                        "performance": {
+                            "method": "Registry Search"
                         },
                         "status": "Success"
                     }
                     self.dashboard_backend._emit_ai_message(action_card, "action_card")
                 
-                # Provide voice feedback
+                # Clean voice feedback - just say we found and launched it
                 if app_display_name.lower() != app_name.lower():
-                    self.voice_system.speak(f"I found {app_display_name} and launched it for you.")
+                    self.voice_system.speak(f"I found {app_display_name} and opened it for you.")
                 else:
-                    self.voice_system.speak(f"I've launched {app_display_name} for you.")
-                
+                    self.voice_system.speak(f"I've opened {app_display_name} for you.")
                 return True
             else:
-                # Launch failed
+                # Launch failed with AppManager too
                 self.voice_system.speak(f"I found {app_display_name} but couldn't launch it. Please check if it's properly installed.")
-                
-                if self.dashboard_backend:
-                    action_card = {
-                        "type": "action_error",
-                        "title": f"Failed to Launch {app_display_name}",
-                        "message": "The application was found but couldn't be launched",
-                        "status": "Error"
-                    }
-                    self.dashboard_backend._emit_ai_message(action_card, "action_card")
-                
                 return False
                 
         except Exception as e:
-            logging.error(f"Error in intelligent app launch: {e}")
+            logging.error(f"Error in PowerShell primary app launch: {e}")
             self.voice_system.speak(f"I had trouble launching {app_name}.")
             return False
-    
+
+    def _handle_app_not_found(self, app_name: str):
+        """Handle case when app is not found by any method"""
+        # Get common apps from PowerShell launcher
+        common_apps = self.powershell_launcher.get_common_apps()
+        app_list = ", ".join([app["name"] for app in common_apps[:5]])
+        
+        # Provide helpful voice message
+        self.voice_system.speak(f"I couldn't find an application named '{app_name}'. Some apps I can launch are: {app_list}. Would you like me to show more options?")
+        
+        # Show enhanced action card with suggestions
+        if self.dashboard_backend:
+            action_card = {
+                "type": "app_not_found",
+                "title": f"App '{app_name}' Not Found",
+                "message": "I couldn't find that application. Here are some suggestions:",
+                "suggestions": [
+                    f"Try saying the full name: 'Open Google Chrome' instead of 'Open Chrome'",
+                    f"Check if the app is installed on your system",
+                    f"Ask me to 'list apps' to see what's available",
+                    f"Try one of these popular apps: {app_list}"
+                ],
+                "common_apps": common_apps,
+                "actions": [
+                    {"text": "Show All Apps", "action": "list_apps"},
+                    {"text": "Open Chrome", "action": "launch_chrome"},
+                    {"text": "Open VS Code", "action": "launch_vscode"}
+                ],
+                "status": "Not Found"
+            }
+            self.dashboard_backend._emit_ai_message(action_card, "action_card")
+
+    def _show_available_apps_powershell(self) -> bool:
+        """Show available apps using PowerShell launcher with dashboard integration"""
+        try:
+            # Get common apps
+            common_apps = self.powershell_launcher.get_common_apps()
+            
+            # Show enhanced dashboard
+            if self.dashboard_backend:
+                action_card = {
+                    "type": "app_list",
+                    "title": "Available Applications",
+                    "message": "Here are the applications I can launch for you:",
+                    "apps": common_apps,
+                    "quick_actions": [
+                        {"text": "Launch", "action": "launch_app"},
+                        {"text": "Search More", "action": "search_more_apps"}
+                    ],
+                    "categories": {
+                        "browsers": ["Chrome", "Firefox"],
+                        "development": ["VS Code"],
+                        "gaming": ["Steam"],
+                        "communication": ["Discord"],
+                        "media": ["Spotify", "VLC"],
+                        "system": ["Calculator", "Notepad", "Explorer"]
+                    },
+                    "status": "Available"
+                }
+                self.dashboard_backend._emit_ai_message(action_card, "action_card")
+            
+            # Enhanced voice response
+            app_names = [app['name'] for app in common_apps[:5]]
+            self.voice_system.speak(f"I can launch many applications including: {', '.join(app_names)}. You can also ask me to search for specific apps or show the full app launcher.")
+            
+            return True
+            
+        except Exception as e:
+            logging.error(f"Error showing available apps: {e}")
+            self.voice_system.speak("I had trouble getting the list of available applications.")
+            return False
+
     def _close_app_intelligent(self, app_name: str) -> bool:
         """Close an app using intelligent search
         
@@ -761,9 +865,9 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
                 app_display_name = app_name
             
             # Close the app
-                if os.name == 'nt':  # Windows
+            if os.name == 'nt':  # Windows
                 subprocess.Popen(f"taskkill /im {executable}.exe /f", shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                else:  # Unix-like
+            else:  # Unix-like
                 subprocess.Popen(f"pkill {executable}", shell=True)
             
             self.voice_system.speak(f"I've closed {app_display_name} for you.")
@@ -1077,8 +1181,13 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
     def _show_available_apps_enhanced(self) -> bool:
         """Show a list of available applications using enhanced app discovery"""
         try:
-            # Get installed apps using AppManager
+            # Get installed apps using AppManager - force refresh if too few apps
             apps = self.app_manager.get_installed_apps()
+            
+            # If we have very few apps, it might be a fallback - force refresh
+            if len(apps) < 50:
+                logging.info("Too few apps detected, forcing refresh...")
+                apps = self.app_manager.get_installed_apps(force_refresh=True)
             
             # Get apps organized by categories
             categories = self.app_manager.get_app_categories()
@@ -1114,7 +1223,7 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
                 category_summary = ", ".join([f"{count} {cat.lower()}" for cat, count in top_categories])
                 self.voice_system.speak(f"I found {len(apps)} applications including {category_summary}. Which app would you like me to open?")
             else:
-            self.voice_system.speak(f"I found {len(apps)} applications available. Which app would you like me to open?")
+                self.voice_system.speak(f"I found {len(apps)} applications available. Which app would you like me to open?")
             
             return True
             
