@@ -86,7 +86,8 @@ class Aiden:
         except Exception as e:
             logging.error(f"Error in hotkey callback: {e}")
             logging.error(traceback.format_exc())
-            self.voice_system.speak("I encountered an error, Boss.")
+            form_of_address = self.config_manager.get_user_profile()["personal"]["form_of_address"]
+            self.voice_system.speak(f"I encountered an error, {form_of_address}.")
             
         finally:
             self.is_listening = False
@@ -259,7 +260,8 @@ class Aiden:
             print("Waiting for asterisk (*) key press...")
             
             # Speak startup notification
-            startup_message = f"Aiden is now ready. Press the asterisk key and ask me anything, Boss!"
+            form_of_address = self.config_manager.get_user_profile()["personal"]["form_of_address"]
+            startup_message = f"Aiden is now ready. Press the asterisk key and ask me anything, {form_of_address}!"
             self.voice_system.speak(startup_message)
             
             # Keep the main thread alive
@@ -286,7 +288,8 @@ class Aiden:
             self.hotkey_listener.stop_listening()
             
             # Goodbye message
-            self.voice_system.speak("Goodbye Boss.")
+            form_of_address = self.config_manager.get_user_profile()["personal"]["form_of_address"]
+            self.voice_system.speak(f"Goodbye {form_of_address}.")
             
             logging.info("Aiden stopped")
             return True

@@ -1005,7 +1005,8 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
             if "status" in operation or "check" in operation or "state" in operation:
                 status_message = self.esp32_controller.get_human_readable_status()
                 logging.info(f"Fan status check: {status_message}")
-                # The LLM will handle the response, so we just log it
+                # Actually speak the status to the user
+                self.voice_system.speak(status_message)
                 return True
                 
             elif operation == "on" or operation == "turn_on" or operation == "start":
@@ -1115,68 +1116,8 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
     
     def provide_proactive_suggestions(self, user_query: str) -> None:
         """Provide proactive suggestions based on user input and history"""
-        try:
-            # Get user profile and history
-            user_profile = self.config_manager.get_user_profile()
-            interactions = user_profile.get("history", {}).get("interactions", [])
-            
-            # Analyze the query for opportunities to be proactive
-            query_lower = user_query.lower()
-            
-            # Check for coding-related queries
-            if any(word in query_lower for word in ["code", "programming", "development", "project", "script", "app", "website"]):
-                self._suggest_coding_assistance(query_lower)
-                return
-            
-            # Check for learning/research queries
-            elif any(word in query_lower for word in ["learn", "how to", "tutorial", "explain", "what is", "research"]):
-                self._suggest_learning_resources(query_lower)
-                return
-            
-            # Check for productivity queries
-            elif any(word in query_lower for word in ["organize", "schedule", "manage", "automate", "efficient"]):
-                self._suggest_productivity_tools(query_lower)
-                return
-            
-            # Check for general exploration
-            elif any(word in query_lower for word in ["bored", "ideas", "what should i", "suggestions"]):
-                self._suggest_exploration_activities()
-                return
-            
-            # If they mentioned any specific technology, offer related help
-            technologies = ["python", "javascript", "react", "node", "esp32", "ai", "machine learning", "web dev"]
-            mentioned_tech = [tech for tech in technologies if tech in query_lower]
-            
-            if mentioned_tech:
-                self._suggest_technology_resources(mentioned_tech)
-                return
-                
-        except Exception as e:
-            logging.error(f"Error providing proactive suggestions: {e}")
-    
-    def _suggest_coding_assistance(self, query: str) -> None:
-        """Suggest coding-related assistance"""
-        suggestions = []
-        
-        if "python" in query:
-            suggestions.append("I can help you set up Python environments, open IDEs, or find Python tutorials!")
-        elif "web" in query or "html" in query or "css" in query or "javascript" in query:
-            suggestions.append("Want me to open VSCode, create a new web project folder, or find web development resources?")
-        elif "project" in query:
-            suggestions.append("I can help organize project files, open development tools, or suggest project ideas!")
-        else:
-            suggestions.append("Need help with development? I can open your coding tools, organize files, or find programming resources!")
-        
-        if suggestions:
-            import random
-            suggestion = random.choice(suggestions)
-            
-            # Add to dashboard if available
-            if self.dashboard_backend:
-                self.dashboard_backend._emit_ai_message(f"💡 **Coding Suggestion:** {suggestion}", "suggestion")
-            
-            # Brief spoken follow-up
-            self.voice_system.speak(f"By the way, {suggestion}")
+        # DISABLED: Proactive suggestions removed per user request
+        pass
     
     def _show_available_apps_enhanced(self) -> bool:
         """Show a list of available applications using enhanced app discovery"""
@@ -1582,86 +1523,6 @@ Created on: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
             logging.error(f"Error creating new project: {e}")
             self.voice_system.speak("I had trouble creating the new project.")
             return False
-    
-    def _suggest_learning_resources(self, query: str) -> None:
-        """Suggest learning and research assistance"""
-        suggestions = [
-            "Want me to find tutorials, open educational websites, or help organize your learning materials?",
-            "I can search for documentation, create study folders, or find practice resources!",
-            "Need me to bookmark useful sites, take notes, or find related topics to explore?"
-        ]
-        
-        import random
-        suggestion = random.choice(suggestions)
-        
-        # Add to dashboard if available
-        if self.dashboard_backend:
-            self.dashboard_backend._emit_ai_message(f"📚 **Learning Suggestion:** {suggestion}", "suggestion")
-        
-        # Brief spoken follow-up
-        self.voice_system.speak(f"Also, {suggestion}")
-    
-    def _suggest_productivity_tools(self, query: str) -> None:
-        """Suggest productivity enhancements"""
-        suggestions = [
-            "I can help automate tasks, organize files, or set up efficient workflows!",
-            "Want me to create shortcuts, organize your desktop, or find productivity apps?",
-            "I can help with file management, app automation, or workspace optimization!"
-        ]
-        
-        import random
-        suggestion = random.choice(suggestions)
-        
-        # Add to dashboard if available
-        if self.dashboard_backend:
-            self.dashboard_backend._emit_ai_message(f"🚀 **Productivity Tip:** {suggestion}", "suggestion")
-        
-        # Brief spoken follow-up
-        self.voice_system.speak(f"Plus, {suggestion}")
-    
-    def _suggest_exploration_activities(self) -> None:
-        """Suggest exploration and discovery activities"""
-        activities = [
-            "Want to explore some coding tutorials, try a new programming language, or work on a creative project?",
-            "How about setting up a development environment, exploring AI tools, or learning something new?",
-            "I can suggest project ideas, find interesting repositories, or help you discover new technologies!"
-        ]
-        
-        import random
-        activity = random.choice(activities)
-        
-        # Add to dashboard if available
-        if self.dashboard_backend:
-            self.dashboard_backend._emit_ai_message(f"🎯 **Exploration Ideas:** {activity}", "suggestion")
-        
-        # Spoken follow-up
-        self.voice_system.speak(activity)
-    
-    def _suggest_technology_resources(self, technologies: list) -> None:
-        """Suggest resources for specific technologies mentioned"""
-        tech_suggestions = {
-            "python": "I can help set up Python projects, find libraries, or open development tools!",
-            "javascript": "Want me to create a JS project, open a code editor, or find frameworks?",
-            "react": "I can help scaffold a React app, find components, or open development servers!",
-            "esp32": "Need help with IoT projects, find ESP32 documentation, or control your fan?",
-            "ai": "Interested in AI tutorials, machine learning resources, or AI development tools?"
-        }
-        
-        suggestions = []
-        for tech in technologies:
-            if tech in tech_suggestions:
-                suggestions.append(tech_suggestions[tech])
-        
-        if suggestions:
-            import random
-            suggestion = random.choice(suggestions)
-            
-            # Add to dashboard if available
-            if self.dashboard_backend:
-                self.dashboard_backend._emit_ai_message(f"⚡ **Tech Suggestion:** {suggestion}", "suggestion")
-            
-            # Brief spoken follow-up
-            self.voice_system.speak(f"By the way, {suggestion}")
     
     def _detect_project_type_fast(self, project_path: str) -> str:
         """Fast project type detection - only check for key files"""

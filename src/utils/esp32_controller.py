@@ -183,21 +183,23 @@ class ESP32Controller:
         message = parsed.get('message', '')
         
         if state == 'off':
-            return f"Fan is currently OFF. {message}"
+            return f"The fan is currently turned off."
         elif state == 'on':
             if speed in ['1', '2', '3']:
-                return f"Fan is ON at speed {speed}. {message}"
+                speed_names = {'1': 'low', '2': 'medium', '3': 'high'}
+                speed_name = speed_names.get(speed, speed)
+                return f"The fan is on and it's running at speed level {speed}, which is {speed_name} speed."
             elif speed == 'mode_changed':
-                return f"Fan is ON and mode was recently changed. {message}"
+                return f"The fan is on and the mode was recently changed."
             else:
-                return f"Fan is ON at unknown speed. {message}"
+                return f"The fan is on, but I couldn't determine the exact speed level."
         elif state == 'unknown':
             if 'just started' in message:
-                return f"Fan controller just started up. No commands sent yet."
+                return f"Accually, the fan controller just started up. Ask the question again later."
             else:
-                return f"Fan status is unknown. {message}"
+                return f"I'm not sure about the fan status right now. Let me try to check again."
         else:
-            return f"Fan status: {message}"
+            return f"The fan status is: {message}"
     
     def get_status(self) -> Dict[str, Any]:
         """Get current fan status from ESP32
@@ -245,22 +247,51 @@ class ESP32Controller:
         Returns:
             Dictionary with parsed state and speed information
         """
+        import re
+        original_text = status_text  # Keep original for debugging
         status_text = status_text.lower()
         
+        # Handle device just started
         if "device just started" in status_text or "no command sent" in status_text:
             return {'state': 'unknown', 'speed': 'unknown', 'message': 'Device just started'}
-        elif "power off" in status_text or "off" in status_text:
-            return {'state': 'off', 'speed': '0', 'message': 'Fan is off'}
-        elif "speed 1" in status_text or "on" in status_text:
-            return {'state': 'on', 'speed': '1', 'message': 'Fan on speed 1'}
-        elif "speed 2" in status_text:
-            return {'state': 'on', 'speed': '2', 'message': 'Fan on speed 2'}
-        elif "speed 3" in status_text:
-            return {'state': 'on', 'speed': '3', 'message': 'Fan on speed 3'}
-        elif "mode change" in status_text:
-            return {'state': 'on', 'speed': 'mode_changed', 'message': 'Fan mode changed'}
-        else:
-            return {'state': 'unknown', 'speed': 'unknown', 'message': f'Unknown status: {status_text}'}
+        
+        # Check for "Last command: OFF" pattern first (more specific)
+        if re.search(r'last\s+command:\s*off', status_text):
+            return {'state': 'off', 'speed': '0', 'message': 'turned off'}
+        
+        # Check for "Last command: ON / Speed N" pattern
+        last_command_match = re.search(r'last\s+command:\s*on\s*/\s*speed\s*([123])', status_text)
+        if last_command_match:
+            speed = last_command_match.group(1)
+            return {'state': 'on', 'speed': speed, 'message': f'running at speed level {speed}'}
+        
+        # Check for "Last command: ON" (without speed)
+        if re.search(r'last\s+command:\s*on', status_text):
+            return {'state': 'on', 'speed': '1', 'message': 'running (speed level unknown)'}
+        
+        # Fallback: Handle other off patterns
+        if "power off" in status_text or re.search(r'\boff\b', status_text):
+            return {'state': 'off', 'speed': '0', 'message': 'turned off'}
+        
+        # Try to extract speed from the status string (general patterns)
+        speed_match = re.search(r'speed\s*([123])', status_text)
+        if speed_match:
+            speed = speed_match.group(1)
+            return {'state': 'on', 'speed': speed, 'message': f'running at speed level {speed}'}
+        
+        # If it says ON but no speed, try to extract from ON / Speed N
+        if "on" in status_text:
+            # Try to extract speed after ON / Speed N
+            speed_match = re.search(r'on\s*/\s*speed\s*([123])', status_text)
+            if speed_match:
+                speed = speed_match.group(1)
+                return {'state': 'on', 'speed': speed, 'message': f'running at speed level {speed}'}
+            return {'state': 'on', 'speed': '1', 'message': 'running (speed level unknown)'}
+        
+        if "mode change" in status_text:
+            return {'state': 'on', 'speed': 'mode_changed', 'message': 'mode recently changed'}
+        
+        return {'state': 'unknown', 'speed': 'unknown', 'message': f'Unknown status: {original_text}'}
 
     def check_connection(self) -> bool:
         """Check if ESP32 is reachable without changing fan state

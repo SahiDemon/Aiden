@@ -415,9 +415,9 @@ class VoiceSystem:
         
         # Update user profile
         self.config_manager.update_user_profile(
-            "preferences", 
-            "voice", 
-            {
+            section="preferences", 
+            key="voice", 
+            value={
                 "tts_voice": voice_id,
                 "speed": self.rate,
                 "volume": self.volume

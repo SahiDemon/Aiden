@@ -117,17 +117,58 @@ class AidenDashboardBackend:
             """Update configuration"""
             try:
                 data = request.get_json()
+                
+                # Validate input data
+                if not data:
+                    return jsonify({'error': 'No data provided', 'success': False}), 400
+                
+                config_updated = False
+                profile_updated = False
+                
+                # Update config if provided
                 if 'config' in data:
-                    self.config_manager.update_config(data['config'])
+                    try:
+                        self.config_manager.update_config(data['config'])
+                        config_updated = True
+                        print("Configuration updated successfully")
+                    except Exception as e:
+                        print(f"Error updating config: {e}")
+                        return jsonify({'error': f'Failed to update config: {str(e)}', 'success': False}), 500
+                
+                # Update user profile if provided
                 if 'user_profile' in data:
-                    self.config_manager.update_user_profile(data['user_profile'])
+                    try:
+                        self.config_manager.update_user_profile(new_profile=data['user_profile'])
+                        profile_updated = True
+                        print("User profile updated successfully")
+                    except Exception as e:
+                        print(f"Error updating user profile: {e}")
+                        return jsonify({'error': f'Failed to update user profile: {str(e)}', 'success': False}), 500
                 
-                # Reload components with new config
-                self._reload_components()
+                # Reload components with new config (non-blocking)
+                if config_updated or profile_updated:
+                    try:
+                        self._reload_components()
+                    except Exception as e:
+                        print(f"Warning: Component reload had issues: {e}")
+                        # Don't fail the request if component reload has issues
                 
-                return jsonify({'success': True, 'message': 'Configuration updated'})
+                message = []
+                if config_updated:
+                    message.append("configuration")
+                if profile_updated:
+                    message.append("user profile")
+                
+                return jsonify({
+                    'success': True, 
+                    'message': f'Successfully updated {" and ".join(message)}',
+                    'config_updated': config_updated,
+                    'profile_updated': profile_updated
+                })
+                
             except Exception as e:
-                return jsonify({'error': str(e), 'success': False}), 500
+                print(f"Unexpected error in config update: {e}")
+                return jsonify({'error': f'Unexpected error: {str(e)}', 'success': False}), 500
         
         @self.app.route('/api/conversation/history')
         def get_conversation_history():
@@ -328,22 +369,24 @@ class AidenDashboardBackend:
                 
                 if action == 'turn_on':
                     result = self.esp32_controller.turn_on()
-                    message = "Fan turned on"
+                    message = "The fan has been turned on"
                 elif action == 'turn_off':
                     result = self.esp32_controller.turn_off()
-                    message = "Fan turned off"
+                    message = "The fan has been turned off"
                 elif action == 'change_mode':
                     result = self.esp32_controller.change_mode()
-                    message = "Fan mode changed"
+                    message = "The fan mode has been changed"
                 elif action == 'cycle_speed':
                     # Use smart cycling based on current status
                     result = self.esp32_controller.cycle_speed()
-                    message = "Fan speed cycled intelligently"
+                    message = "The fan speed has been cycled intelligently"
                 elif action == 'set_speed':
                     # Set specific speed
                     if speed and speed in [1, 2, 3]:
                         result = self.esp32_controller.set_speed(int(speed))
-                        message = f"Fan set to speed {speed}"
+                        speed_names = {1: 'low', 2: 'medium', 3: 'high'}
+                        speed_name = speed_names.get(int(speed), str(speed))
+                        message = f"The fan has been set to speed level {speed}, which is {speed_name} speed"
                     else:
                         return jsonify({'error': 'Invalid speed. Must be 1, 2, or 3', 'success': False}), 400
                 elif action == 'test_connection':
@@ -785,6 +828,7 @@ class AidenDashboardBackend:
             
                 # For ALL provide_information actions, speak here and prevent dispatcher speech
                 # This includes simple greetings, conversational responses, etc.
+                # BUT exclude fan_control status checks - let the dispatcher handle those
                 if command.get("action") == "provide_information":
                     # Speak the response immediately for all informational responses
                     self.voice_system.speak(ai_response)
@@ -792,14 +836,26 @@ class AidenDashboardBackend:
                     command["_already_spoken"] = True
                     # Also add the flag to parameters for the handler
                     command.get("parameters", {})["_prevent_speech"] = True
+                elif command.get("action") == "fan_control":
+                    # For fan control, check if it's a status check
+                    operation = command.get("parameters", {}).get("operation", "").lower()
+                    if "status" in operation or "check" in operation or "state" in operation:
+                        # For fan status checks, DON'T speak here - let dispatcher handle everything
+                        # This prevents double speaking
+                        pass
+                    else:
+                        # For fan control actions (on/off/speed), speak normally and prevent dispatcher speech
+                        self.voice_system.speak(ai_response)
+                        command["_already_spoken"] = True
+                        command.get("parameters", {})["_prevent_speech"] = True
             
             # Execute the command
             result = self.command_dispatcher.dispatch(command)
             
-            # Add proactive suggestions after command execution
+            # DISABLED: Add proactive suggestions after command execution
             # Only for substantial interactions and if command was successful
-            if result and len(text.strip()) > 15:
-                self._schedule_proactive_suggestions(text)
+            # if result and len(text.strip()) > 15:
+            #     self._schedule_proactive_suggestions(text)
             
             # Emit command execution result
             self.socketio.emit('command_executed', {
@@ -885,8 +941,19 @@ class AidenDashboardBackend:
         # FIRST: Check for completed actions (highest priority)
         completed_actions = [
             "app_control", "file_operation", "system_command", "web_search",
-            "fan_control", "change_settings"
+            "change_settings"
         ]
+        
+        # For fan_control, only end if it's an actual control action, not status check
+        if action == "fan_control":
+            operation = command.get("parameters", {}).get("operation", "").lower()
+            if "status" in operation or "check" in operation or "state" in operation:
+                print(f"HOTKEY MODE: Fan status check - continuing conversation")
+                return False
+            else:
+                print(f"HOTKEY MODE: Fan control action '{operation}' completed - ending")
+                return True
+        
         if action in completed_actions:
             print(f"HOTKEY MODE: Action '{action}' completed - ending")
             return True
@@ -1541,15 +1608,35 @@ Created on: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
     def _reload_components(self):
         """Reload components with new configuration"""
         try:
-            # Reload voice system
-            self.voice_system = VoiceSystem(self.config_manager)
+            # Reload voice system safely
+            try:
+                self.voice_system = VoiceSystem(self.config_manager)
+                print("Voice system reloaded successfully")
+            except Exception as e:
+                print(f"Warning: Could not reload voice system: {e}")
             
-            # Reload other components as needed
-            self.esp32_controller = ESP32Controller(self.config_manager)
+            # Reload ESP32 controller safely
+            try:
+                self.esp32_controller = ESP32Controller(self.config_manager)
+                print("ESP32 controller reloaded successfully")
+            except Exception as e:
+                print(f"Warning: Could not reload ESP32 controller: {e}")
             
-            print("Components reloaded with new configuration")
+            # Reload command dispatcher safely
+            try:
+                self.command_dispatcher = CommandDispatcher(
+                    self.config_manager, 
+                    self.voice_system, 
+                    dashboard_backend=self
+                )
+                print("Command dispatcher reloaded successfully")
+            except Exception as e:
+                print(f"Warning: Could not reload command dispatcher: {e}")
+            
+            print("Component reload completed (some components may have warnings)")
         except Exception as e:
-            print(f"Error reloading components: {e}")
+            print(f"Error during component reload: {e}")
+            # Don't raise the exception - just log it and continue
     
     def run(self, host='localhost', port=5000, debug=False):
         """Run the Flask application"""

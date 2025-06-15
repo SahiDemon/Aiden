@@ -51,19 +51,24 @@ class LLMConnector:
         # Get context for the prompt
         context = self._build_context()
         
+        # Get user's preferred address
+        form_of_address = self.user_profile["personal"]["form_of_address"]
+        
         # Build the full prompt
         full_prompt = f"{context}\n\nThe user said: \"{command_text}\"\n\n"
-        full_prompt += """Identify the action to take and extract relevant parameters.
+        full_prompt += f"""Identify the action to take and extract relevant parameters.
 Respond ONLY in JSON format with the following structure:
-{
+{{
     "action": "action_name",
-    "parameters": {
+    "parameters": {{
         "param1": "value1",
         "original_query": "exact user input",
         ...
-    },
+    }},
     "response": "Your response to the user"
-}
+}}
+
+IMPORTANT: Always address the user as "{form_of_address}" in your responses, not "Boss" or any other title.
 
 Valid actions include:
 - "provide_information": For answering questions, getting system info, listing projects
@@ -100,53 +105,66 @@ For web search commands, use parameters like:
 - engine: "google", "bing", "duckduckgo"
 
 For fan control commands, use parameters like:
-- operation: "on", "off", "mode", "speed"
+- operation: "on", "off", "mode", "speed", "status", "check"
 - speed: "1", "2", "3" or "low", "medium", "high"
+
+IMPORTANT: For fan status/check commands, do NOT provide the actual fan status in your response. 
+Just say you're checking it. The system will get the real status from the hardware.
 
 ALWAYS include the original_query in parameters for context.
 
 Examples:
 1. "open chrome" becomes:
-{
+{{
     "action": "app_control",
-    "parameters": {
+    "parameters": {{
         "app_name": "chrome",
         "operation": "launch",
         "original_query": "open chrome"
-    },
-    "response": "Opening Chrome for you, Boss."
-}
+    }},
+    "response": "Opening Chrome for you, {form_of_address}."
+}}
 
 2. "list my projects" becomes:
-{
+{{
     "action": "provide_information",
-    "parameters": {
+    "parameters": {{
         "query": "list my projects",
         "original_query": "list my projects"
-    },
-    "response": "Let me show you your projects, Boss."
-}
+    }},
+    "response": "Let me show you your projects, {form_of_address}."
+}}
 
 3. "search for AI tutorials" becomes:
-{
+{{
     "action": "web_search",
-    "parameters": {
+    "parameters": {{
         "query": "AI tutorials",
         "engine": "google",
         "original_query": "search for AI tutorials"
-    },
-    "response": "Searching for AI tutorials on Google, Boss."
-}
+    }},
+    "response": "Searching for AI tutorials on Google, {form_of_address}."
+}}
+
+4. "what's the fan status" becomes:
+{{
+    "action": "fan_control",
+    "parameters": {{
+        "operation": "status",
+        "original_query": "what's the fan status"
+    }},
+    "response": "Let me check the fan status for you, {form_of_address}."
+}}
 
 If the user wants natural conversation without a specific command, use:
-{
+{{
     "action": "provide_information", 
-    "parameters": {
+    "parameters": {{
         "query": "conversation",
         "original_query": "user's exact words"
-    },
-    "response": "Your conversational response"
-}
+    }},
+    "response": "Your conversational response (remember to address them as {form_of_address})"
+}}
 """
         # Process with the appropriate LLM engine
         if self.engine == "tgpt":
@@ -169,7 +187,7 @@ If the user wants natural conversation without a specific command, use:
             return {
                 "action": "unknown",
                 "parameters": {"original_query": command_text},
-                "response": "I'm sorry, Boss. I'm having trouble connecting to the AI. Please make sure tgpt is installed and available."
+                "response": f"I'm sorry, {form_of_address}. I'm having trouble connecting to my AI."
             }
     
     def _build_context(self) -> str:
@@ -254,71 +272,51 @@ If the user wants natural conversation without a specific command, use:
             return self._default_error_response()
     
     def _clean_tgpt_output(self, output: str) -> str:
-        """Clean and parse the output from tgpt command
+        """Clean the tgpt output by removing loading indicators and spinner characters
         
         Args:
-            output: Raw output from tgpt command
+            output: Raw output from tgpt
             
         Returns:
             Cleaned output string
         """
-        logging.info(f"Raw tgpt output: {output[:100]}...")
-        print(f"Original tgpt output: {output}")
+        # Get user's preferred address for fallback responses
+        form_of_address = self.user_profile["personal"]["form_of_address"]
         
-        # If the response is very short (less than 10 chars), mark it for fallback processing
-        # but don't return immediately - let the main fallback logic handle it
-        if len(output.strip()) < 10:
-            logging.warning(f"Received very short response from tgpt: '{output}'")
-            # Set cleaned_output to empty so it will trigger the improved fallback logic below
-            cleaned_output = ""
-        else:
-            # Remove loading spinners (lines starting with spinner symbols)
-            lines = output.split('\n')
-            cleaned_lines = []
-            
-            # Comprehensive list of spinner characters and loading patterns
-            spinner_chars = [
-                '⠿', '⠾', '⠽', '⠻', '⣿', '⣾', '⣽', '⣻', '⢿', '⢾', '⢽', '⢻', '⡿', '⡾', '⡽', '⡻',
-                '⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏',
-                '⣷', '⣯', '⣟', '⡿', '⢿', '⣻', '⣽', '⣾',
-                '|', '/', '-', '\\', 
-                '■', '□', '▪', '▫', '▬', '▭', '▮', '▯',
-                '▓', '▒', '░',
-                '●', '○', '◯', '◎', '◉', '⦿',
-                '▶', '▷', '▸', '▹', '►', '▻',
-                '⣾', '⣷', '⣿'
-            ]
-            
-            loading_patterns = [
-                'Loading', 'loading', 'LOADING',
-                'Please wait', 'please wait', 'PLEASE WAIT',
-                'Thinking', 'thinking', 'THINKING',
-                'Processing', 'processing', 'PROCESSING'
-            ]
-            
-            for line in lines:
-                # Skip if line contains any spinner character
-                if any(spinner in line for spinner in spinner_chars):
-                    continue
-                    
-                # Skip lines that contain loading text
-                skip_line = False
-                for pattern in loading_patterns:
-                    if pattern in line:
-                        skip_line = True
-                        break
-                        
-                if skip_line:
-                    continue
-                    
-                # Skip lines with just dots (like "...")
-                if line.strip() and all(c == '.' for c in line.strip()):
-                    continue
-                    
-                cleaned_lines.append(line)
-            
-            cleaned_output = '\n'.join(cleaned_lines)
+        # Remove loading indicators and spinner characters
+        lines = output.split('\n')
+        cleaned_lines = []
         
+        # Common spinner characters and loading patterns
+        spinner_chars = ['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷', '|', '/', '-', '\\']
+        loading_patterns = [
+            'Loading', 'loading', 'LOADING',
+            'Processing', 'processing', 'PROCESSING'
+        ]
+        
+        for line in lines:
+            # Skip if line contains any spinner character
+            if any(spinner in line for spinner in spinner_chars):
+                continue
+                
+            # Skip lines that contain loading text
+            skip_line = False
+            for pattern in loading_patterns:
+                if pattern in line:
+                    skip_line = True
+                    break
+                    
+            if skip_line:
+                continue
+                
+            # Skip lines with just dots (like "...")
+            if line.strip() and all(c == '.' for c in line.strip()):
+                continue
+                
+            cleaned_lines.append(line)
+        
+        cleaned_output = '\n'.join(cleaned_lines)
+    
         # Check if we have a proper response
         if not cleaned_output.strip() or len(cleaned_output.strip()) < 20:
             # Improved hard-coded responses for common commands
@@ -326,55 +324,55 @@ If the user wants natural conversation without a specific command, use:
             
             # App launching commands
             if any(phrase in command_lower for phrase in ["open chrome", "launch chrome", "start chrome", "chrome"]):
-                return f"""{{\"action\": \"app_control\", \"parameters\": {{\"app_name\": \"chrome\", \"operation\": \"launch\", \"original_query\": \"{self.last_command}\"}}, \"response\": \"Opening Chrome for you, Boss.\"}}"""
+                return f"""{{\"action\": \"app_control\", \"parameters\": {{\"app_name\": \"chrome\", \"operation\": \"launch\", \"original_query\": \"{self.last_command}\"}}, \"response\": \"Opening Chrome for you, {form_of_address}.\"}}"""
             elif any(phrase in command_lower for phrase in ["open vscode", "launch vscode", "start vscode", "visual studio code", "vs code"]):
-                return f"""{{\"action\": \"app_control\", \"parameters\": {{\"app_name\": \"vscode\", \"operation\": \"launch\", \"original_query\": \"{self.last_command}\"}}, \"response\": \"Opening Visual Studio Code for you, Boss.\"}}"""
+                return f"""{{\"action\": \"app_control\", \"parameters\": {{\"app_name\": \"vscode\", \"operation\": \"launch\", \"original_query\": \"{self.last_command}\"}}, \"response\": \"Opening Visual Studio Code for you, {form_of_address}.\"}}"""
             elif any(phrase in command_lower for phrase in ["open edge", "launch edge", "start edge", "microsoft edge"]):
-                return f"""{{\"action\": \"app_control\", \"parameters\": {{\"app_name\": \"edge\", \"operation\": \"launch\", \"original_query\": \"{self.last_command}\"}}, \"response\": \"Opening Microsoft Edge for you, Boss.\"}}"""
+                return f"""{{\"action\": \"app_control\", \"parameters\": {{\"app_name\": \"edge\", \"operation\": \"launch\", \"original_query\": \"{self.last_command}\"}}, \"response\": \"Opening Microsoft Edge for you, {form_of_address}.\"}}"""
             elif any(phrase in command_lower for phrase in ["open firefox", "launch firefox", "start firefox"]):
-                return f"""{{\"action\": \"app_control\", \"parameters\": {{\"app_name\": \"firefox\", \"operation\": \"launch\", \"original_query\": \"{self.last_command}\"}}, \"response\": \"Opening Firefox for you, Boss.\"}}"""
+                return f"""{{\"action\": \"app_control\", \"parameters\": {{\"app_name\": \"firefox\", \"operation\": \"launch\", \"original_query\": \"{self.last_command}\"}}, \"response\": \"Opening Firefox for you, {form_of_address}.\"}}"""
             elif any(phrase in command_lower for phrase in ["open notepad", "launch notepad", "start notepad"]):
-                return f"""{{\"action\": \"app_control\", \"parameters\": {{\"app_name\": \"notepad\", \"operation\": \"launch\", \"original_query\": \"{self.last_command}\"}}, \"response\": \"Opening Notepad for you, Boss.\"}}"""
+                return f"""{{\"action\": \"app_control\", \"parameters\": {{\"app_name\": \"notepad\", \"operation\": \"launch\", \"original_query\": \"{self.last_command}\"}}, \"response\": \"Opening Notepad for you, {form_of_address}.\"}}"""
             elif any(phrase in command_lower for phrase in ["open calculator", "launch calculator", "start calculator", "calc"]):
-                return f"""{{\"action\": \"app_control\", \"parameters\": {{\"app_name\": \"calculator\", \"operation\": \"launch\", \"original_query\": \"{self.last_command}\"}}, \"response\": \"Opening Calculator for you, Boss.\"}}"""
+                return f"""{{\"action\": \"app_control\", \"parameters\": {{\"app_name\": \"calculator\", \"operation\": \"launch\", \"original_query\": \"{self.last_command}\"}}, \"response\": \"Opening Calculator for you, {form_of_address}.\"}}"""
             elif any(phrase in command_lower for phrase in ["open explorer", "launch explorer", "start explorer", "file explorer"]):
-                return f"""{{\"action\": \"app_control\", \"parameters\": {{\"app_name\": \"explorer\", \"operation\": \"launch\", \"original_query\": \"{self.last_command}\"}}, \"response\": \"Opening File Explorer for you, Boss.\"}}"""
+                return f"""{{\"action\": \"app_control\", \"parameters\": {{\"app_name\": \"explorer\", \"operation\": \"launch\", \"original_query\": \"{self.last_command}\"}}, \"response\": \"Opening File Explorer for you, {form_of_address}.\"}}"""
             elif any(phrase in command_lower for phrase in ["open terminal", "launch terminal", "start terminal", "command prompt", "cmd"]):
-                return f"""{{\"action\": \"app_control\", \"parameters\": {{\"app_name\": \"terminal\", \"operation\": \"launch\", \"original_query\": \"{self.last_command}\"}}, \"response\": \"Opening Terminal for you, Boss.\"}}"""
+                return f"""{{\"action\": \"app_control\", \"parameters\": {{\"app_name\": \"terminal\", \"operation\": \"launch\", \"original_query\": \"{self.last_command}\"}}, \"response\": \"Opening Terminal for you, {form_of_address}.\"}}"""
             
             # Project commands
             elif any(phrase in command_lower for phrase in ["open project", "show project", "project", "open folder", "show folder"]):
-                return f"""{{\"action\": \"provide_information\", \"parameters\": {{\"query\": \"list my projects\", \"original_query\": \"{self.last_command}\"}}, \"response\": \"I'll show you your available projects, Boss.\"}}"""
+                return f"""{{\"action\": \"provide_information\", \"parameters\": {{\"query\": \"list my projects\", \"original_query\": \"{self.last_command}\"}}, \"response\": \"I'll show you your available projects, {form_of_address}.\"}}"""
             elif any(phrase in command_lower for phrase in ["list my projects", "show my projects", "my projects", "project list", "show projects", "what projects"]):
-                return f"""{{\"action\": \"provide_information\", \"parameters\": {{\"query\": \"list my projects\", \"original_query\": \"{self.last_command}\"}}, \"response\": \"Let me show you your projects, Boss.\"}}"""
+                return f"""{{\"action\": \"provide_information\", \"parameters\": {{\"query\": \"list my projects\", \"original_query\": \"{self.last_command}\"}}, \"response\": \"Let me show you your projects, {form_of_address}.\"}}"""
             
             # Web search commands
             elif any(phrase in command_lower for phrase in ["search for", "google", "search google", "look up"]):
                 search_query = command_lower.replace("search for", "").replace("google", "").replace("search", "").replace("look up", "").strip()
                 if search_query:
-                    return f"""{{\"action\": \"web_search\", \"parameters\": {{\"query\": \"{search_query}\", \"engine\": \"google\", \"original_query\": \"{self.last_command}\"}}, \"response\": \"Searching for {search_query} on Google, Boss.\"}}"""
+                    return f"""{{\"action\": \"web_search\", \"parameters\": {{\"query\": \"{search_query}\", \"engine\": \"google\", \"original_query\": \"{self.last_command}\"}}, \"response\": \"Searching for {search_query} on Google, {form_of_address}.\"}}"""
                 else:
-                    return f"""{{\"action\": \"web_search\", \"parameters\": {{\"query\": \"general search\", \"engine\": \"google\", \"original_query\": \"{self.last_command}\"}}, \"response\": \"Opening Google search for you, Boss.\"}}"""
+                    return f"""{{\"action\": \"web_search\", \"parameters\": {{\"query\": \"general search\", \"engine\": \"google\", \"original_query\": \"{self.last_command}\"}}, \"response\": \"Opening Google search for you, {form_of_address}.\"}}"""
             
             # Stop/termination commands - handle gracefully with proper conversation ending
             elif any(phrase in command_lower for phrase in ["stop conversation", "end conversation", "stop talking", "end this", "that's enough", "finish conversation"]):
-                return f"""{{\"action\": \"end_conversation\", \"parameters\": {{\"original_query\": \"{self.last_command}\"}}, \"response\": \"Conversation ended, Boss. I'll be here when you need me.\"}}"""
+                return f"""{{\"action\": \"end_conversation\", \"parameters\": {{\"original_query\": \"{self.last_command}\"}}, \"response\": \"Conversation ended, {form_of_address}. I'll be here when you need me.\"}}"""
             elif command_lower.strip() == "stop" or command_lower.strip() == "exit" or command_lower.strip() == "quit":
-                return f"""{{\"action\": \"end_conversation\", \"parameters\": {{\"original_query\": \"{self.last_command}\"}}, \"response\": \"Stopping, Boss. I'll be here when you need me.\"}}"""
+                return f"""{{\"action\": \"end_conversation\", \"parameters\": {{\"original_query\": \"{self.last_command}\"}}, \"response\": \"Stopping, {form_of_address}. I'll be here when you need me.\"}}"""
             elif command_lower.startswith("stop ") or "stop the" in command_lower:
-                return f"""{{\"action\": \"end_conversation\", \"parameters\": {{\"original_query\": \"{self.last_command}\"}}, \"response\": \"Stopping, Boss. I'll be here when you need me.\"}}"""
+                return f"""{{\"action\": \"end_conversation\", \"parameters\": {{\"original_query\": \"{self.last_command}\"}}, \"response\": \"Stopping, {form_of_address}. I'll be here when you need me.\"}}"""
             elif any(phrase in command_lower for phrase in ["stop it", "cancel", "nevermind", "never mind"]):
-                return f"""{{\"action\": \"stop_current_task\", \"parameters\": {{\"original_query\": \"{self.last_command}\"}}, \"response\": \"Stopped, Boss. What would you like to do instead?\"}}"""
+                return f"""{{\"action\": \"stop_current_task\", \"parameters\": {{\"original_query\": \"{self.last_command}\"}}, \"response\": \"Stopped, {form_of_address}. What would you like to do instead?\"}}"""
             
             # Polite responses
             elif any(phrase in command_lower for phrase in ["no thank you", "no thanks", "that's all", "nothing else", "i'm good", "im good"]):
-                return f"""{{\"action\": \"provide_information\", \"parameters\": {{\"original_query\": \"{self.last_command}\"}}, \"response\": \"Understood, Boss. I'm here whenever you need me. Have a great day!\"}}"""
+                return f"""{{\"action\": \"provide_information\", \"parameters\": {{\"original_query\": \"{self.last_command}\"}}, \"response\": \"Understood, {form_of_address}. I'm here whenever you need me. Have a great day!\"}}"""
             
             # Conversational responses
             elif "how" in command_lower and ("r u" in command_lower or "are you" in command_lower):
-                return f"""{{\"action\": \"provide_information\", \"parameters\": {{\"original_query\": \"{self.last_command}\"}}, \"response\": \"I'm doing well, Boss. Thank you for asking! How can I help you today?\"}}"""
+                return f"""{{\"action\": \"provide_information\", \"parameters\": {{\"original_query\": \"{self.last_command}\"}}, \"response\": \"I'm doing well, {form_of_address}. Thank you for asking! How can I help you today?\"}}"""
             elif "hello" in command_lower or "hi" in command_lower:
-                return f"""{{\"action\": \"provide_information\", \"parameters\": {{\"original_query\": \"{self.last_command}\"}}, \"response\": \"Hello, Boss! It's good to hear from you. How can I assist you today?\"}}"""
+                return f"""{{\"action\": \"provide_information\", \"parameters\": {{\"original_query\": \"{self.last_command}\"}}, \"response\": \"Hello, {form_of_address}! It's good to hear from you. How can I assist you today?\"}}"""
             
             # Information queries
             elif any(word in command_lower for word in ["time", "clock", "hour"]):
@@ -390,7 +388,7 @@ If the user wants natural conversation without a specific command, use:
             
             # Default fallback
             else:
-                return f"""{{\"action\": \"provide_information\", \"parameters\": {{\"original_query\": \"{self.last_command}\"}}, \"response\": \"I'm sorry, Boss. I couldn't process that request properly. Can I help you with something else?\"}}"""
+                return f"""{{\"action\": \"provide_information\", \"parameters\": {{\"original_query\": \"{self.last_command}\"}}, \"response\": \"I'm sorry, {form_of_address}. I couldn't process that request properly. Can I help you with something else?\"}}"""
         
         # Print the cleaned output for debugging
         print(f"Cleaned AI response: {cleaned_output[:100]}...")
@@ -407,6 +405,9 @@ If the user wants natural conversation without a specific command, use:
             Dictionary containing the parsed response
         """
         try:
+            # Get user's preferred address for fallback responses
+            form_of_address = self.user_profile["personal"]["form_of_address"]
+            
             # Try to find JSON in the response
             json_start = response_text.find('{')
             json_end = response_text.rfind('}') + 1
@@ -425,7 +426,7 @@ If the user wants natural conversation without a specific command, use:
                 if "parameters" not in result:
                     result["parameters"] = {}
                 if "response" not in result:
-                    result["response"] = "I'll take care of that, Boss."
+                    result["response"] = f"I'll take care of that, {form_of_address}."
                 
                 # Ensure original_query is in parameters
                 if "original_query" not in result["parameters"]:
@@ -487,8 +488,9 @@ If the user wants natural conversation without a specific command, use:
         Returns:
             Dictionary with error response
         """
+        form_of_address = self.user_profile["personal"]["form_of_address"]
         return {
             "action": "unknown",
             "parameters": {"original_query": self.last_command},
-            "response": "I'm sorry, Boss. I encountered an error processing your request."
+            "response": f"I'm sorry, {form_of_address}. I encountered an error processing your request."
         }

@@ -125,20 +125,49 @@ class ConfigManager:
             return self.user_profile.get(section, {})
         return self.user_profile
     
-    def update_user_profile(self, section: str, key: str, value: Any) -> None:
-        """Update a specific value in the user profile
+    def update_config(self, new_config: Dict[str, Any]) -> None:
+        """Update the entire configuration
         
         Args:
-            section: Section name
-            key: Key to update
-            value: New value
+            new_config: New configuration dictionary
         """
-        if section in self.user_profile:
-            self.user_profile[section][key] = value
-            self._save_json(self.user_profile, self.user_profile_path)
-            logging.info(f"Updated user profile: {section}.{key}")
-        else:
-            logging.error(f"Section not found in user profile: {section}")
+        try:
+            self.config.update(new_config)
+            self._save_json(self.config, self.config_path)
+            logging.info("Configuration updated successfully")
+        except Exception as e:
+            logging.error(f"Error updating configuration: {e}")
+            raise
+
+    def update_user_profile(self, new_profile: Dict[str, Any] = None, section: str = None, key: str = None, value: Any = None) -> None:
+        """Update user profile data
+        
+        Args:
+            new_profile: Complete new profile dictionary (for bulk updates)
+            section: Section name (for individual updates)
+            key: Key to update (for individual updates)
+            value: New value (for individual updates)
+        """
+        try:
+            if new_profile is not None:
+                # Bulk update - replace entire profile
+                self.user_profile.update(new_profile)
+                self._save_json(self.user_profile, self.user_profile_path)
+                logging.info("User profile updated successfully (bulk update)")
+            elif section and key is not None:
+                # Individual update
+                if section in self.user_profile:
+                    self.user_profile[section][key] = value
+                    self._save_json(self.user_profile, self.user_profile_path)
+                    logging.info(f"Updated user profile: {section}.{key}")
+                else:
+                    logging.error(f"Section not found in user profile: {section}")
+                    raise ValueError(f"Section not found in user profile: {section}")
+            else:
+                raise ValueError("Either provide new_profile for bulk update or section/key/value for individual update")
+        except Exception as e:
+            logging.error(f"Error updating user profile: {e}")
+            raise
     
     def record_interaction(self, command_type: str, command_text: str, 
                           parameters: Dict[str, Any] = None) -> None:
