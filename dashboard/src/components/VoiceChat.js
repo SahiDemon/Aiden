@@ -15,6 +15,7 @@ import { Send, Mic, Person, SmartToy } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
 import { formatDistanceToNow } from 'date-fns';
 import ActionCard from './ActionCard';
+import ScheduledCommands from './ScheduledCommands';
 
 // CSS-in-JS animations
 const pulseKeyframes = {
@@ -94,6 +95,32 @@ const MessageBubble = ({ message, isUser, socket }) => {
                 Action card data error - showing as text: {JSON.stringify(action)}
               </Typography>
             </Paper>
+          </Box>
+        </motion.div>
+      );
+    }
+
+    // Special handling for scheduled commands
+    if (action.type === 'scheduled_commands' && action.schedules) {
+      return (
+        <motion.div
+          initial={{ opacity: 0, y: 20, scale: 0.95 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ duration: 0.3 }}
+          className="message-bubble"
+        >
+          <Box sx={{ 
+            display: 'flex', 
+            justifyContent: 'flex-start',
+            mb: 2
+          }}>
+            <Box sx={{ maxWidth: '85%', width: '100%' }}>
+              <ScheduledCommands 
+                schedules={action.schedules} 
+                onCancelSchedule={(taskId) => handleActionClick({task_id: taskId}, 'scheduled_commands')}
+                onModifySchedule={(taskId) => handleActionClick({task_id: taskId, action: 'modify'}, 'scheduled_commands')}
+              />
+            </Box>
           </Box>
         </motion.div>
       );

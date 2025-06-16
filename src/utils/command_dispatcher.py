@@ -13,6 +13,7 @@ from typing import Dict, Any, Callable, Optional
 from src.utils.esp32_controller import ESP32Controller
 from src.utils.app_manager import AppManager
 from src.utils.powershell_app_launcher import PowerShellAppLauncher
+from src.utils.scheduled_system_commands import ScheduledSystemCommands
 
 class CommandDispatcher:
     """Dispatches commands to appropriate handlers"""
@@ -54,6 +55,9 @@ class CommandDispatcher:
         
         # Initialize App Manager for fallback app discovery and launching
         self.app_manager = AppManager(config_manager)
+        
+        # Initialize Scheduled System Commands manager
+        self.scheduled_commands = ScheduledSystemCommands(voice_system, dashboard_backend)
         
         # Command handlers dictionary
         self.handlers = {
@@ -933,7 +937,7 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
             return False
     
     def _handle_system_command(self, parameters: Dict[str, Any]) -> bool:
-        """Handle system commands
+        """Handle system commands with smart scheduling
         
         Args:
             parameters: Command parameters including command string
@@ -943,45 +947,84 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
         """
         command = parameters.get("command", "")
         operation = parameters.get("operation", "").lower()
+        original_query = parameters.get("original_query", "")
         
         if not command and not operation:
             self.voice_system.speak("I need to know what system command to run.")
             return False
         
         try:
-            # Handle common system operations
-            if operation in ["shutdown", "power off", "turn off computer"] or "shutdown" in command.lower():
+            # Use the scheduled system commands processor
+            result = self.scheduled_commands.process_system_command_request(
+                command, operation, original_query
+            )
+            
+            action = result.get("action")
+            
+            if action == "request_verification":
+                # For time-based commands, auto-confirm instead of asking for verification
+                verification_type = result.get("verification_type")
+                
+                if verification_type == "schedule_dangerous_command":
+                    # Auto-confirm scheduled commands
+                    schedule_info = result.get("schedule_info")
+                    confirm_result = self.scheduled_commands.confirm_schedule(schedule_info)
+                    self.voice_system.speak(confirm_result.get("response", "Scheduled successfully."))
+                    return True
+                    
+                elif verification_type == "immediate_dangerous_command":
+                    # For immediate commands, execute directly
+                    operation = result.get("operation")
+                    return self._execute_immediate_system_command(operation)
+                
+            elif action == "execute_immediate":
+                # Safe command - execute immediately
+                operation_to_execute = result.get("operation", operation)
+                return self._execute_immediate_system_command(operation_to_execute)
+                
+            else:
+                self.voice_system.speak("I couldn't process that system command.")
+                return False
+                
+        except Exception as e:
+            logging.error(f"Error in system command handling: {e}")
+            self.voice_system.speak("I had trouble processing that system command.")
+            return False
+    
+    def _execute_immediate_system_command(self, operation: str) -> bool:
+        """Execute system command immediately
+        
+        Args:
+            operation: Operation to execute
+            
+        Returns:
+            True if successful
+        """
+        try:
+            if operation in ["shutdown", "power off", "turn off computer"]:
                 self.voice_system.speak("Shutting down the computer.")
                 subprocess.run("shutdown /s /t 0", shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                return True
                 
-            elif operation in ["restart", "reboot"] or "restart" in command.lower():
+            elif operation in ["restart", "reboot"]:
                 self.voice_system.speak("Restarting the computer.")
                 subprocess.run("shutdown /r /t 0", shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                return True
                 
-            elif operation in ["sleep", "hibernate"] or "sleep" in command.lower():
+            elif operation in ["sleep", "hibernate"]:
                 self.voice_system.speak("Putting the computer to sleep.")
                 subprocess.run("rundll32.exe powrprof.dll,SetSuspendState 0,1,0", shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                return True
                 
-            elif operation in ["lock", "lock screen"] or "lock" in command.lower():
+            elif operation in ["lock", "lock screen"]:
                 self.voice_system.speak("Locking the screen.")
                 subprocess.run("rundll32.exe user32.dll,LockWorkStation", shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                return True
-                
-            elif command and not any(sys_cmd in command.lower() for sys_cmd in ["shutdown", "restart", "sleep", "lock"]):
-                # Execute custom command with caution (but not system commands)
-                self.voice_system.speak(f"Executing: {command}")
-                subprocess.run(command, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                return True
                 
             else:
                 self.voice_system.speak("I don't recognize that system command.")
                 return False
-                
+            
+            return True
+            
         except Exception as e:
-            logging.error(f"Error executing system command: {e}")
+            logging.error(f"Error executing immediate system command: {e}")
             self.voice_system.speak("I had trouble executing that system command.")
             return False
     

@@ -611,7 +611,33 @@ class AidenDashboardBackend:
                     # Open GitHub folder
                     success = self._open_github_folder()
                     emit('action_result', {'success': success, 'message': 'Opened GitHub folder' if success else 'Failed to open folder'})
+                
+                # Handle scheduled commands actions
+                elif action_type == 'scheduled_commands' or item.get('action') == 'cancel_all_schedules':
+                    # Cancel all schedules
+                    result = self.command_dispatcher.scheduled_commands.abort_schedule()
+                    emit('action_result', {'success': result.get('success', False), 'message': result.get('response', 'Failed to cancel schedules')})
+                
+                elif item.get('task_id'):
+                    # Cancel specific schedule
+                    task_id = item.get('task_id')
                     
+                    # Handle 'all' as a special case
+                    if task_id == 'all':
+                        result = self.command_dispatcher.scheduled_commands.abort_schedule()
+                        emit('action_result', {'success': result.get('success', False), 'message': result.get('response', 'Failed to cancel schedules')})
+                        return
+                        
+                    # Handle individual task cancellation
+                    with self.command_dispatcher.scheduled_commands.schedule_lock:
+                        if task_id in self.command_dispatcher.scheduled_commands.active_schedules:
+                            operation = self.command_dispatcher.scheduled_commands.active_schedules[task_id].get('operation', 'unknown')
+                            del self.command_dispatcher.scheduled_commands.active_schedules[task_id]
+                            self.command_dispatcher.scheduled_commands._update_dashboard_schedules()
+                            emit('action_result', {'success': True, 'message': f'Cancelled {operation} schedule'})
+                        else:
+                            emit('action_result', {'success': False, 'message': 'Schedule not found or already completed'})
+                
             except Exception as e:
                 logging.error(f"Error handling action item click: {e}")
                 emit('action_result', {'success': False, 'message': 'Failed to handle action'})

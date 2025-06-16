@@ -56,7 +56,8 @@ class LLMConnector:
         
         # Build the full prompt
         full_prompt = f"{context}\n\nThe user said: \"{command_text}\"\n\n"
-        full_prompt += f"""Identify the action to take and extract relevant parameters.
+        full_prompt += f"""You are Aiden, an AI assistant. Be helpful and direct. Use "Boss" in your responses, not "Boss" or any other title.
+
 Respond ONLY in JSON format with the following structure:
 {{
     "action": "action_name",
@@ -68,7 +69,7 @@ Respond ONLY in JSON format with the following structure:
     "response": "Your response to the user"
 }}
 
-IMPORTANT: Always address the user as "{form_of_address}" in your responses, not "Boss" or any other title.
+IMPORTANT: Always address the user as "{form_of_address}" in your responses.
 
 Valid actions include:
 - "provide_information": For answering questions, getting system info, listing projects
@@ -96,37 +97,25 @@ CRITICAL - COMMAND CLASSIFICATION RULES:
 - "sleep/hibernate" = system_command with operation="sleep"
 - "open/launch/start [app]" = app_control with app_name and operation="launch"
 
+SCHEDULING PATTERNS:
+- "shutdown in 10 minutes" = system_command with operation="shutdown" 
+- "restart in 5 minutes" = system_command with operation="restart"
+- "sleep in 30 minutes" = system_command with operation="sleep"
+
 For app control commands, use parameters like:
 - app_name: Extract the EXACT app name the user mentioned, don't modify it
 - operation: "launch", "open", "start", "close"
 
-IMPORTANT: For app launching, DO NOT provide a specific response about launching.
-Instead, use a generic response like "Let me find and open that for you" or "I'll check for that application".
-The system will provide the actual result after checking if the app exists.
+RESPONSE GUIDELINES:
+- For system commands: Give brief confirmation like "Shutting down now, Boss" or "I'll restart in 10 minutes, Boss"
+- For app launching: Say "Let me find and open that for you, Boss"
+- For time-based commands: Give simple confirmation without asking for verification
+- NEVER ask "You can say 'yes' to confirm" or similar verification prompts
+- Be direct and execute commands as requested
 
-Examples of app control responses:
-- "open chrome" → response: "Let me find Chrome for you, {form_of_address}."
-- "launch google chrome" → response: "I'll look for Google Chrome, {form_of_address}."
-- "open vscode" → response: "Let me check for VS Code, {form_of_address}."
-- "start calculator" → response: "I'll find Calculator for you, {form_of_address}."
-- "open browser" → response: "Let me find a browser for you, {form_of_address}."
-
-DO NOT say "Opening [app]" or "Launching [app]" because the system needs to verify it exists first.
-
-For web search commands, use parameters like:
-- query: The search term
-- engine: "google", "bing", "duckduckgo"
-
-For system_command commands, use parameters like:
-- operation: "lock", "shutdown", "restart", "sleep"
-- original_query: exact user input
-
-For fan_control commands, use parameters like:
-- operation: "on", "off", "mode", "speed", "status", "check"  
-- speed: "1", "2", "3" or "low", "medium", "high"
-- original_query: exact user input
-
-NEVER use system_command for fan operations - always use fan_control!
+Examples:
+- "shutdown in 10 minutes" → "I'll shut down the computer in 10 minutes, Boss"
+- "open chrome" → "Let me find Chrome for you, Boss"
 
 IMPORTANT: For fan status/check commands, do NOT provide the actual fan status in your response. 
 Just say you're checking it. The system will get the real status from the hardware.
@@ -204,6 +193,36 @@ Examples:
         "original_query": "shutdown computer"
     }},
     "response": "Shutting down the computer, {form_of_address}."
+}}
+
+8. "shutdown in 10 minutes" becomes:
+{{
+    "action": "system_command",
+    "parameters": {{
+        "operation": "shutdown",
+        "original_query": "shutdown in 10 minutes"
+    }},
+    "response": "I'll shut down the computer in 10 minutes, {form_of_address}."
+}}
+
+9. "change to 20 minutes" becomes:
+{{
+    "action": "system_command",
+    "parameters": {{
+        "operation": "modify",
+        "original_query": "change to 20 minutes"
+    }},
+    "response": "I'll update the time for you, {form_of_address}."
+}}
+
+10. "cancel shutdown" becomes:
+{{
+    "action": "system_command",
+    "parameters": {{
+        "operation": "abort",
+        "original_query": "cancel shutdown"
+    }},
+    "response": "I'll cancel that for you, {form_of_address}."
 }}
 
 If the user wants natural conversation without a specific command, use:

@@ -2,7 +2,7 @@
   "personal": {
     "created_date": "2025-06-05",
     "form_of_address": "Sahi",
-    "last_login": "2025-06-16T17:49:32.155539",
+    "last_login": "2025-06-16T19:46:31.666097",
     "name": "Sahi"
   },
   "preferences": {
@@ -3814,22 +3814,204 @@
           "operation": "lock",
           "original_query": "lock the free"
         }
+      },
+      {
+        "timestamp": "2025-06-16T18:56:07.019710",
+        "type": "system_command",
+        "text": "can you schedule a shutdown in 10 minutes",
+        "parameters": {
+          "operation": "shutdown",
+          "time": "10 minutes",
+          "original_query": "can you schedule a shutdown in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T19:12:51.670202",
+        "type": "system_command",
+        "text": "can you Hibernate the",
+        "parameters": {
+          "operation": "hibernate",
+          "original_query": "Hibernate the"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T19:14:26.634026",
+        "type": "system_command",
+        "text": "can you update the computer in 10 minutes",
+        "parameters": {
+          "operation": "update",
+          "timeframe": "10 minutes",
+          "original_query": "can you update the computer in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T19:15:15.767581",
+        "type": "provide_information",
+        "text": "can you",
+        "parameters": {
+          "original_query": "can you",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-16T19:15:32.181084",
+        "type": "system_command",
+        "text": "can you hybrid the computer in 10",
+        "parameters": {
+          "operation": "hibernate",
+          "time": "10",
+          "original_query": "can you hibernate the computer in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T19:16:03.830633",
+        "type": "system_command",
+        "text": "cancel the hibernation command",
+        "parameters": {
+          "operation": "abort",
+          "original_query": "cancel the hibernation command"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T19:16:23.613163",
+        "type": "provide_information",
+        "text": "remove",
+        "parameters": {
+          "query": "remove",
+          "original_query": "remove",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-16T19:16:38.931658",
+        "type": "provide_information",
+        "text": "the scheduled",
+        "parameters": {
+          "query": "the scheduled",
+          "original_query": "the scheduled",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-16T19:17:02.018316",
+        "type": "system_command",
+        "text": "stop the schedule",
+        "parameters": {
+          "operation": "stop",
+          "original_query": "stop the schedule"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T19:17:33.390770",
+        "type": "system_command",
+        "text": "cancel all",
+        "parameters": {
+          "operation": "cancel",
+          "original_query": "cancel all"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T19:20:10.812628",
+        "type": "system_command",
+        "text": "scheduler shutdown in 10 minutes",
+        "parameters": {
+          "operation": "shutdown",
+          "time": "10 minutes",
+          "original_query": "scheduler shutdown in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T19:35:53.588387",
+        "type": "system_command",
+        "text": "shutdown the computer in 10 minutes",
+        "parameters": {
+          "operation": "shutdown",
+          "time": "10 minutes",
+          "original_query": "shutdown the computer in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T19:41:50.435443",
+        "type": "system_command",
+        "text": "shutdown the my PC in 10 minutes",
+        "parameters": {
+          "operation": "shutdown",
+          "time": "10 minutes",
+          "original_query": "shutdown the my PC in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T19:47:07.140721",
+        "type": "system_command",
+        "text": "shutdown the PC in",
+        "parameters": {
+          "operation": "shutdown",
+          "original_query": "shutdown the PC in"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T20:02:08.006308",
+        "type": "system_command",
+        "text": "shutdown the PC in 10 minutes",
+        "parameters": {
+          "operation": "shutdown",
+          "time": "10",
+          "original_query": "shutdown the PC in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T20:03:04.915224",
+        "type": "system_command",
+        "text": "cancel the schedule shut",
+        "parameters": {
+          "operation": "abort",
+          "original_query": "cancel the schedule shut"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T20:19:01.178279",
+        "type": "system_command",
+        "text": "shutdown the computer in 10 minutes",
+        "parameters": {
+          "operation": "shutdown",
+          "time": "10",
+          "original_query": "shutdown the computer in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T20:19:38.822188",
+        "type": "system_command",
+        "text": "shutdown in 10 minutes",
+        "parameters": {
+          "operation": "shutdown",
+          "time": "10 minutes",
+          "original_query": "shutdown in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T20:20:24.466558",
+        "type": "system_command",
+        "text": "cancel the shutdown",
+        "parameters": {
+          "operation": "abort",
+          "original_query": "cancel the shutdown"
+        }
       }
     ],
     "last_commands": [
-      "open Visual Studio inside",
-      "turn off the fan",
-      "turn on the fan",
-      "open everything application",
-      "open spotify",
-      "open Netflix",
-      "open YouTube",
-      "go to Chitta",
-      "go to github.com",
-      "lock the free"
+      "cancel all",
+      "scheduler shutdown in 10 minutes",
+      "shutdown the computer in 10 minutes",
+      "shutdown the my PC in 10 minutes",
+      "shutdown the PC in",
+      "shutdown the PC in 10 minutes",
+      "cancel the schedule shut",
+      "shutdown the computer in 10 minutes",
+      "shutdown in 10 minutes",
+      "cancel the shutdown"
     ],
-    "total_commands": 426,
-    "total_sessions": 71
+    "total_commands": 445,
+    "total_sessions": 73
   },
   "patterns": {
     "frequent_apps": {},
