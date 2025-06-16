@@ -7,7 +7,9 @@ import logging
 import subprocess
 import webbrowser
 import threading
+import gc
 from typing import Dict, Any, Callable, Optional
+from datetime import datetime, timedelta
 
 # Import ESP32 controller and App Manager
 from src.utils.esp32_controller import ESP32Controller
@@ -954,7 +956,43 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
             return False
         
         try:
-            # Use the scheduled system commands processor
+            # First check if this is a response to a pending verification
+            if self._handle_pending_verifications(original_query):
+                return True
+            
+            # Handle incomplete schedule requests
+            if operation == "incomplete_schedule":
+                self.voice_system.speak("I'd be happy to schedule something for you. What would you like me to schedule? For example, you can say 'schedule shutdown in 10 minutes' or 'schedule hibernate in 1 hour'.")
+                return True
+            
+            # Check if this is an abort request for an active schedule
+            query_lower = original_query.lower()
+            if "cancel" in query_lower or "abort" in query_lower or "stop" in query_lower:
+                # Extract operation type from the query if specified
+                operation_type = None
+                if "shutdown" in query_lower:
+                    operation_type = "shutdown"
+                elif "restart" in query_lower:
+                    operation_type = "restart"
+                elif "sleep" in query_lower:
+                    operation_type = "sleep"
+                elif "hibernate" in query_lower:
+                    operation_type = "hibernate"
+                elif "lock" in query_lower:
+                    operation_type = "lock"
+                
+                # Call the abort_schedule method directly
+                result = self.scheduled_commands.abort_schedule(operation_type)
+                
+                # Update the dashboard with the result
+                if self.dashboard_backend:
+                    self.dashboard_backend._emit_ai_message(result.get("response", "Schedule cancelled."), "response")
+                
+                # Speak the result
+                self.voice_system.speak(result.get("response", "Schedule cancelled."))
+                return result.get("success", False)
+            
+            # Use the scheduled system commands processor for non-abort requests
             result = self.scheduled_commands.process_system_command_request(
                 command, operation, original_query
             )
@@ -962,20 +1000,220 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
             action = result.get("action")
             
             if action == "request_verification":
-                # For time-based commands, auto-confirm instead of asking for verification
+                # Always ask for user verification - don't auto-confirm
                 verification_type = result.get("verification_type")
                 
                 if verification_type == "schedule_dangerous_command":
-                    # Auto-confirm scheduled commands
+                    # Ask for confirmation with options for scheduled commands
                     schedule_info = result.get("schedule_info")
-                    confirm_result = self.scheduled_commands.confirm_schedule(schedule_info)
-                    self.voice_system.speak(confirm_result.get("response", "Scheduled successfully."))
+                    operation = schedule_info["operation"]
+                    time_info = schedule_info["time_info"]
+                    time_str = f"{time_info['value']} {time_info['unit']}"
+                    
+                    action_phrases = {
+                        "shutdown": "shut down",
+                        "restart": "restart", 
+                        "sleep": "put to sleep",
+                        "hibernate": "hibernate",
+                        "lock": "lock"
+                    }
+                    
+                    action = action_phrases.get(operation, operation)
+                    
+                    # Store the schedule info for later confirmation
+                    if not hasattr(self, '_pending_schedule'):
+                        self._pending_schedule = {}
+                    self._pending_schedule = schedule_info
+                    
+                    # Check if this is one-shot mode (hotkey activated)
+                    is_oneshot_mode = hasattr(self.dashboard_backend, 'hotkey_mode') and self.dashboard_backend.hotkey_mode
+                    
+                    if is_oneshot_mode:
+                        # For one-shot mode: Open dashboard for verification and use web verification
+                        verification_message = f"I'll {action} the computer in {time_str}."
+                        
+                        # Open dashboard automatically for verification
+                        try:
+                            import sys
+                            # Get the tray app instance to open dashboard
+                            for obj in gc.get_objects():
+                                if hasattr(obj, 'open_dashboard_for_verification') and hasattr(obj, 'dashboard_backend'):
+                                    obj.open_dashboard_for_verification()
+                                    break
+                        except:
+                            # Fallback: open via webbrowser directly
+                            import webbrowser
+                            try:
+                                webbrowser.open("http://localhost:5000")
+                            except:
+                                pass
+                        
+                        # Speak the dashboard opening message
+                        dashboard_message = f"I'll open the dashboard for you. Please check and confirm the {operation} schedule in {time_str}."
+                        self.voice_system.speak(dashboard_message)
+                        
+                        # Send to dashboard
+                        if self.dashboard_backend:
+                            self.dashboard_backend._emit_ai_message(dashboard_message, "response")
+                            
+                            verification_card = {
+                                "type": "verification_prompt",
+                                "title": "⚠️ Confirm Scheduled Command",
+                                "message": f"Schedule {operation} in {time_str}?",
+                                "options": [
+                                    {"text": "✅ Confirm", "action": "confirm_schedule", "style": "primary"},
+                                    {"text": "⏱️ Change Time", "action": "modify_schedule_time", "style": "secondary"},
+                                    {"text": "❌ Cancel", "action": "cancel_schedule", "style": "danger"}
+                                ],
+                                "message_id": "schedule_verification",
+                                "pending_action": "schedule_command"
+                            }
+                            self.dashboard_backend._emit_ai_message(verification_card, "action_card")
+                    else:
+                        # For continuous mode: direct to dashboard for confirmation
+                        verification_message = (
+                            f"I'll {action} the computer in {time_str}. "
+                            f"Please check the dashboard to confirm or cancel the schedule."
+                        )
+                        
+                        self.voice_system.speak(verification_message)
+                        
+                        # Pause voice input during verification
+                        if self.dashboard_backend:
+                            self.dashboard_backend.verification_pending = True
+                            self.dashboard_backend._emit_ai_message(verification_message, "response")
+                            
+                            verification_card = {
+                                "type": "verification_prompt",
+                                "title": "⚠️ Confirm Scheduled Command",
+                                "message": f"Schedule {operation} in {time_str}?",
+                                "options": [
+                                    {"text": "✅ Confirm", "action": "confirm_schedule", "style": "primary"},
+                                    {"text": "⏱️ Change Time", "action": "modify_schedule_time", "style": "secondary"},
+                                    {"text": "❌ Cancel", "action": "cancel_schedule", "style": "danger"}
+                                ],
+                                "message_id": "schedule_verification",
+                                "pending_action": "schedule_command"
+                            }
+                            self.dashboard_backend._emit_ai_message(verification_card, "action_card")
+                    
                     return True
                     
                 elif verification_type == "immediate_dangerous_command":
-                    # For immediate commands, execute directly
+                    # Ask for confirmation for immediate commands
                     operation = result.get("operation")
-                    return self._execute_immediate_system_command(operation)
+                    
+                    action_phrases = {
+                        "shutdown": "shut down",
+                        "restart": "restart", 
+                        "sleep": "put to sleep",
+                        "hibernate": "hibernate",
+                        "lock": "lock"
+                    }
+                    
+                    action = action_phrases.get(operation, operation)
+                    
+                    # Store the operation for later confirmation
+                    if not hasattr(self, '_pending_immediate'):
+                        self._pending_immediate = {}
+                    self._pending_immediate = operation
+                    
+                    # Check if this is one-shot mode (hotkey activated)
+                    is_oneshot_mode = hasattr(self.dashboard_backend, 'hotkey_mode') and self.dashboard_backend.hotkey_mode
+                    
+                    if is_oneshot_mode:
+                        # For one-shot mode: Open dashboard for verification and use web verification
+                        verification_message = f"Are you sure you want to {action} the computer right now?"
+                        
+                        # Open dashboard automatically for verification
+                        try:
+                            # Get the tray app instance to open dashboard
+                            for obj in gc.get_objects():
+                                if hasattr(obj, 'open_dashboard_for_verification') and hasattr(obj, 'dashboard_backend'):
+                                    obj.open_dashboard_for_verification()
+                                    break
+                        except:
+                            # Fallback: open via webbrowser directly
+                            import webbrowser
+                            try:
+                                webbrowser.open("http://localhost:5000")
+                            except:
+                                pass
+                        
+                        # Send only to dashboard, don't speak
+                        if self.dashboard_backend:
+                            self.dashboard_backend._emit_ai_message(verification_message, "response")
+                            
+                            verification_card = {
+                                "type": "verification_prompt",
+                                "title": "⚠️ Confirm Immediate Command",
+                                "message": f"{action.capitalize()} the computer now?",
+                                "options": [
+                                    {"text": "✅ Yes, Confirm", "action": "confirm_immediate", "style": "primary"},
+                                    {"text": "❌ Cancel", "action": "cancel_immediate", "style": "danger"}
+                                ],
+                                "message_id": "immediate_verification",
+                                "pending_action": "immediate_command"
+                            }
+                            self.dashboard_backend._emit_ai_message(verification_card, "action_card")
+                    else:
+                        # For continuous mode: direct to dashboard for confirmation
+                        verification_message = (
+                            f"Are you sure you want to {action} the computer right now? "
+                            f"Please check the dashboard to confirm or cancel."
+                        )
+                        
+                        self.voice_system.speak(verification_message)
+                        
+                        # Pause voice input during verification
+                        if self.dashboard_backend:
+                            self.dashboard_backend.verification_pending = True
+                            self.dashboard_backend._emit_ai_message(verification_message, "response")
+                            
+                            verification_card = {
+                                "type": "verification_prompt",
+                                "title": "⚠️ Confirm Immediate Command",
+                                "message": f"{action.capitalize()} the computer now?",
+                                "options": [
+                                    {"text": "✅ Confirm", "action": "confirm_immediate", "style": "primary"},
+                                    {"text": "❌ Cancel", "action": "cancel_immediate", "style": "danger"}
+                                ],
+                                "message_id": "immediate_verification",
+                                "pending_action": "immediate_command"
+                            }
+                            self.dashboard_backend._emit_ai_message(verification_card, "action_card")
+                    
+                    return True
+            
+            elif action == "request_time_specification":
+                # Handle incomplete schedule request - ask for time
+                operation = result.get("operation")
+                response = result.get("response")
+                
+                # Store the pending operation
+                if not hasattr(self, '_pending_time_request'):
+                    self._pending_time_request = {}
+                self._pending_time_request = {
+                    "operation": operation,
+                    "original_query": result.get("original_query")
+                }
+                
+                self.voice_system.speak(response)
+                
+                # Send time request prompt to dashboard
+                if self.dashboard_backend:
+                    time_request_card = {
+                        "type": "time_specification",
+                        "title": "Specify Time",
+                        "message": response,
+                        "operation": operation,
+                        "input_placeholder": "e.g., 10 minutes, 1 hour, 30 seconds",
+                        "message_id": "time_specification",
+                        "pending_action": "time_input"
+                    }
+                    self.dashboard_backend._emit_ai_message(time_request_card, "action_card")
+                
+                return True
                 
             elif action == "execute_immediate":
                 # Safe command - execute immediately
@@ -1001,25 +1239,40 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
             True if successful
         """
         try:
+            response_msg = ""
+            command_to_run = ""
+            
             if operation in ["shutdown", "power off", "turn off computer"]:
-                self.voice_system.speak("Shutting down the computer.")
-                subprocess.run("shutdown /s /t 0", shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                response_msg = "Shutting down the computer now."
+                command_to_run = "shutdown /s /t 0"
                 
             elif operation in ["restart", "reboot"]:
-                self.voice_system.speak("Restarting the computer.")
-                subprocess.run("shutdown /r /t 0", shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                response_msg = "Restarting the computer now."
+                command_to_run = "shutdown /r /t 0"
                 
             elif operation in ["sleep", "hibernate"]:
-                self.voice_system.speak("Putting the computer to sleep.")
-                subprocess.run("rundll32.exe powrprof.dll,SetSuspendState 0,1,0", shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                response_msg = "Putting the computer to sleep now."
+                command_to_run = "rundll32.exe powrprof.dll,SetSuspendState 0,1,0"
                 
             elif operation in ["lock", "lock screen"]:
-                self.voice_system.speak("Locking the screen.")
-                subprocess.run("rundll32.exe user32.dll,LockWorkStation", shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                response_msg = "Locking the screen now."
+                command_to_run = "rundll32.exe user32.dll,LockWorkStation"
                 
             else:
-                self.voice_system.speak("I don't recognize that system command.")
+                response_msg = "I don't recognize that system command."
+                self.voice_system.speak(response_msg)
+                if self.dashboard_backend:
+                    self.dashboard_backend._emit_ai_message(response_msg, "error")
                 return False
+            
+            # Provide feedback before executing
+            self.voice_system.speak(response_msg)
+            if self.dashboard_backend:
+                self.dashboard_backend._emit_ai_message(response_msg, "response")
+            
+            # Execute the command
+            subprocess.run(command_to_run, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            return True
             
             return True
             
@@ -1713,8 +1966,216 @@ Created on: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
         Returns:
             True if handled successfully, False otherwise
         """
-        # Log the stop request
-        logging.info("Current task stopped by user request")
-        
-        # Nothing specific to do here - dashboard_backend handles stopping current tasks
+        self.voice_system.speak("Stopping current task.")
         return True
+    
+    def _handle_pending_verifications(self, original_query: str) -> bool:
+        """Handle user responses to pending verifications
+        
+        Args:
+            original_query: User's response
+            
+        Returns:
+            True if this was a verification response, False otherwise
+        """
+        query_lower = original_query.lower().strip()
+        
+        # Handle confirmation responses - be more generous with confirmation keywords
+        confirmation_words = [
+            "yes", "confirm", "ok", "okay", "proceed", "do it", "go ahead", 
+            "execute", "run it", "sure", "yep", "yeah", "affirmative", 
+            "correct", "right", "that's right", "approve"
+        ]
+        
+        cancellation_words = [
+            "no", "cancel", "abort", "never mind", "stop", "don't", 
+            "negative", "nope", "reject", "decline", "deny"
+        ]
+        
+        # Check if this is a confirmation response
+        if any(word in query_lower for word in confirmation_words):
+            # Check for pending schedule
+            if hasattr(self, '_pending_schedule') and self._pending_schedule:
+                print(f"Confirming pending schedule: {self._pending_schedule}")
+                
+                confirm_result = self.scheduled_commands.confirm_schedule(self._pending_schedule)
+                response_msg = confirm_result.get("response", "Scheduled successfully.")
+                
+                # Speak and send to dashboard
+                self.voice_system.speak(response_msg)
+                if self.dashboard_backend:
+                    self.dashboard_backend._emit_ai_message(response_msg, "response")
+                
+                self._pending_schedule = None
+                
+                # End conversation if in one-shot mode
+                if hasattr(self.dashboard_backend, 'hotkey_mode') and self.dashboard_backend.hotkey_mode:
+                    self.dashboard_backend.conversation_active = False
+                
+                return True
+            
+            # Check for pending immediate command
+            if hasattr(self, '_pending_immediate') and self._pending_immediate:
+                print(f"Confirming pending immediate command: {self._pending_immediate}")
+                
+                operation = self._pending_immediate
+                success = self._execute_immediate_system_command(operation)
+                self._pending_immediate = None
+                
+                # End conversation if in one-shot mode
+                if hasattr(self.dashboard_backend, 'hotkey_mode') and self.dashboard_backend.hotkey_mode:
+                    self.dashboard_backend.conversation_active = False
+                
+                return success
+        
+        # Handle cancellation responses
+        elif any(word in query_lower for word in cancellation_words):
+            if hasattr(self, '_pending_schedule') and self._pending_schedule:
+                response_msg = "Schedule cancelled."
+                self.voice_system.speak(response_msg)
+                if self.dashboard_backend:
+                    self.dashboard_backend._emit_ai_message(response_msg, "response")
+                self._pending_schedule = None
+                
+                # End conversation if in one-shot mode
+                if hasattr(self.dashboard_backend, 'hotkey_mode') and self.dashboard_backend.hotkey_mode:
+                    self.dashboard_backend.conversation_active = False
+                return True
+            
+            if hasattr(self, '_pending_immediate') and self._pending_immediate:
+                response_msg = "Command cancelled."
+                self.voice_system.speak(response_msg)
+                if self.dashboard_backend:
+                    self.dashboard_backend._emit_ai_message(response_msg, "response")
+                self._pending_immediate = None
+                
+                # End conversation if in one-shot mode
+                if hasattr(self.dashboard_backend, 'hotkey_mode') and self.dashboard_backend.hotkey_mode:
+                    self.dashboard_backend.conversation_active = False
+                return True
+            
+            if hasattr(self, '_pending_time_request') and self._pending_time_request:
+                response_msg = "Time request cancelled."
+                self.voice_system.speak(response_msg)
+                if self.dashboard_backend:
+                    self.dashboard_backend._emit_ai_message(response_msg, "response")
+                self._pending_time_request = None
+                
+                # End conversation if in one-shot mode
+                if hasattr(self.dashboard_backend, 'hotkey_mode') and self.dashboard_backend.hotkey_mode:
+                    self.dashboard_backend.conversation_active = False
+                return True
+        
+        # Handle time modification responses
+        elif "change to" in query_lower or "make it" in query_lower:
+            if hasattr(self, '_pending_schedule') and self._pending_schedule:
+                # Extract new time from the query
+                new_time_info = self.scheduled_commands._extract_time_info(original_query)
+                if new_time_info:
+                    # Update the pending schedule with new time
+                    self._pending_schedule["time_info"] = new_time_info
+                    execution_time = datetime.now() + timedelta(seconds=new_time_info["total_seconds"])
+                    self._pending_schedule["execution_time"] = execution_time
+                    
+                    operation = self._pending_schedule["operation"]
+                    time_str = f"{new_time_info['value']} {new_time_info['unit']}"
+                    
+                    action_phrases = {
+                        "shutdown": "shut down",
+                        "restart": "restart", 
+                        "sleep": "put to sleep",
+                        "hibernate": "hibernate",
+                        "lock": "lock"
+                    }
+                    
+                    action = action_phrases.get(operation, operation)
+                    
+                    response_msg = f"Updated! I'll {action} the computer in {time_str}. Say 'yes' to confirm or 'cancel' to abort."
+                    self.voice_system.speak(response_msg)
+                    if self.dashboard_backend:
+                        self.dashboard_backend._emit_ai_message(response_msg, "response")
+                        
+                        # Update the verification card with new time
+                        verification_card = {
+                            "type": "verification_prompt",
+                            "title": "⚠️ Confirm Updated Schedule",
+                            "message": f"Schedule {operation} in {time_str}?",
+                            "options": [
+                                {"text": "✅ Yes, Confirm", "action": "confirm_schedule", "style": "primary"},
+                                {"text": "⏱️ Change Time", "action": "modify_schedule_time", "style": "secondary"},
+                                {"text": "❌ Cancel", "action": "cancel_schedule", "style": "danger"}
+                            ],
+                            "message_id": "schedule_verification_updated",
+                            "pending_action": "schedule_command"
+                        }
+                        self.dashboard_backend._emit_ai_message(verification_card, "action_card")
+                    return True
+                else:
+                    response_msg = "I couldn't understand the new time. Please say something like 'change to 15 minutes'."
+                    self.voice_system.speak(response_msg)
+                    if self.dashboard_backend:
+                        self.dashboard_backend._emit_ai_message(response_msg, "response")
+                    return True
+        
+        # Handle time specification for incomplete requests
+        elif hasattr(self, '_pending_time_request') and self._pending_time_request:
+            # Try to extract time from the response
+            time_info = self.scheduled_commands._extract_time_info(original_query)
+            if time_info:
+                # Create a complete schedule request
+                operation = self._pending_time_request["operation"]
+                original = self._pending_time_request["original_query"]
+                
+                # Process as a complete scheduled command
+                result = self.scheduled_commands._handle_scheduled_command(operation, time_info, original)
+                
+                if result.get("action") == "request_verification":
+                    schedule_info = result.get("schedule_info")
+                    time_str = f"{time_info['value']} {time_info['unit']}"
+                    
+                    action_phrases = {
+                        "shutdown": "shut down",
+                        "restart": "restart", 
+                        "sleep": "put to sleep",
+                        "hibernate": "hibernate",
+                        "lock": "lock"
+                    }
+                    
+                    action = action_phrases.get(operation, operation)
+                    
+                    # Store for confirmation
+                    self._pending_schedule = schedule_info
+                    self._pending_time_request = None
+                    
+                    verification_message = (
+                        f"I'll {action} the computer in {time_str}. "
+                        f"Say 'yes' to confirm or 'cancel' to abort."
+                    )
+                    
+                    self.voice_system.speak(verification_message)
+                    if self.dashboard_backend:
+                        self.dashboard_backend._emit_ai_message(verification_message, "response")
+                        
+                        # Send verification card
+                        verification_card = {
+                            "type": "verification_prompt",
+                            "title": "⚠️ Confirm Scheduled Command",
+                            "message": f"Schedule {operation} in {time_str}?",
+                            "options": [
+                                {"text": "✅ Yes, Confirm", "action": "confirm_schedule", "style": "primary"},
+                                {"text": "⏱️ Change Time", "action": "modify_schedule_time", "style": "secondary"},
+                                {"text": "❌ Cancel", "action": "cancel_schedule", "style": "danger"}
+                            ],
+                            "message_id": "schedule_verification",
+                            "pending_action": "schedule_command"
+                        }
+                        self.dashboard_backend._emit_ai_message(verification_card, "action_card")
+                    return True
+            else:
+                response_msg = "I couldn't understand the time. Please say something like '10 minutes' or '1 hour'."
+                self.voice_system.speak(response_msg)
+                if self.dashboard_backend:
+                    self.dashboard_backend._emit_ai_message(response_msg, "response")
+                return True
+        
+        return False

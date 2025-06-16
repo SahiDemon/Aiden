@@ -130,7 +130,7 @@ class AidenTrayApp:
                 self.show_notification("Aiden Error", "Assistant not properly initialized")
                 return
             
-            # Start dashboard if not already running
+            # Start dashboard if not already running (but don't open browser yet)
             if self.dashboard_backend is None:
                 self.start_dashboard()
                 time.sleep(1)  # Give it time to start
@@ -145,6 +145,15 @@ class AidenTrayApp:
         except Exception as e:
             print(f"Error in hotkey activation: {e}")
             self.show_notification("Aiden Error", f"Hotkey activation failed: {str(e)}")
+    
+    def open_dashboard_for_verification(self):
+        """Open dashboard in browser for verification (called when needed)"""
+        try:
+            import webbrowser
+            webbrowser.open("http://localhost:5000")
+            print("Opened dashboard for verification")
+        except Exception as e:
+            print(f"Could not open browser for verification: {e}")
     
     def activate_assistant(self, icon, item):
         try:

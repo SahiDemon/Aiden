@@ -9,6 +9,7 @@ import logging
 import threading
 import time
 import subprocess
+import random
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
@@ -61,6 +62,7 @@ class AidenDashboardBackend:
         # Add mode tracking for hotkey vs dashboard activation
         self.hotkey_mode = False  # True when activated by hotkey (one-shot mode)
         self.dashboard_mode = False  # True when activated by dashboard (continuous mode)
+        self.verification_pending = False  # Track if verification is needed
         
         # Setup routes and socket handlers
         self._setup_routes()
@@ -612,6 +614,109 @@ class AidenDashboardBackend:
                     success = self._open_github_folder()
                     emit('action_result', {'success': success, 'message': 'Opened GitHub folder' if success else 'Failed to open folder'})
                 
+                # Handle verification button clicks
+                elif item.get('action') == 'confirm_schedule':
+                    # Confirm scheduled command
+                    if hasattr(self.command_dispatcher, '_pending_schedule') and self.command_dispatcher._pending_schedule:
+                        result = self.command_dispatcher.scheduled_commands.confirm_schedule(self.command_dispatcher._pending_schedule)
+                        self.command_dispatcher._pending_schedule = None
+                        
+                        # Resume voice input and send response
+                        self.verification_pending = False
+                        response_msg = result.get('response', 'Schedule confirmed')
+                        
+                        # Add voice confirmation
+                        if self.command_dispatcher and hasattr(self.command_dispatcher, 'voice_system'):
+                            self.command_dispatcher.voice_system.speak(response_msg)
+                        
+                        self._emit_ai_message(response_msg, "response")
+                        emit('action_result', {'success': True, 'message': response_msg})
+                        
+                        # End conversation if in one-shot mode
+                        if hasattr(self, 'hotkey_mode') and self.hotkey_mode:
+                            self.conversation_active = False
+                    else:
+                        emit('action_result', {'success': False, 'message': 'No pending schedule to confirm'})
+                
+                elif item.get('action') == 'cancel_schedule':
+                    # Cancel scheduled command
+                    if hasattr(self.command_dispatcher, '_pending_schedule') and self.command_dispatcher._pending_schedule:
+                        self.command_dispatcher._pending_schedule = None
+                        
+                        # Resume voice input and send response
+                        self.verification_pending = False
+                        response_msg = 'Schedule cancelled'
+                        
+                        # Add voice confirmation
+                        if self.command_dispatcher and hasattr(self.command_dispatcher, 'voice_system'):
+                            self.command_dispatcher.voice_system.speak(response_msg)
+                        
+                        self._emit_ai_message(response_msg, "response")
+                        emit('action_result', {'success': True, 'message': response_msg})
+                        
+                        # End conversation if in one-shot mode
+                        if hasattr(self, 'hotkey_mode') and self.hotkey_mode:
+                            self.conversation_active = False
+                    else:
+                        emit('action_result', {'success': False, 'message': 'No pending schedule to cancel'})
+                
+                elif item.get('action') == 'confirm_immediate':
+                    # Confirm immediate command
+                    if hasattr(self.command_dispatcher, '_pending_immediate') and self.command_dispatcher._pending_immediate:
+                        operation = self.command_dispatcher._pending_immediate
+                        success = self.command_dispatcher._execute_immediate_system_command(operation)
+                        self.command_dispatcher._pending_immediate = None
+                        
+                        # Resume voice input and send response
+                        self.verification_pending = False
+                        response_msg = f'{"Executed" if success else "Failed to execute"} {operation} command'
+                        self._emit_ai_message(response_msg, "response")
+                        emit('action_result', {'success': success, 'message': response_msg})
+                        
+                        # End conversation if in one-shot mode
+                        if hasattr(self, 'hotkey_mode') and self.hotkey_mode:
+                            self.conversation_active = False
+                    else:
+                        emit('action_result', {'success': False, 'message': 'No pending command to confirm'})
+                
+                elif item.get('action') == 'cancel_immediate':
+                    # Cancel immediate command
+                    if hasattr(self.command_dispatcher, '_pending_immediate') and self.command_dispatcher._pending_immediate:
+                        self.command_dispatcher._pending_immediate = None
+                        
+                        # Resume voice input and send response
+                        self.verification_pending = False
+                        response_msg = 'Command cancelled'
+                        self._emit_ai_message(response_msg, "response")
+                        emit('action_result', {'success': True, 'message': response_msg})
+                        
+                        # End conversation if in one-shot mode
+                        if hasattr(self, 'hotkey_mode') and self.hotkey_mode:
+                            self.conversation_active = False
+                    else:
+                        emit('action_result', {'success': False, 'message': 'No pending command to cancel'})
+                
+                elif item.get('action') == 'modify_schedule_time':
+                    # Handle time modification request
+                    if hasattr(self.command_dispatcher, '_pending_schedule') and self.command_dispatcher._pending_schedule:
+                        response_msg = "Please specify the new time (e.g., '5 minutes', '1 hour')"
+                        self._emit_ai_message(response_msg, "response")
+                        
+                        # Send time input prompt
+                        time_request_card = {
+                            "type": "time_specification",
+                            "title": "Modify Schedule Time",
+                            "message": response_msg,
+                            "operation": self.command_dispatcher._pending_schedule.get("operation", "command"),
+                            "input_placeholder": "e.g., 10 minutes, 1 hour, 30 seconds",
+                            "message_id": "time_modification",
+                            "pending_action": "time_input"
+                        }
+                        self._emit_ai_message(time_request_card, "action_card")
+                        emit('action_result', {'success': True, 'message': 'Time modification requested'})
+                    else:
+                        emit('action_result', {'success': False, 'message': 'No pending schedule to modify'})
+
                 # Handle scheduled commands actions
                 elif action_type == 'scheduled_commands' or item.get('action') == 'cancel_all_schedules':
                     # Cancel all schedules
@@ -832,17 +937,49 @@ class AidenDashboardBackend:
                         'status': 'processing'
                     })
                     
+                    # Set a flag to pause listening for verification if needed
+                    waiting_for_verification = False
+                    
                     # Process the voice command
                     self._process_voice_message(text)
                     
-                    # In one-shot mode, the smart logic will decide whether to continue
-                    # If conversation ended, break the loop
-                    if not self.conversation_active:
-                        print(f"ONE-SHOT mode: Command '{text}' completed, ending conversation")
+                    # Check if we have any pending verifications
+                    if hasattr(self.command_dispatcher, '_pending_schedule') and self.command_dispatcher._pending_schedule:
+                        print(f"ONE-SHOT mode: Command '{text}' waiting for schedule verification")
+                        waiting_for_verification = True
+                        # Pause listening while waiting for verification
+                        self.socketio.emit('voice_status', {
+                            'listening': False,
+                            'conversation_active': True,
+                            'speaking': False,
+                            'status': 'waiting_for_verification'
+                        })
+                        # Don't break the loop yet, but don't continue listening either
+                        # Wait for button clicks to handle via socket events
                         break
-                    else:
-                        print(f"ONE-SHOT mode: Command '{text}' needs follow-up, continuing...")
-                        # Continue the loop for follow-up
+                        
+                    elif hasattr(self.command_dispatcher, '_pending_immediate') and self.command_dispatcher._pending_immediate:
+                        print(f"ONE-SHOT mode: Command '{text}' waiting for immediate verification")
+                        waiting_for_verification = True
+                        # Pause listening while waiting for verification
+                        self.socketio.emit('voice_status', {
+                            'listening': False, 
+                            'conversation_active': True,
+                            'speaking': False,
+                            'status': 'waiting_for_verification'
+                        })
+                        # Don't break the loop yet, but don't continue listening either
+                        # Wait for button clicks to handle via socket events
+                        break
+                    
+                    # If not waiting for verification, apply normal one-shot logic
+                    if not waiting_for_verification:
+                        if not self.conversation_active:
+                            print(f"ONE-SHOT mode: Command '{text}' completed, ending conversation")
+                            break
+                        else:
+                            print(f"ONE-SHOT mode: Command '{text}' needs follow-up, continuing...")
+                            # Continue the loop for follow-up
                         
                 elif error:
                     # Handle different types of errors
@@ -902,17 +1039,39 @@ class AidenDashboardBackend:
     def _process_message_common(self, text: str):
         """Common message processing logic for both voice and text"""
         try:
-            logging.info(f"Processing message: {text}")
+            # Store the user message first
+            user_message = {
+                'type': 'user',
+                'text': text,
+                'timestamp': datetime.now().isoformat(),
+                'input_type': 'voice' if hasattr(self, '_current_input_type') and self._current_input_type == 'voice' else 'text'
+            }
             
-            # Emit user message first
-            self._emit_user_message(text, "voice")
+            self.current_conversation.append(user_message)
+            self._emit_user_message(text, user_message['input_type'])
             
-            # Check if we have a pending action that this response might fulfill
+            # SPECIAL HANDLING: Check for verification responses FIRST
+            # This ensures that "yes", "no", etc. are properly handled in context
+            if self._is_verification_response(text):
+                print(f"Detected verification response: '{text}'")
+                # Process as verification response through command dispatcher
+                handled = self.command_dispatcher._handle_pending_verifications(text)
+                if handled:
+                    print("Verification response successfully handled")
+                    # Check if we should end conversation based on mode
+                    if hasattr(self, 'hotkey_mode') and self.hotkey_mode:
+                        print("HOTKEY MODE: Verification completed, ending conversation")
+                        self.conversation_active = False
+                    return
+                else:
+                    print("Verification response not handled, continuing as normal command")
+            
+            # FIRST: Check for pending actions that need to be continued
             if self.pending_action:
-                # Try to handle as pending action response first
-                if self.handle_pending_action_response(text):
-                    # Successfully handled as pending action response
-                    if self.hotkey_mode:
+                success = self._handle_pending_action(text)
+                if success:
+                    # Action was handled successfully
+                    if hasattr(self, 'hotkey_mode') and self.hotkey_mode:
                         # In hotkey mode, always end after handling pending action
                         print("HOTKEY MODE: Pending action handled, ending conversation")
                         self.conversation_active = False
@@ -1082,6 +1241,19 @@ class AidenDashboardBackend:
         """Determine if hotkey conversation should end based on the command type and user input"""
         text_lower = text.lower().strip()
         action = command.get("action", "")
+        
+        # CRITICAL: Never end if there's a pending verification waiting for user response!
+        if hasattr(self.command_dispatcher, '_pending_schedule') and getattr(self.command_dispatcher, '_pending_schedule', None):
+            print("HOTKEY MODE: Pending schedule verification - continuing to wait for user response")
+            return False
+            
+        if hasattr(self.command_dispatcher, '_pending_immediate') and getattr(self.command_dispatcher, '_pending_immediate', None):
+            print("HOTKEY MODE: Pending immediate verification - continuing to wait for user response")
+            return False
+            
+        if hasattr(self.command_dispatcher, '_pending_time_request') and getattr(self.command_dispatcher, '_pending_time_request', None):
+            print("HOTKEY MODE: Pending time specification - continuing to wait for user response")
+            return False
         
         # FIRST: Check for completed actions (highest priority)
         completed_actions = [
@@ -1276,75 +1448,45 @@ class AidenDashboardBackend:
             logging.error(f"Error opening GitHub folder: {e}")
             return False
     
-    def _get_contextual_follow_up(self) -> str:
-        """Generate a contextual follow-up message based on recent interactions"""
-        try:
-            # Get the last few messages to understand context
-            recent_messages = self.current_conversation[-3:] if len(self.current_conversation) >= 3 else self.current_conversation
+    def _is_verification_response(self, text: str) -> bool:
+        """Check if the text is a verification response (yes/no/confirm/cancel)
+        
+        Args:
+            text: User's message text
             
-            if not recent_messages:
-                return "Anything else I can help you with?"
+        Returns:
+            bool: True if this is a verification response
+        """
+        text_lower = text.lower().strip()
+        
+        verification_keywords = [
+            # Positive responses
+            "yes", "confirm", "ok", "okay", "proceed", "do it", "go ahead", 
+            "execute", "run it", "sure", "yep", "yeah", "affirmative", 
+            "correct", "right", "that's right", "approve",
             
-            # Get the last AI message to understand what we just did
-            last_ai_message = None
-            for msg in reversed(recent_messages):
-                if msg.get('type') == 'ai' and msg.get('message_type') != 'follow_up':
-                    last_ai_message = msg
-                    break
+            # Negative responses
+            "no", "cancel", "abort", "never mind", "stop", "don't", 
+            "negative", "nope", "reject", "decline", "deny",
             
-            if not last_ai_message:
-                return "What else can I do for you?"
-            
-            last_text = last_ai_message.get('text', '').lower()
-            
-            # Context-aware follow-ups based on what we just did
-            if 'project' in last_text:
-                follow_ups = [
-                    "Want to open any of these projects?",
-                    "Which project would you like to work on?",
-                    "Need help with any specific project?"
-                ]
-            elif 'found' in last_text and ('application' in last_text or 'app' in last_text):
-                follow_ups = [
-                    "Which app would you like me to open?",
-                    "Want me to launch any of these apps?",
-                    "Which application should I start for you?"
-                ]
-            elif 'time' in last_text or 'date' in last_text:
-                follow_ups = [
-                    "What else do you need to know?",
-                    "Anything else I can check for you?",
-                    "What other information can I provide?"
-                ]
-            elif 'fan' in last_text:
-                follow_ups = [
-                    "Need any other fan adjustments?",
-                    "Want me to check any other devices?",
-                    "Anything else for your smart home?"
-                ]
-            elif 'opened' in last_text or 'launched' in last_text:
-                follow_ups = [
-                    "All set! What else can I help with?",
-                    "That's done! What's next?",
-                    "Got it! Anything else you need?"
-                ]
-            else:
-                # General follow-ups
-                follow_ups = [
-                    "What else can I help you with?",
-                    "Anything else you need?",
-                    "What's next?",
-                    "How else can I assist you?",
-                    "What would you like to do next?"
-                ]
-            
-            import random
-            return random.choice(follow_ups)
-            
-        except Exception as e:
-            logging.error(f"Error generating contextual follow-up: {e}")
-            return "Anything else I can help you with?"
-
+            # Time modification responses
+            "change to", "make it", "modify"
+        ]
+        
+        return any(keyword in text_lower for keyword in verification_keywords)
+    
+    def _get_contextual_follow_up(self):
+        """Get a contextual follow-up message based on conversation state"""
+        follow_up_messages = [
+            "Anything else I can help you with?",
+            "Is there something else you need?", 
+            "What else can I do for you?",
+            "Need help with anything else?",
+            "Anything else on your mind?"
+        ]
+        
+        return random.choice(follow_up_messages)
+    
     def set_pending_action(self, action_type: str, context: dict, question: str):
         """Set a pending action that requires user input"""
         self.pending_action = {
@@ -1740,6 +1882,31 @@ Created on: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
     
     def _emit_ai_message(self, text: str, message_type: str):
         """Emit AI message to all clients"""
+        # Add debug logging for verification prompts
+        if message_type == 'action_card' and isinstance(text, dict) and text.get('type') == 'verification_prompt':
+            print(f"DEBUG: Emitting verification prompt with options: {text.get('options', [])}")
+            print(f"DEBUG: Full verification prompt: {text}")
+        
+        # Skip sending duplicate messages
+        if hasattr(self, '_last_ai_message') and self._last_ai_message:
+            # Check if the message is substantially the same
+            if isinstance(text, str) and isinstance(self._last_ai_message, str):
+                # For string messages, check content similarity
+                if text == self._last_ai_message and message_type != "system":
+                    print("Skipping duplicate AI message")
+                    return
+            elif isinstance(text, dict) and isinstance(self._last_ai_message, dict):
+                # For action cards, check if they're the same type with same key fields
+                if (text.get('type') == self._last_ai_message.get('type') and 
+                    text.get('message') == self._last_ai_message.get('message') and
+                    text.get('message_id') == self._last_ai_message.get('message_id')):
+                    print(f"Skipping duplicate action card: {text.get('type')} - {text.get('message_id')}")
+                    return
+        
+        # Save this message for deduplication
+        self._last_ai_message = text
+        
+        # Create and emit the message
         message = {
             'id': len(self.current_conversation) + 1,
             'type': 'ai',
@@ -1800,4 +1967,4 @@ def main():
         print(f"Error running backend: {e}")
 
 if __name__ == '__main__':
-    main() 
+    main()

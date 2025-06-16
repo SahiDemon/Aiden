@@ -1,11 +1,10 @@
 .scheduled-commands-container {
-    background: linear-gradient(145deg, #1a1a2e, #16213e);
-    border-radius: 15px;
-    padding: 20px;
-    margin: 15px 0;
-    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    backdrop-filter: blur(10px);
+    background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
+    border-radius: 12px;
+    padding: 24px;
+    margin: 16px 0;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    border: 1px solid #3a3a3a;
 }
 
 .scheduled-commands-header {
@@ -13,74 +12,64 @@
     justify-content: space-between;
     align-items: center;
     margin-bottom: 20px;
-    padding-bottom: 15px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding-bottom: 16px;
+    border-bottom: 1px solid #4a5568;
 }
 
 .scheduled-commands-header h3 {
-    color: #e74c3c;
+    color: #ffffff;
     margin: 0;
-    font-size: 1.4em;
+    font-size: 1.25rem;
     font-weight: 600;
 }
 
 .schedule-count {
-    background: linear-gradient(45deg, #e74c3c, #f39c12);
-    color: white;
-    padding: 5px 12px;
-    border-radius: 20px;
-    font-size: 0.9em;
-    font-weight: bold;
-    box-shadow: 0 2px 8px rgba(231, 76, 60, 0.3);
+    background: rgba(76, 130, 247, 0.2);
+    color: #4c82f7;
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    border: 1px solid #4c82f7;
 }
 
 .schedules-list {
     display: flex;
     flex-direction: column;
-    gap: 15px;
+    gap: 16px;
 }
 
 .schedule-item {
     background: rgba(255, 255, 255, 0.05);
-    border-radius: 12px;
-    padding: 15px;
+    border-radius: 8px;
+    padding: 16px;
     border-left: 4px solid;
-    transition: all 0.3s ease;
+    transition: all 0.2s ease;
     position: relative;
-    overflow: hidden;
+    border: 1px solid #4a5568;
 }
 
 .schedule-item.normal {
-    border-left-color: #3498db;
-    background: rgba(52, 152, 219, 0.05);
+    border-left-color: #3b82f6;
 }
 
 .schedule-item.warning {
-    border-left-color: #f39c12;
-    background: rgba(243, 156, 18, 0.1);
-    animation: pulseWarning 2s infinite;
+    border-left-color: #f59e0b;
+    background: rgba(245, 158, 11, 0.1);
 }
 
 .schedule-item.urgent {
-    border-left-color: #e74c3c;
-    background: rgba(231, 76, 60, 0.15);
-    animation: pulseUrgent 1s infinite;
-    box-shadow: 0 0 20px rgba(231, 76, 60, 0.3);
+    border-left-color: #ef4444;
+    background: rgba(239, 68, 68, 0.1);
+    animation: subtlePulse 2s infinite;
 }
 
-@keyframes pulseWarning {
-    0%, 100% { transform: scale(1); }
-    50% { transform: scale(1.02); }
-}
-
-@keyframes pulseUrgent {
+@keyframes subtlePulse {
     0%, 100% { 
-        transform: scale(1);
-        box-shadow: 0 0 20px rgba(231, 76, 60, 0.3);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     }
     50% { 
-        transform: scale(1.03);
-        box-shadow: 0 0 30px rgba(231, 76, 60, 0.5);
+        box-shadow: 0 4px 12px rgba(239, 68, 68, 0.15);
     }
 }
 
@@ -88,24 +77,24 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 10px;
+    margin-bottom: 12px;
 }
 
 .operation-info {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 12px;
 }
 
 .operation-icon {
-    font-size: 1.5em;
-    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+    font-size: 1.25rem;
+    color: #6b7280;
 }
 
 .operation-name {
-    color: #ecf0f1;
+    color: #ffffff;
     font-weight: 600;
-    font-size: 1.1em;
+    font-size: 1rem;
 }
 
 .countdown-display {
@@ -114,55 +103,52 @@
 }
 
 .countdown-time {
-    font-family: 'Courier New', monospace;
-    font-size: 1.3em;
-    font-weight: bold;
-    padding: 8px 15px;
-    border-radius: 8px;
-    background: rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    backdrop-filter: blur(5px);
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
+    font-size: 1.125rem;
+    font-weight: 600;
+    padding: 8px 12px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid #4a5568;
+    min-width: 70px;
+    text-align: center;
 }
 
 .countdown-time.normal {
-    color: #3498db;
-    border-color: rgba(52, 152, 219, 0.3);
+    color: #3b82f6;
+    border-color: #3b82f6;
 }
 
 .countdown-time.warning {
-    color: #f39c12;
-    border-color: rgba(243, 156, 18, 0.3);
+    color: #f59e0b;
+    border-color: #f59e0b;
 }
 
 .countdown-time.urgent {
-    color: #e74c3c;
-    border-color: rgba(231, 76, 60, 0.3);
-    animation: blinkUrgent 1s infinite;
-}
-
-@keyframes blinkUrgent {
-    0%, 50% { opacity: 1; }
-    51%, 100% { opacity: 0.7; }
+    color: #ef4444;
+    border-color: #ef4444;
+    font-weight: 700;
 }
 
 .schedule-details {
-    margin: 10px 0;
-    padding: 10px;
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.05);
+    margin: 12px 0;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 6px;
+    border: 1px solid #4a5568;
 }
 
 .execution-time {
-    color: #bdc3c7;
-    font-size: 0.9em;
-    margin-bottom: 5px;
+    color: #cbd5e0;
+    font-size: 0.875rem;
+    margin-bottom: 4px;
+    font-weight: 500;
 }
 
 .original-query {
-    color: #95a5a6;
+    color: #a0aec0;
     font-style: italic;
-    font-size: 0.85em;
+    font-size: 0.875rem;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -170,121 +156,107 @@
 
 .schedule-actions {
     display: flex;
-    gap: 10px;
-    margin-top: 15px;
+    gap: 8px;
+    margin-top: 16px;
 }
 
 .action-btn {
     flex: 1;
-    padding: 8px 15px;
-    border: none;
-    border-radius: 8px;
+    padding: 8px 16px;
+    border: 1px solid;
+    border-radius: 6px;
     cursor: pointer;
-    font-weight: 600;
-    transition: all 0.3s ease;
-    backdrop-filter: blur(5px);
+    font-weight: 500;
+    font-size: 0.875rem;
+    transition: all 0.2s ease;
+    background: rgba(255, 255, 255, 0.1);
 }
 
 .modify-btn {
-    background: linear-gradient(45deg, #3498db, #2980b9);
-    color: white;
-    border: 1px solid rgba(52, 152, 219, 0.3);
+    color: #3b82f6;
+    border-color: #3b82f6;
 }
 
 .modify-btn:hover {
-    background: linear-gradient(45deg, #2980b9, #1f618d);
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(52, 152, 219, 0.3);
+    background: rgba(59, 130, 246, 0.2);
+    transform: translateY(-1px);
 }
 
 .cancel-btn {
-    background: linear-gradient(45deg, #e74c3c, #c0392b);
-    color: white;
-    border: 1px solid rgba(231, 76, 60, 0.3);
+    color: #ef4444;
+    border-color: #ef4444;
 }
 
 .cancel-btn:hover {
-    background: linear-gradient(45deg, #c0392b, #a93226);
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(231, 76, 60, 0.3);
+    background: rgba(239, 68, 68, 0.2);
+    transform: translateY(-1px);
 }
 
 .urgency-banner {
     position: absolute;
     top: 0;
     right: 0;
-    background: linear-gradient(45deg, #e74c3c, #f39c12);
+    background: #ef4444;
     color: white;
-    padding: 5px 15px;
-    border-radius: 0 12px 0 12px;
-    font-size: 0.8em;
-    font-weight: bold;
-    animation: bannerPulse 1s infinite;
-}
-
-@keyframes bannerPulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.8; }
+    padding: 4px 12px;
+    border-radius: 0 8px 0 8px;
+    font-size: 0.75rem;
+    font-weight: 600;
 }
 
 .schedules-footer {
     margin-top: 20px;
-    padding-top: 15px;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    padding-top: 16px;
+    border-top: 1px solid #e5e7eb;
     text-align: center;
 }
 
 .footer-btn {
     padding: 10px 20px;
-    border: none;
-    border-radius: 8px;
+    border: 1px solid #6b7280;
+    border-radius: 6px;
     cursor: pointer;
-    font-weight: 600;
-    transition: all 0.3s ease;
-    backdrop-filter: blur(5px);
-}
-
-.cancel-all-btn {
-    background: linear-gradient(45deg, #8e44ad, #9b59b6);
-    color: white;
-    border: 1px solid rgba(142, 68, 173, 0.3);
+    font-weight: 500;
+    font-size: 0.875rem;
+    transition: all 0.2s ease;
+    background: #ffffff;
+    color: #6b7280;
 }
 
 .cancel-all-btn:hover {
-    background: linear-gradient(45deg, #7d3c98, #8e44ad);
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(142, 68, 173, 0.3);
+    background: #f9fafb;
+    border-color: #374151;
+    color: #374151;
 }
 
 .no-schedules {
     text-align: center;
     padding: 40px 20px;
-    color: #7f8c8d;
+    color: #a0aec0;
 }
 
 .no-schedules-icon {
-    font-size: 3em;
-    margin-bottom: 15px;
-    opacity: 0.6;
+    font-size: 3rem;
+    margin-bottom: 12px;
+    opacity: 0.5;
 }
 
 .no-schedules p {
     margin: 0;
-    font-size: 1.1em;
-    font-style: italic;
+    font-size: 1rem;
+    font-weight: 500;
 }
 
-/* Responsive design */
 @media (max-width: 768px) {
     .scheduled-commands-container {
-        padding: 15px;
-        margin: 10px 0;
+        padding: 16px;
+        margin: 12px 0;
     }
     
     .schedule-header {
         flex-direction: column;
-        gap: 10px;
         align-items: flex-start;
+        gap: 8px;
     }
     
     .countdown-display {
@@ -296,6 +268,6 @@
     }
     
     .action-btn {
-        text-align: center;
+        width: 100%;
     }
 } 

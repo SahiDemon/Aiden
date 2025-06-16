@@ -45,6 +45,10 @@ class ScheduledSystemCommands:
         # Check if this is a scheduled command
         time_info = self._extract_time_info(original_query)
         
+        # Check if user mentioned scheduling but didn't specify complete time
+        if self._is_incomplete_schedule_request(original_query) and not time_info:
+            return self._handle_incomplete_schedule_request(operation, original_query)
+        
         if time_info:
             # This is a scheduled command request
             return self._handle_scheduled_command(operation, time_info, original_query)
@@ -79,17 +83,8 @@ class ScheduledSystemCommands:
                 "response": result.get("response", "Schedule cancelled.")
             }
         
-        # This is an immediate command - ask for verification for dangerous commands
-        if operation in ["shutdown", "restart"]:
-            return self._request_immediate_verification(operation, original_query)
-        
-        # Safe commands (lock, sleep) can execute immediately
-        return {
-            "action": "execute_immediate",
-            "operation": operation,
-            "verified": True,
-            "response": f"Executing {operation} command immediately."
-        }
+        # This is an immediate command - ask for verification for ALL system commands
+        return self._request_immediate_verification(operation, original_query)
     
     def _extract_time_info(self, query: str) -> Optional[Dict[str, Any]]:
         """Extract time information from user query
@@ -102,16 +97,23 @@ class ScheduledSystemCommands:
         """
         query_lower = query.lower()
         
-        # Common time patterns
+        # Common time patterns - more comprehensive
         patterns = [
             (r"in (\d+) minutes?", "minutes"),
             (r"in (\d+) mins?", "minutes"), 
+            (r"in (\d+) min\b", "minutes"),  # Added pattern for "min" without 's'
             (r"in (\d+) hours?", "hours"),
             (r"in (\d+) hrs?", "hours"),
+            (r"in (\d+) hr\b", "hours"),  # Added pattern for "hr" without 's'
             (r"in (\d+) seconds?", "seconds"),
             (r"in (\d+) secs?", "seconds"),
+            (r"in (\d+) sec\b", "seconds"),  # Added pattern for "sec" without 's'
             (r"after (\d+) minutes?", "minutes"),
             (r"after (\d+) mins?", "minutes"),
+            (r"after (\d+) min\b", "minutes"),  # Added pattern for "min" without 's'
+            (r"(\d+) minutes? from now", "minutes"),  # Added "from now" pattern
+            (r"(\d+) mins? from now", "minutes"),
+            (r"(\d+) min from now", "minutes"),
         ]
         
         import re
@@ -204,6 +206,9 @@ class ScheduledSystemCommands:
             # Store the schedule
             self.active_schedules[task_id] = schedule_info
             
+            # Update dashboard immediately before starting thread
+            self._update_dashboard_schedules()
+            
             # Start the countdown thread
             countdown_thread = threading.Thread(
                 target=self._execute_scheduled_command,
@@ -211,10 +216,6 @@ class ScheduledSystemCommands:
                 daemon=True
             )
             countdown_thread.start()
-            
-            # Give the thread a moment to start, then update dashboard immediately to show details
-            time.sleep(0.1)  # Small delay to ensure thread is running
-            self._update_dashboard_schedules()
             
             operation = schedule_info["operation"]
             time_info = schedule_info["time_info"]
@@ -230,6 +231,9 @@ class ScheduledSystemCommands:
             
             action = action_phrases.get(operation, operation)
             response = f"Scheduled! I'll {action} the computer in {time_str}, Boss."
+            
+            # Log for debugging
+            logging.info(f"Schedule confirmed: {operation} in {time_str} (Task ID: {task_id})")
             
             return {
                 "success": True,
@@ -251,46 +255,46 @@ class ScheduledSystemCommands:
             total_seconds = schedule["time_info"]["total_seconds"]
             operation = schedule["operation"]
             
-            # Countdown with smart updates to prevent dashboard spam
+            # Countdown with minimal voice announcements and smart dashboard updates
             remaining = total_seconds
             last_announcement = None
-            last_dashboard_update = None
+            last_dashboard_update = 0
             
             # Initial dashboard update to show the schedule immediately
             self._update_dashboard_schedules()
             
             while remaining > 0 and task_id in self.active_schedules:
-                # Announce at specific intervals
-                if remaining <= 60 and remaining % 10 == 0:
-                    if last_announcement != remaining:
-                        self._announce_countdown(operation, remaining)
-                        last_announcement = remaining
-                elif remaining <= 300 and remaining % 60 == 0:  # Every minute for last 5 minutes
-                    if last_announcement != remaining:
-                        self._announce_countdown(operation, remaining)
-                        last_announcement = remaining
+                # Only announce at 5 minutes and 1 minute
+                if remaining == 300 and last_announcement != 300:  # 5 minutes
+                    self._announce_countdown(operation, remaining)
+                    last_announcement = 300
+                elif remaining == 60 and last_announcement != 60:  # 1 minute
+                    self._announce_countdown(operation, remaining)
+                    last_announcement = 60
                 
-                # Update dashboard at meaningful intervals
+                # Update dashboard every 10 seconds during final minute, every 30 seconds otherwise
                 should_update_dashboard = False
                 
-                # Update at 5 minutes (300 seconds)
-                if remaining == 300 and last_dashboard_update != 300:
-                    should_update_dashboard = True
-                    last_dashboard_update = 300
-                
-                # Update at 1 minute (60 seconds)
-                elif remaining == 60 and last_dashboard_update != 60:
-                    should_update_dashboard = True
-                    last_dashboard_update = 60
-                
-                # Update at 30 seconds for final countdown
-                elif remaining == 30 and last_dashboard_update != 30:
-                    should_update_dashboard = True
-                    last_dashboard_update = 30
+                if remaining <= 60:
+                    # Final minute - update every 10 seconds
+                    if remaining % 10 == 0 and last_dashboard_update != remaining:
+                        should_update_dashboard = True
+                        last_dashboard_update = remaining
+                elif remaining <= 300:
+                    # Final 5 minutes - update every 30 seconds
+                    if remaining % 30 == 0 and last_dashboard_update != remaining:
+                        should_update_dashboard = True
+                        last_dashboard_update = remaining
+                else:
+                    # Beyond 5 minutes - update every 60 seconds
+                    if remaining % 60 == 0 and last_dashboard_update != remaining:
+                        should_update_dashboard = True
+                        last_dashboard_update = remaining
                 
                 if should_update_dashboard:
                     self._update_dashboard_schedules()
                 
+                # Sleep for 1 second
                 time.sleep(1)
                 remaining -= 1
             
@@ -447,7 +451,7 @@ class ScheduledSystemCommands:
                     "response": f"Cancelled {cancelled_operations[0]} schedule."
                 }
             else:
-                ops_str = ", ".join(cancelled_operations)
+                ops_str = ", ".join(set(cancelled_operations))
                 return {
                     "success": True,
                     "response": f"Cancelled all schedules: {ops_str}."
@@ -466,8 +470,9 @@ class ScheduledSystemCommands:
         """Check if query is an abort request"""
         query_lower = query.lower()
         abort_keywords = [
-            "cancel", "abort", "stop", "don't", "never mind",
-            "forget it", "cancel that", "abort that"
+            "cancel", "abort", "stop", "don't", "never mind", "do not",
+            "forget it", "cancel that", "abort that", "cancel the", "stop the",
+            "terminate", "end", "halt", "kill"
         ]
         return any(keyword in query_lower for keyword in abort_keywords)
     
@@ -507,35 +512,119 @@ class ScheduledSystemCommands:
                     schedule_data = {
                         "task_id": task_id,
                         "operation": schedule["operation"],
-                        "remaining_seconds": int(remaining),
+                        "remaining_seconds": max(1, int(remaining)),  # Ensure at least 1 second
                         "execution_time": execution_time.strftime("%H:%M:%S"),
                         "original_query": schedule["original_query"]
                     }
                     schedules_data.append(schedule_data)
                     logging.debug(f"Added schedule to dashboard: {schedule['operation']} in {int(remaining)}s")
+                else:
+                    # Remove expired schedules
+                    logging.debug(f"Removing expired schedule: {task_id}")
             
-            # Only send action card if there are active schedules
-            if schedules_data:
-                action_card = {
-                    "type": "scheduled_commands",
-                    "title": "Active Scheduled Commands",
-                    "schedules": schedules_data,
-                    "actions": [
-                        {"text": "Cancel All", "action": "cancel_all_schedules"},
-                        {"text": "Modify Time", "action": "modify_schedule_time"}
-                    ],
-                    "status": "Active"
-                }
-                
-                logging.debug(f"Sending dashboard action card with {len(schedules_data)} schedules")
-                self.dashboard_backend._emit_ai_message(action_card, "action_card")
-            else:
-                logging.debug("No active schedules to display on dashboard")
+            # Use a consistent message ID to update the same card instead of creating new ones
+            action_card = {
+                "type": "scheduled_commands",
+                "title": "Active Scheduled Commands",
+                "schedules": schedules_data,
+                "actions": [
+                    {"text": "Cancel All", "action": "cancel_all_schedules"},
+                    {"text": "Modify Time", "action": "modify_schedule_time"}
+                ],
+                "status": "Active" if schedules_data else "Empty",
+                "message_id": "system_schedules_card",  # Unique ID to prevent duplicates
+                "update_existing": True  # Flag to update existing card
+            }
+            
+            logging.info(f"Updating dashboard with {len(schedules_data)} active schedules")
+            self.dashboard_backend._emit_ai_message(action_card, "action_card")
             
         except Exception as e:
             logging.error(f"Error updating dashboard schedules: {e}")
+            import traceback
+            traceback.print_exc()
     
     def get_active_schedules(self) -> List[Dict[str, Any]]:
         """Get list of active schedules for status checking"""
         with self.schedule_lock:
             return list(self.active_schedules.values())
+    
+    def _is_incomplete_schedule_request(self, query: str) -> bool:
+        """Check if query mentions scheduling but is incomplete
+        
+        Args:
+            query: User query string
+            
+        Returns:
+            True if this appears to be an incomplete schedule request
+        """
+        query_lower = query.lower().strip()
+        
+        # Explicit incomplete patterns - these are DEFINITELY incomplete
+        explicit_incomplete_patterns = [
+            "can you schedule",
+            "schedule a",
+            "schedule the", 
+            "scheduler",
+            "i want to schedule",
+            "please schedule",
+            "schedule something"
+        ]
+        
+        # Check for explicit incomplete patterns first
+        for pattern in explicit_incomplete_patterns:
+            if pattern in query_lower:
+                return True
+        
+        # Look for scheduling indicators
+        schedule_indicators = [
+            "schedule", "scheduler", "in", "after", "delay"
+        ]
+        
+        # Look for incomplete time patterns
+        incomplete_patterns = [
+            r"\bin\s*$",  # ends with "in"
+            r"\bafter\s*$",  # ends with "after"
+            r"\bschedul\w*\s+\w+\s+in\s*$",  # "schedule something in"
+            r"\bschedul\w*\s+\w+\s+after\s*$",  # "schedule something after"
+        ]
+        
+        import re
+        
+        # Check if it has scheduling indicators
+        has_schedule_indicator = any(indicator in query_lower for indicator in schedule_indicators)
+        
+        # Check if it matches incomplete patterns
+        has_incomplete_pattern = any(re.search(pattern, query_lower) for pattern in incomplete_patterns)
+        
+        return has_schedule_indicator and (has_incomplete_pattern or 
+                                         (("in" in query_lower or "after" in query_lower) and 
+                                          not self._extract_time_info(query)))
+    
+    def _handle_incomplete_schedule_request(self, operation: str, original_query: str) -> Dict[str, Any]:
+        """Handle incomplete schedule request by asking for time
+        
+        Args:
+            operation: The operation to schedule
+            original_query: Original user input
+            
+        Returns:
+            Processing result asking for time specification
+        """
+        action_phrases = {
+            "shutdown": "shut down",
+            "restart": "restart", 
+            "sleep": "put to sleep",
+            "hibernate": "hibernate",
+            "lock": "lock"
+        }
+        
+        action = action_phrases.get(operation, operation)
+        
+        return {
+            "action": "request_time_specification",
+            "operation": operation,
+            "original_query": original_query,
+            "response": f"I'll {action} the computer. How long from now? For example, say '10 minutes' or '1 hour'.",
+            "verification_type": "time_specification_needed"
+        }

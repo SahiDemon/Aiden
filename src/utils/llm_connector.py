@@ -96,6 +96,7 @@ CRITICAL - COMMAND CLASSIFICATION RULES:
 - "restart/reboot" = system_command with operation="restart"
 - "sleep/hibernate" = system_command with operation="sleep"
 - "open/launch/start [app]" = app_control with app_name and operation="launch"
+- Single word "turn" WITHOUT "off" or "computer" = NOT a system command (ask for clarification)
 
 SCHEDULING PATTERNS:
 - "shutdown in 10 minutes" = system_command with operation="shutdown" 
@@ -112,6 +113,8 @@ RESPONSE GUIDELINES:
 - For time-based commands: Give simple confirmation without asking for verification
 - NEVER ask "You can say 'yes' to confirm" or similar verification prompts
 - Be direct and execute commands as requested
+- NEVER add default values like "10 minutes" if user doesn't specify time
+- For incomplete commands like "can you schedule", use action "provide_information" and ask what to schedule
 
 Examples:
 - "shutdown in 10 minutes" → "I'll shut down the computer in 10 minutes, Boss"
@@ -300,11 +303,13 @@ If the user wants natural conversation without a specific command, use:
                 cleaned_prompt = prompt.encode('ascii', errors='replace').decode('ascii')
                 temp.write(cleaned_prompt)
             
-            # Build command based on OS
+            # Build command based on OS with optimized flags:
+            # -q: quiet mode (no loading animations)
+            # -w: return whole response as text (faster)
             if platform.system() == "Windows":
-                cmd = f'type "{temp_file_path}" | {self.tgpt_path}'
+                cmd = f'type "{temp_file_path}" | {self.tgpt_path} -q -w'
             else:  # Unix-like
-                cmd = f'cat "{temp_file_path}" | {self.tgpt_path}'
+                cmd = f'cat "{temp_file_path}" | {self.tgpt_path} -q -w'
             
             # Print information about what's happening
             print(f"Executing command: {cmd}")
@@ -341,7 +346,7 @@ If the user wants natural conversation without a specific command, use:
             return self._default_error_response()
     
     def _clean_tgpt_output(self, output: str) -> str:
-        """Clean the tgpt output by removing loading indicators and spinner characters
+        """Clean the tgpt output (minimal cleaning needed with -q flag)
         
         Args:
             output: Raw output from tgpt
@@ -352,39 +357,8 @@ If the user wants natural conversation without a specific command, use:
         # Get user's preferred address for fallback responses
         form_of_address = self.user_profile["personal"]["form_of_address"]
         
-        # Remove loading indicators and spinner characters
-        lines = output.split('\n')
-        cleaned_lines = []
-        
-        # Common spinner characters and loading patterns
-        spinner_chars = ['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷', '|', '/', '-', '\\']
-        loading_patterns = [
-            'Loading', 'loading', 'LOADING',
-            'Processing', 'processing', 'PROCESSING'
-        ]
-        
-        for line in lines:
-            # Skip if line contains any spinner character
-            if any(spinner in line for spinner in spinner_chars):
-                continue
-                
-            # Skip lines that contain loading text
-            skip_line = False
-            for pattern in loading_patterns:
-                if pattern in line:
-                    skip_line = True
-                    break
-                    
-            if skip_line:
-                continue
-                
-            # Skip lines with just dots (like "...")
-            if line.strip() and all(c == '.' for c in line.strip()):
-                continue
-                
-            cleaned_lines.append(line)
-        
-        cleaned_output = '\n'.join(cleaned_lines)
+        # With -q flag, output should be clean, but still do basic cleaning
+        cleaned_output = output.strip()
     
         # Check if we have a proper response
         if not cleaned_output.strip() or len(cleaned_output.strip()) < 20:
@@ -454,6 +428,14 @@ If the user wants natural conversation without a specific command, use:
                 return f"""{{\"action\": \"provide_information\", \"parameters\": {{\"query\": \"owner\", \"original_query\": \"{self.last_command}\"}}, \"response\": \"Let me tell you about my amazing creator!\"}}"""
             elif any(phrase in command_lower for phrase in ["what can you do", "what are you capable of", "what are your capabilities", "help", "what can you help me with", "what do you do", "tell me about yourself", "what are your features"]):
                 return f"""{{\"action\": \"provide_information\", \"parameters\": {{\"query\": \"capabilities\", \"original_query\": \"{self.last_command}\"}}, \"response\": \"Let me show you all the amazing things I can help you with!\"}}"""
+            
+            # Schedule fallback patterns - detect incomplete schedule requests
+            elif any(phrase in command_lower for phrase in ["can you schedule", "schedule a", "schedule the", "i want to schedule", "please schedule"]):
+                return f"""{{\"action\": \"system_command\", \"parameters\": {{\"operation\": \"incomplete_schedule\", \"original_query\": \"{self.last_command}\"}}, \"response\": \"I'd be happy to schedule something for you, {form_of_address}. What would you like me to schedule and when?\"}}"""
+            
+            # Handle incomplete commands like "turn"
+            elif command_lower.strip() in ["turn", "turn on", "turn off"]:
+                return f"""{{\"action\": \"provide_information\", \"parameters\": {{\"original_query\": \"{self.last_command}\"}}, \"response\": \"Turn what, {form_of_address}? Please be more specific. For example, you can say 'turn off computer', 'turn on fan', or 'turn off the lights'.\"}}"""
             
             # Default fallback
             else:

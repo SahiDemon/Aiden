@@ -2,7 +2,7 @@
   "personal": {
     "created_date": "2025-06-05",
     "form_of_address": "Sahi",
-    "last_login": "2025-06-16T19:46:31.666097",
+    "last_login": "2025-06-17T01:20:23.961524",
     "name": "Sahi"
   },
   "preferences": {
@@ -3996,22 +3996,373 @@
           "operation": "abort",
           "original_query": "cancel the shutdown"
         }
+      },
+      {
+        "timestamp": "2025-06-16T21:17:22.998192",
+        "type": "system_command",
+        "text": "shutdown the system in 10",
+        "parameters": {
+          "operation": "shutdown",
+          "time": "10",
+          "original_query": "shutdown the system in 10"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T21:24:55.636560",
+        "type": "system_command",
+        "text": "scheduler shutdown in",
+        "parameters": {
+          "operation": "shutdown",
+          "original_query": "scheduler shutdown in"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T21:29:42.150924",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T21:38:53.265903",
+        "type": "system_command",
+        "text": "in 10 minutes",
+        "parameters": {
+          "operation": "shutdown",
+          "time": "10",
+          "original_query": "shutdown in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T21:39:44.135981",
+        "type": "provide_information",
+        "text": "schedule",
+        "parameters": {
+          "query": "schedule",
+          "original_query": "schedule",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-16T21:40:07.263388",
+        "type": "provide_information",
+        "text": "schedules",
+        "parameters": {
+          "original_query": "schedules",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-16T21:40:21.308623",
+        "type": "system_command",
+        "text": "scheduler Hibernate in",
+        "parameters": {
+          "operation": "hibernate",
+          "original_query": "Hibernate in"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T21:50:49.911656",
+        "type": "system_command",
+        "text": "can you schedule a hibernate",
+        "parameters": {
+          "operation": "hibernate",
+          "original_query": "schedule a hibernate"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T21:56:21.361592",
+        "type": "system_command",
+        "text": "can you schedule",
+        "parameters": {
+          "operation": "sleep",
+          "time": "in 10 minutes",
+          "original_query": "schedule hibernate"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T22:15:39.082843",
+        "type": "system_command",
+        "text": "can you Hibernate the PC in 10",
+        "parameters": {
+          "operation": "hibernate",
+          "time": "10",
+          "original_query": "Hibernate the PC in 10"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T22:16:14.208242",
+        "type": "system_command",
+        "text": "Hibernate the computer in 10 minutes",
+        "parameters": {
+          "operation": "sleep",
+          "time": "10",
+          "original_query": "Hibernate the computer in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T22:16:45.400763",
+        "type": "system_command",
+        "text": "Hibernate the computer in 10 minutes",
+        "parameters": {
+          "operation": "sleep",
+          "time": "10",
+          "original_query": "Hibernate the computer in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T22:17:14.761481",
+        "type": "system_command",
+        "text": "yes yes",
+        "parameters": {
+          "operation": "hibernate",
+          "time": "10",
+          "original_query": "Hibernate the computer in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T22:17:52.162374",
+        "type": "provide_information",
+        "text": "turn the",
+        "parameters": {
+          "query": "turn the",
+          "original_query": "turn the",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-16T22:18:18.717121",
+        "type": "system_command",
+        "text": "turn the hibernation into 10 minutes",
+        "parameters": {
+          "operation": "hibernate",
+          "time": "10 minutes",
+          "original_query": "Hibernate the PC in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T22:20:07.020574",
+        "type": "system_command",
+        "text": "turn",
+        "parameters": {
+          "operation": "hibernate",
+          "time": "10 minutes",
+          "original_query": "Hibernate the computer in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T22:20:31.093133",
+        "type": "system_command",
+        "text": "yes turned",
+        "parameters": {
+          "operation": "hibernate",
+          "time": "10",
+          "original_query": "Hibernate the computer in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T22:39:59.112200",
+        "type": "system_command",
+        "text": "shutdown the computer in 10 minutes",
+        "parameters": {
+          "operation": "shutdown",
+          "original_query": "shutdown the computer in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T22:46:52.027587",
+        "type": "system_command",
+        "text": "5 minute the system in 10 minutes",
+        "parameters": {
+          "operation": "shutdown",
+          "time": "10 minutes",
+          "original_query": "5 minute the system in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T22:47:32.033334",
+        "type": "system_command",
+        "text": "Hibernate the system in 10 minutes",
+        "parameters": {
+          "operation": "hibernate",
+          "time": "10 minutes",
+          "original_query": "Hibernate the system in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T22:48:00.279673",
+        "type": "provide_information",
+        "text": "yes hi bane",
+        "parameters": {
+          "query": "yes hi bane",
+          "original_query": "yes hi bane",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-16T22:48:13.838596",
+        "type": "system_command",
+        "text": "connect the system in 10 minutes",
+        "parameters": {
+          "operation": "sleep",
+          "time": "10",
+          "original_query": "Hibernate the system in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-17T00:35:16.523608",
+        "type": "system_command",
+        "text": "scheduler shutdown in 10 minutes",
+        "parameters": {
+          "operation": "shutdown",
+          "time": "10",
+          "original_query": "scheduler shutdown in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-17T00:42:01.306790",
+        "type": "system_command",
+        "text": "scheduled shutdown in 10 minutes",
+        "parameters": {
+          "operation": "shutdown",
+          "time": "10 minutes",
+          "original_query": "scheduler shutdown in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-17T00:42:26.914621",
+        "type": "system_command",
+        "text": "scheduler shutdown in 10 minutes",
+        "parameters": {
+          "operation": "shutdown",
+          "time": "10 minutes",
+          "original_query": "scheduler shutdown in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-17T00:42:59.193048",
+        "type": "system_command",
+        "text": "set the shutdown to 10 minutes and",
+        "parameters": {
+          "operation": "shutdown",
+          "time": "10 minutes",
+          "original_query": "set the shutdown to 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-17T00:43:22.355335",
+        "type": "system_command",
+        "text": "10 minutes",
+        "parameters": {
+          "operation": "shutdown",
+          "time": "10 minutes",
+          "original_query": "scheduler shutdown in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-17T00:44:02.052702",
+        "type": "provide_information",
+        "text": "automobile name",
+        "parameters": {
+          "query": "automobile name",
+          "original_query": "automobile name",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-17T00:44:27.465882",
+        "type": "system_command",
+        "text": "tubeless hibernate in 10 minutes",
+        "parameters": {
+          "operation": "sleep",
+          "time": "10 minutes",
+          "original_query": "tubeless hibernate in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-17T00:56:44.088955",
+        "type": "system_command",
+        "text": "scheduler shutdown in 10",
+        "parameters": {
+          "operation": "shutdown",
+          "time": "10 minutes",
+          "original_query": "scheduler shutdown in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-17T01:17:29.207480",
+        "type": "system_command",
+        "text": "shutdown in 5 minutes",
+        "parameters": {
+          "operation": "shutdown",
+          "original_query": "shutdown in 5 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-17T01:18:22.221576",
+        "type": "system_command",
+        "text": "scheduler Hibernate in 5 minutes",
+        "parameters": {
+          "operation": "hibernate",
+          "time": "5",
+          "original_query": "scheduler Hibernate in 5 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-17T01:20:53.443902",
+        "type": "system_command",
+        "text": "scheduler shutdown in",
+        "parameters": {
+          "operation": "shutdown",
+          "time": "10 minutes",
+          "original_query": "scheduler shutdown in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-17T01:21:37.750520",
+        "type": "system_command",
+        "text": "shutdown in 5 minutes",
+        "parameters": {
+          "operation": "shutdown",
+          "time": "5 minutes",
+          "original_query": "shutdown in 5 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-06-17T01:23:57.160212",
+        "type": "system_command",
+        "text": "cancel the scheduled",
+        "parameters": {
+          "operation": "abort",
+          "original_query": "cancel the scheduled"
+        }
+      },
+      {
+        "timestamp": "2025-06-17T01:24:23.149198",
+        "type": "fan_control",
+        "text": "turn on the fan for",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan"
+        }
       }
     ],
     "last_commands": [
-      "cancel all",
-      "scheduler shutdown in 10 minutes",
-      "shutdown the computer in 10 minutes",
-      "shutdown the my PC in 10 minutes",
-      "shutdown the PC in",
-      "shutdown the PC in 10 minutes",
-      "cancel the schedule shut",
-      "shutdown the computer in 10 minutes",
-      "shutdown in 10 minutes",
-      "cancel the shutdown"
+      "10 minutes",
+      "automobile name",
+      "tubeless hibernate in 10 minutes",
+      "scheduler shutdown in 10",
+      "shutdown in 5 minutes",
+      "scheduler Hibernate in 5 minutes",
+      "scheduler shutdown in",
+      "shutdown in 5 minutes",
+      "cancel the scheduled",
+      "turn on the fan for"
     ],
-    "total_commands": 445,
-    "total_sessions": 73
+    "total_commands": 481,
+    "total_sessions": 77
   },
   "patterns": {
     "frequent_apps": {},

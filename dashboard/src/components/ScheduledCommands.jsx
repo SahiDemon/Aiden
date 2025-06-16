@@ -5,15 +5,30 @@ const ScheduledCommands = ({ schedules = [], onCancelSchedule, onModifySchedule 
     const [countdowns, setCountdowns] = useState({});
 
     useEffect(() => {
+        // Initialize countdowns from incoming schedules
+        const initialCountdowns = {};
+        schedules.forEach(schedule => {
+            initialCountdowns[schedule.task_id] = schedule.remaining_seconds;
+        });
+        setCountdowns(initialCountdowns);
+    }, [schedules]);
+
+    useEffect(() => {
         const interval = setInterval(() => {
-            const newCountdowns = {};
-            
-            schedules.forEach(schedule => {
-                const remaining = schedule.remaining_seconds - 1;
-                newCountdowns[schedule.task_id] = Math.max(0, remaining);
+            setCountdowns(prev => {
+                const newCountdowns = {};
+                let hasActiveSchedules = false;
+                
+                schedules.forEach(schedule => {
+                    const currentCountdown = prev[schedule.task_id] ?? schedule.remaining_seconds;
+                    const newValue = Math.max(0, currentCountdown - 1);
+                    newCountdowns[schedule.task_id] = newValue;
+                    if (newValue > 0) hasActiveSchedules = true;
+                });
+                
+                // Only update if there are active schedules
+                return hasActiveSchedules ? newCountdowns : prev;
             });
-            
-            setCountdowns(newCountdowns);
         }, 1000);
 
         return () => clearInterval(interval);
@@ -86,7 +101,7 @@ const ScheduledCommands = ({ schedules = [], onCancelSchedule, onModifySchedule 
     return (
         <div className="scheduled-commands-container">
             <div className="scheduled-commands-header">
-                <h3>🕐 Active Schedules</h3>
+                <h3>⏱️ Active Schedules</h3>
                 <span className="schedule-count">{schedules.length}</span>
             </div>
             
@@ -119,7 +134,7 @@ const ScheduledCommands = ({ schedules = [], onCancelSchedule, onModifySchedule 
                             
                             <div className="schedule-details">
                                 <div className="execution-time">
-                                    At: {schedule.execution_time}
+                                    Executing at: {schedule.execution_time}
                                 </div>
                                 <div className="original-query">
                                     "{schedule.original_query}"
@@ -139,7 +154,7 @@ const ScheduledCommands = ({ schedules = [], onCancelSchedule, onModifySchedule 
                                     onClick={() => onCancelSchedule && onCancelSchedule(schedule.task_id)}
                                     title="Cancel schedule"
                                 >
-                                    ❌ Cancel
+                                    ✕ Cancel
                                 </button>
                             </div>
                             
@@ -158,7 +173,7 @@ const ScheduledCommands = ({ schedules = [], onCancelSchedule, onModifySchedule 
                     className="footer-btn cancel-all-btn"
                     onClick={() => onCancelSchedule && onCancelSchedule('all')}
                 >
-                    🚫 Cancel All Schedules
+                    Cancel All Schedules
                 </button>
             </div>
         </div>
