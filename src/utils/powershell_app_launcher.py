@@ -24,13 +24,14 @@ class PowerShellAppLauncher:
             {"name": "Chrome", "command": "chrome", "description": "Google Chrome Browser"},
             {"name": "VS Code", "command": "code", "description": "Visual Studio Code Editor"},
             {"name": "Cursor", "command": "cursor", "description": "Cursor AI Code Editor"},
+            {"name": "Edge", "command": "edge", "description": "Microsoft Edge Browser"},
+            {"name": "Firefox", "command": "firefox", "description": "Mozilla Firefox Browser"},
             {"name": "Steam", "command": "steam", "description": "Steam Gaming Platform"},
             {"name": "Discord", "command": "discord", "description": "Discord Chat Application"},
             {"name": "Spotify", "command": "spotify", "description": "Spotify Music Player"},
             {"name": "Notepad", "command": "notepad", "description": "Windows Notepad"},
             {"name": "Calculator", "command": "calculator", "description": "Windows Calculator"},
-            {"name": "Explorer", "command": "explorer", "description": "Windows File Explorer"},
-            {"name": "Firefox", "command": "firefox", "description": "Mozilla Firefox Browser"}
+            {"name": "Explorer", "command": "explorer", "description": "Windows File Explorer"}
         ]
         
         # Enhanced app name mappings for better recognition
@@ -45,6 +46,10 @@ class PowerShellAppLauncher:
             "vscode": "code",
             "cursor editor": "cursor",
             "cursor ai": "cursor",
+            "microsoft edge": "edge",
+            "edge browser": "edge",
+            "firefox browser": "firefox",
+            "mozilla firefox": "firefox",
             "file explorer": "explorer",
             "windows explorer": "explorer",
             "calc": "calculator",

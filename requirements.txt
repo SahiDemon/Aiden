@@ -16,6 +16,7 @@ pygame>=2.5.0  # Alternative to playsound for audio playback
 # System interaction
 pyautogui>=0.9.54  # For GUI automation
 python-dotenv>=1.0.0  # For environment variables
+psutil>=5.9.0  # For system monitoring and statistics
 
 # Optional: Web automation
 beautifulsoup4>=4.12.2  # For web scraping

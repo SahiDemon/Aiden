@@ -32,8 +32,22 @@ class CommandDispatcher:
         
         # Initialize ESP32 controller if enabled
         general_config = config_manager.get_config("general")
-        esp32_enabled = general_config.get("esp32", {}).get("enabled", False)
-        self.esp32_controller = ESP32Controller(config_manager) if esp32_enabled else None
+        esp32_config = general_config.get("esp32", {})
+        esp32_enabled = esp32_config.get("enabled", False)
+        
+        logging.info(f"ESP32 configuration: {esp32_config}")
+        logging.info(f"ESP32 enabled: {esp32_enabled}")
+        
+        if esp32_enabled:
+            try:
+                self.esp32_controller = ESP32Controller(config_manager)
+                logging.info("ESP32 controller initialized successfully")
+            except Exception as e:
+                logging.error(f"Failed to initialize ESP32 controller: {e}")
+                self.esp32_controller = None
+        else:
+            self.esp32_controller = None
+            logging.info("ESP32 controller not enabled in config")
         
         # Initialize PowerShell App Launcher as PRIMARY app launcher
         self.powershell_launcher = PowerShellAppLauncher(config_manager)
@@ -102,8 +116,21 @@ class CommandDispatcher:
                 for phrase in ["list my projects", "show my projects", "my projects", "project list", "show projects", "what projects"])
         )
         
-        # Start a thread for command execution
-        if action in ["app_control", "fan_control", "web_search"] or is_project_listing:
+        # For app_control, speak immediately then execute (the handler will provide specific feedback)
+        if action == "app_control":
+            # Speak the initial response (like "Let me find that for you")
+            if response and not already_spoken:
+                self.voice_system.speak(response)
+            
+            # Execute the handler which will provide the real result
+            if action in self.handlers:
+                return self.handlers[action](parameters)
+            else:
+                logging.warning(f"Unknown action: {action}")
+                return False
+        
+        # Start a thread for command execution for other threaded actions
+        elif action in ["fan_control", "web_search"] or is_project_listing:
             # For these actions, we start executing immediately while speaking
             handler_thread = threading.Thread(target=execute_handler)
             handler_thread.daemon = True
@@ -615,7 +642,7 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
             return False
     
     def _handle_app_control(self, parameters: Dict[str, Any]) -> bool:
-        """Handle app control commands (launch, close, etc.) using PowerShell launcher as primary
+        """Handle app control commands (launch, close, etc.) - simple and fast
         
         Args:
             parameters: Command parameters including app_name and operation
@@ -636,7 +663,7 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
         
         try:
             if operation == "launch":
-                # Use PowerShell launcher as PRIMARY, AppManager as fallback
+                # Direct app launch - no suggestions, just try to launch
                 return self._launch_app_with_powershell_primary(app_name)
                 
             elif operation == "close":
@@ -655,8 +682,10 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
             self.voice_system.speak(f"I had trouble controlling {app_name}.")
             return False
 
+
+
     def _launch_app_with_powershell_primary(self, app_name: str) -> bool:
-        """Launch an app using PowerShell launcher as primary, AppManager as fallback
+        """Launch an app using PowerShell launcher as primary method
         
         Args:
             app_name: Name of the app to launch
@@ -665,7 +694,7 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
             True if launched successfully, False otherwise
         """
         try:
-            # Primary: Use PowerShell launcher (fast, 15-second timeout)
+            # Use PowerShell launcher
             logging.info(f"PRIMARY: Launching {app_name} with PowerShell launcher")
             ps_result = self.powershell_launcher.launch_app(app_name)
             
@@ -715,7 +744,7 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
                     }
                     self.dashboard_backend._emit_ai_message(action_card, "action_card")
                 
-                # Provide clean voice feedback (no mention of technical details)
+                # Provide clean voice feedback
                 self.voice_system.speak(voice_message)
                 
                 return True
@@ -728,7 +757,7 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
             
             if not search_results:
                 # No apps found anywhere
-                self._handle_app_not_found(app_name)
+                self.voice_system.speak(f"I couldn't find {app_name}. Please check if it's installed.")
                 return False
             
             # Get the best match and launch
@@ -738,7 +767,7 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
             success = self.app_manager.launch_app(best_match)
             
             if success:
-                # Success with fallback - but don't mention "fallback" to user
+                # Success with fallback
                 if self.dashboard_backend:
                     action_card = {
                         "type": "action_success",
@@ -756,7 +785,7 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
                     }
                     self.dashboard_backend._emit_ai_message(action_card, "action_card")
                 
-                # Clean voice feedback - just say we found and launched it
+                # Clean voice feedback
                 if app_display_name.lower() != app_name.lower():
                     self.voice_system.speak(f"I found {app_display_name} and opened it for you.")
                 else:
@@ -772,36 +801,7 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
             self.voice_system.speak(f"I had trouble launching {app_name}.")
             return False
 
-    def _handle_app_not_found(self, app_name: str):
-        """Handle case when app is not found by any method"""
-        # Get common apps from PowerShell launcher
-        common_apps = self.powershell_launcher.get_common_apps()
-        app_list = ", ".join([app["name"] for app in common_apps[:5]])
-        
-        # Provide helpful voice message
-        self.voice_system.speak(f"I couldn't find an application named '{app_name}'. Some apps I can launch are: {app_list}. Would you like me to show more options?")
-        
-        # Show enhanced action card with suggestions
-        if self.dashboard_backend:
-            action_card = {
-                "type": "app_not_found",
-                "title": f"App '{app_name}' Not Found",
-                "message": "I couldn't find that application. Here are some suggestions:",
-                "suggestions": [
-                    f"Try saying the full name: 'Open Google Chrome' instead of 'Open Chrome'",
-                    f"Check if the app is installed on your system",
-                    f"Ask me to 'list apps' to see what's available",
-                    f"Try one of these popular apps: {app_list}"
-                ],
-                "common_apps": common_apps,
-                "actions": [
-                    {"text": "Show All Apps", "action": "list_apps"},
-                    {"text": "Open Chrome", "action": "launch_chrome"},
-                    {"text": "Open VS Code", "action": "launch_vscode"}
-                ],
-                "status": "Not Found"
-            }
-            self.dashboard_backend._emit_ai_message(action_card, "action_card")
+
 
     def _show_available_apps_powershell(self) -> bool:
         """Show available apps using PowerShell launcher with dashboard integration"""
@@ -933,7 +933,7 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
             return False
     
     def _handle_system_command(self, parameters: Dict[str, Any]) -> bool:
-        """Handle system commands (with caution)
+        """Handle system commands
         
         Args:
             parameters: Command parameters including command string
@@ -941,10 +941,49 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
         Returns:
             True if handled successfully, False otherwise
         """
-        # This is a high-risk operation and should be very limited
-        self.voice_system.speak("System commands are restricted for security reasons.")
-        logging.warning("System command requested but blocked for security")
-        return False
+        command = parameters.get("command", "")
+        operation = parameters.get("operation", "").lower()
+        
+        if not command and not operation:
+            self.voice_system.speak("I need to know what system command to run.")
+            return False
+        
+        try:
+            # Handle common system operations
+            if operation in ["shutdown", "power off", "turn off computer"] or "shutdown" in command.lower():
+                self.voice_system.speak("Shutting down the computer.")
+                subprocess.run("shutdown /s /t 0", shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                return True
+                
+            elif operation in ["restart", "reboot"] or "restart" in command.lower():
+                self.voice_system.speak("Restarting the computer.")
+                subprocess.run("shutdown /r /t 0", shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                return True
+                
+            elif operation in ["sleep", "hibernate"] or "sleep" in command.lower():
+                self.voice_system.speak("Putting the computer to sleep.")
+                subprocess.run("rundll32.exe powrprof.dll,SetSuspendState 0,1,0", shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                return True
+                
+            elif operation in ["lock", "lock screen"] or "lock" in command.lower():
+                self.voice_system.speak("Locking the screen.")
+                subprocess.run("rundll32.exe user32.dll,LockWorkStation", shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                return True
+                
+            elif command and not any(sys_cmd in command.lower() for sys_cmd in ["shutdown", "restart", "sleep", "lock"]):
+                # Execute custom command with caution (but not system commands)
+                self.voice_system.speak(f"Executing: {command}")
+                subprocess.run(command, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                return True
+                
+            else:
+                self.voice_system.speak("I don't recognize that system command.")
+                return False
+                
+        except Exception as e:
+            logging.error(f"Error executing system command: {e}")
+            self.voice_system.speak("I had trouble executing that system command.")
+            return False
     
     def _handle_settings(self, parameters: Dict[str, Any]) -> bool:
         """Handle settings change commands
@@ -994,7 +1033,8 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
         """
         # Check if ESP32 controller is available
         if not self.esp32_controller:
-            self.voice_system.speak("I'm sorry, the fan control feature is not enabled.")
+            logging.warning("Fan control requested but ESP32 controller is not available")
+            self.voice_system.speak("I'm sorry, I can't control the fan right now. The ESP32 controller is not available. Please check the network connection and ESP32 device.")
             return False
             
         operation = parameters.get("operation", "").lower()

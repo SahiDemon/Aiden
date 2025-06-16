@@ -1,8 +1,8 @@
 {
   "personal": {
     "created_date": "2025-06-05",
-    "form_of_address": "Sir",
-    "last_login": "2025-06-15T16:27:45.264736",
+    "form_of_address": "Sahi",
+    "last_login": "2025-06-16T17:49:32.155539",
     "name": "Sahi"
   },
   "preferences": {
@@ -2934,157 +2934,902 @@
         "type": "fan_control"
       },
       {
+        "parameters": {
+          "operation": "status",
+          "original_query": "what is the fan status"
+        },
+        "text": "what is the fan status",
         "timestamp": "2025-06-15T15:47:33.910998",
-        "type": "fan_control",
-        "text": "what is the fan status",
+        "type": "fan_control"
+      },
+      {
         "parameters": {
           "operation": "status",
           "original_query": "what is the fan status"
-        }
-      },
-      {
+        },
+        "text": "what is the fan status",
         "timestamp": "2025-06-15T15:53:42.378904",
-        "type": "fan_control",
-        "text": "what is the fan status",
+        "type": "fan_control"
+      },
+      {
         "parameters": {
           "operation": "status",
           "original_query": "what is the fan status"
-        }
-      },
-      {
+        },
+        "text": "what is the fan status",
         "timestamp": "2025-06-15T15:53:52.847609",
-        "type": "fan_control",
-        "text": "what is the fan status",
+        "type": "fan_control"
+      },
+      {
         "parameters": {
           "operation": "status",
           "original_query": "what is the fan status"
-        }
-      },
-      {
+        },
+        "text": "what is the fan status",
         "timestamp": "2025-06-15T15:54:04.519182",
-        "type": "fan_control",
-        "text": "what is the fan status",
-        "parameters": {
-          "operation": "status",
-          "original_query": "what is the fan status"
-        }
+        "type": "fan_control"
       },
       {
-        "timestamp": "2025-06-15T16:11:58.692046",
-        "type": "fan_control",
-        "text": "increase the fan speed",
         "parameters": {
           "operation": "speed_up",
           "original_query": "increase the fan speed"
-        }
+        },
+        "text": "increase the fan speed",
+        "timestamp": "2025-06-15T16:11:58.692046",
+        "type": "fan_control"
       },
       {
-        "timestamp": "2025-06-15T16:12:55.411086",
-        "type": "fan_control",
-        "text": "change the fan",
         "parameters": {
+          "_prevent_speech": true,
           "operation": "change",
-          "original_query": "change the fan",
-          "_prevent_speech": true
-        }
+          "original_query": "change the fan"
+        },
+        "text": "change the fan",
+        "timestamp": "2025-06-15T16:12:55.411086",
+        "type": "fan_control"
       },
       {
-        "timestamp": "2025-06-15T16:13:11.190160",
-        "type": "fan_control",
-        "text": "change the fan speed",
         "parameters": {
+          "_prevent_speech": true,
           "operation": "speed",
-          "original_query": "change the fan speed",
-          "_prevent_speech": true
-        }
+          "original_query": "change the fan speed"
+        },
+        "text": "change the fan speed",
+        "timestamp": "2025-06-15T16:13:11.190160",
+        "type": "fan_control"
       },
       {
+        "parameters": {
+          "operation": "status",
+          "original_query": "what the fan status"
+        },
+        "text": "what the fan status",
         "timestamp": "2025-06-15T16:13:59.246480",
-        "type": "fan_control",
-        "text": "what the fan status",
-        "parameters": {
-          "operation": "status",
-          "original_query": "what the fan status"
-        }
+        "type": "fan_control"
       },
       {
-        "timestamp": "2025-06-15T16:14:12.919972",
-        "type": "provide_information",
+        "parameters": {
+          "_prevent_speech": true,
+          "original_query": "what's the famous status"
+        },
         "text": "what's the famous status",
-        "parameters": {
-          "original_query": "what's the famous status",
-          "_prevent_speech": true
-        }
+        "timestamp": "2025-06-15T16:14:12.919972",
+        "type": "provide_information"
       },
       {
-        "timestamp": "2025-06-15T16:14:25.853139",
-        "type": "fan_control",
-        "text": "what the fan status",
         "parameters": {
           "operation": "status",
           "original_query": "what the fan status"
-        }
+        },
+        "text": "what the fan status",
+        "timestamp": "2025-06-15T16:14:25.853139",
+        "type": "fan_control"
       },
       {
+        "parameters": {
+          "operation": "status",
+          "original_query": "what's the fan status"
+        },
+        "text": "what's the fan status",
         "timestamp": "2025-06-15T16:25:13.128567",
-        "type": "fan_control",
-        "text": "what's the fan status",
+        "type": "fan_control"
+      },
+      {
         "parameters": {
           "operation": "status",
           "original_query": "what's the fan status"
-        }
-      },
-      {
+        },
+        "text": "what's the fan status",
         "timestamp": "2025-06-15T16:25:26.376258",
-        "type": "fan_control",
-        "text": "what's the fan status",
+        "type": "fan_control"
+      },
+      {
         "parameters": {
           "operation": "status",
           "original_query": "what's the fan status"
-        }
-      },
-      {
+        },
+        "text": "what's the fan status",
         "timestamp": "2025-06-15T16:25:37.781291",
-        "type": "fan_control",
-        "text": "what's the fan status",
+        "type": "fan_control"
+      },
+      {
         "parameters": {
           "operation": "status",
           "original_query": "what's the fan status"
-        }
-      },
-      {
+        },
+        "text": "what's the fan status",
         "timestamp": "2025-06-15T16:25:50.113240",
-        "type": "fan_control",
-        "text": "what's the fan status",
-        "parameters": {
-          "operation": "status",
-          "original_query": "what's the fan status"
-        }
+        "type": "fan_control"
       },
       {
-        "timestamp": "2025-06-15T16:26:02.415147",
-        "type": "fan_control",
-        "text": "stop",
         "parameters": {
           "operation": "off",
           "original_query": "stop"
+        },
+        "text": "stop",
+        "timestamp": "2025-06-15T16:26:02.415147",
+        "type": "fan_control"
+      },
+      {
+        "parameters": {
+          "_prevent_speech": true,
+          "operation": "off",
+          "original_query": "turn off the fan"
+        },
+        "text": "turn off the fan",
+        "timestamp": "2025-06-15T16:58:00.329459",
+        "type": "fan_control"
+      },
+      {
+        "parameters": {
+          "_prevent_speech": true,
+          "operation": "off",
+          "original_query": "turn off the fan"
+        },
+        "text": "turn off the fan",
+        "timestamp": "2025-06-15T16:59:31.280359",
+        "type": "fan_control"
+      },
+      {
+        "parameters": {
+          "_prevent_speech": true,
+          "operation": "off",
+          "original_query": "turn off the fan"
+        },
+        "text": "turn off the fan",
+        "timestamp": "2025-06-15T17:02:52.814337",
+        "type": "fan_control"
+      },
+      {
+        "parameters": {
+          "app_name": "computer",
+          "operation": "shutdown",
+          "original_query": "turn off the computer"
+        },
+        "text": "turn off the computer",
+        "timestamp": "2025-06-15T17:04:25.451192",
+        "type": "app_control"
+      },
+      {
+        "parameters": {
+          "_prevent_speech": true,
+          "operation": "on",
+          "original_query": "turn on the fan"
+        },
+        "text": "turn on the fan",
+        "timestamp": "2025-06-15T20:56:48.881008",
+        "type": "fan_control"
+      },
+      {
+        "parameters": {
+          "app_name": "jellyfish",
+          "operation": "launch",
+          "original_query": "open jellyfish"
+        },
+        "text": "open jellyfish",
+        "timestamp": "2025-06-15T20:57:10.869661",
+        "type": "app_control"
+      },
+      {
+        "parameters": {
+          "app_name": "Jeff",
+          "operation": "launch",
+          "original_query": "open Jeff"
+        },
+        "text": "open Jeff",
+        "timestamp": "2025-06-15T20:57:26.374261",
+        "type": "app_control"
+      },
+      {
+        "parameters": {
+          "app_name": "jellyfin",
+          "operation": "launch",
+          "original_query": "open jellyfin"
+        },
+        "text": "open jellyfin",
+        "timestamp": "2025-06-15T20:57:41.111548",
+        "type": "app_control"
+      },
+      {
+        "parameters": {
+          "app_name": "jellyfin",
+          "operation": "launch",
+          "original_query": "open jellyfin application"
+        },
+        "text": "open jellyfin application",
+        "timestamp": "2025-06-15T20:57:57.963398",
+        "type": "app_control"
+      },
+      {
+        "parameters": {
+          "_prevent_speech": true,
+          "operation": "off",
+          "original_query": "turn off the fan"
+        },
+        "text": "turn off the fan",
+        "timestamp": "2025-06-15T21:06:52.054794",
+        "type": "fan_control"
+      },
+      {
+        "parameters": {
+          "_prevent_speech": true,
+          "operation": "on",
+          "original_query": "turn on the fan"
+        },
+        "text": "turn on the fan",
+        "timestamp": "2025-06-15T21:23:49.261104",
+        "type": "fan_control"
+      },
+      {
+        "parameters": {
+          "_prevent_speech": true,
+          "operation": "off",
+          "original_query": "turn off the fan"
+        },
+        "text": "turn off the fan",
+        "timestamp": "2025-06-15T22:07:29.101413",
+        "type": "fan_control"
+      },
+      {
+        "parameters": {
+          "_prevent_speech": true,
+          "operation": "on",
+          "original_query": "turn on the fan"
+        },
+        "text": "turn on the fan",
+        "timestamp": "2025-06-15T22:08:03.876370",
+        "type": "fan_control"
+      },
+      {
+        "parameters": {
+          "original_query": "hi how are you"
+        },
+        "text": "hi how are you",
+        "timestamp": "2025-06-15T22:09:31.524565",
+        "type": "provide_information"
+      },
+      {
+        "parameters": {
+          "original_query": "hey how are you"
+        },
+        "text": "hey how are you",
+        "timestamp": "2025-06-15T22:10:00.867389",
+        "type": "provide_information"
+      },
+      {
+        "parameters": {
+          "original_query": "mistake"
+        },
+        "text": "mistake",
+        "timestamp": "2025-06-15T22:10:37.837441",
+        "type": "provide_information"
+      },
+      {
+        "timestamp": "2025-06-15T22:11:39.128728",
+        "type": "app_control",
+        "text": "open speed Gate",
+        "parameters": {
+          "app_name": "SpeedGate",
+          "operation": "launch",
+          "original_query": "open SpeedGate"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T00:12:15.088428",
+        "type": "fan_control",
+        "text": "turn the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-16T00:12:30.687388",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-16T16:48:55.464193",
+        "type": "fan_control",
+        "text": "can you turn on the fan De",
+        "parameters": {
+          "operation": "on",
+          "original_query": "can you turn on the fan De",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-16T16:53:02.793557",
+        "type": "app_control",
+        "text": "vs code insiders",
+        "parameters": {
+          "app_name": "vscode",
+          "operation": "launch",
+          "original_query": "vs code insiders"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T16:53:34.500621",
+        "type": "provide_information",
+        "text": "can you open",
+        "parameters": {
+          "original_query": "can you open",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-16T16:53:51.972100",
+        "type": "provide_information",
+        "text": "test test test test test test",
+        "parameters": {
+          "original_query": "test test test test test test",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-16T16:54:13.184958",
+        "type": "provide_information",
+        "text": "open something",
+        "parameters": {
+          "original_query": "open something",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-16T16:54:47.684822",
+        "type": "app_control",
+        "text": "open Ed",
+        "parameters": {
+          "app_name": "Ed",
+          "operation": "launch",
+          "original_query": "open Ed"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T16:55:38.495564",
+        "type": "app_control",
+        "text": "open",
+        "parameters": {
+          "app_name": "VSCode",
+          "operation": "launch",
+          "original_query": "open"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T17:13:08.558160",
+        "type": "provide_information",
+        "text": "code insiders",
+        "parameters": {
+          "query": "code insiders",
+          "original_query": "code insiders",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-16T17:13:42.219819",
+        "type": "provide_information",
+        "text": "no thank you",
+        "parameters": {
+          "original_query": "no thank you",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-16T17:13:58.540397",
+        "type": "provide_information",
+        "text": "can you open",
+        "parameters": {
+          "original_query": "can you open",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-16T17:14:13.559116",
+        "type": "app_control",
+        "text": "can you open vs code inside",
+        "parameters": {
+          "app_name": "vscode",
+          "operation": "launch",
+          "original_query": "can you open vs code inside"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T17:14:29.347498",
+        "type": "app_control",
+        "text": "open browser",
+        "parameters": {
+          "app_name": "browser",
+          "operation": "launch",
+          "original_query": "open browser"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T17:15:23.339082",
+        "type": "app_control",
+        "text": "can you open edge for me",
+        "parameters": {
+          "app_name": "edge",
+          "operation": "launch",
+          "original_query": "can you open edge for me"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T17:22:45.717494",
+        "type": "provide_information",
+        "text": "hay how r u",
+        "parameters": {
+          "query": "how are you",
+          "original_query": "hay how r u",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-16T17:22:59.793235",
+        "type": "provide_information",
+        "text": "nothing",
+        "parameters": {
+          "original_query": "nothing"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T17:27:18.358616",
+        "type": "provide_information",
+        "text": "hey how are you",
+        "parameters": {
+          "original_query": "hey how are you",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-16T17:27:44.085595",
+        "type": "provide_information",
+        "text": "open Chrome",
+        "parameters": {
+          "original_query": "open Chrome",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-16T17:28:37.879703",
+        "type": "provide_information",
+        "text": "open Chrome",
+        "parameters": {
+          "original_query": "open Chrome",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-16T17:30:06.540103",
+        "type": "app_control",
+        "text": "open Chrome",
+        "parameters": {
+          "app_name": "chrome",
+          "operation": "launch",
+          "original_query": "open Chrome"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T17:30:43.076333",
+        "type": "app_control",
+        "text": "open Chrome",
+        "parameters": {
+          "app_name": "chrome",
+          "operation": "launch",
+          "original_query": "open Chrome"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T17:31:43.532487",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T17:39:35.327004",
+        "type": "app_control",
+        "text": "open Chrome",
+        "parameters": {
+          "app_name": "Chrome",
+          "operation": "launch",
+          "original_query": "open Chrome"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T17:39:54.158654",
+        "type": "app_control",
+        "text": "open vs code insiders",
+        "parameters": {
+          "app_name": "VS Code Insiders",
+          "operation": "open",
+          "original_query": "open vs code insiders"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T17:40:43.319843",
+        "type": "app_control",
+        "text": "open Visual Studio",
+        "parameters": {
+          "app_name": "Visual Studio",
+          "operation": "launch",
+          "original_query": "open Visual Studio"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T17:41:06.952341",
+        "type": "app_control",
+        "text": "open Visual Studio insiders",
+        "parameters": {
+          "app_name": "Visual Studio Insiders",
+          "operation": "open",
+          "original_query": "open Visual Studio insiders"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T17:41:23.582569",
+        "type": "app_control",
+        "text": "open browser",
+        "parameters": {
+          "app_name": "browser",
+          "operation": "launch",
+          "original_query": "open browser"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T17:50:21.317704",
+        "type": "app_control",
+        "text": "open browser",
+        "parameters": {
+          "app_name": "browser",
+          "operation": "open",
+          "original_query": "open browser"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T17:50:56.620932",
+        "type": "app_control",
+        "text": "open browser for me",
+        "parameters": {
+          "app_name": "browser",
+          "operation": "open",
+          "original_query": "open browser"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T17:51:15.967836",
+        "type": "app_control",
+        "text": "open chrome",
+        "parameters": {
+          "app_name": "chrome",
+          "operation": "launch",
+          "original_query": "open chrome"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T17:51:34.210694",
+        "type": "app_control",
+        "text": "open Visual Studio code inside",
+        "parameters": {
+          "app_name": "Visual Studio Code",
+          "operation": "launch",
+          "original_query": "open Visual Studio code inside"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T17:51:57.520698",
+        "type": "app_control",
+        "text": "open visual studio code inside",
+        "parameters": {
+          "app_name": "Visual Studio Code",
+          "operation": "launch",
+          "original_query": "open Visual Studio code inside"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T17:52:14.327213",
+        "type": "provide_information",
+        "text": "show app suggestion",
+        "parameters": {
+          "original_query": "show app suggestion",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-16T17:52:33.659420",
+        "type": "app_control",
+        "text": "open my default browser",
+        "parameters": {
+          "app_name": "default browser",
+          "operation": "open",
+          "original_query": "open my default browser"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T17:53:38.151107",
+        "type": "app_control",
+        "text": "open browser",
+        "parameters": {
+          "app_name": "browser",
+          "operation": "launch",
+          "original_query": "open browser"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T18:00:29.898983",
+        "type": "system_command",
+        "text": "turn off the fan",
+        "parameters": {
+          "command": "sudo poweroff",
+          "original_query": "turn off the fan"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T18:00:53.671806",
+        "type": "system_command",
+        "text": "turn the fan off",
+        "parameters": {
+          "command": "turn off the fan",
+          "original_query": "turn the fan off"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T18:13:46.390946",
+        "type": "fan_control",
+        "text": "can you turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-16T18:14:01.860167",
+        "type": "system_command",
+        "text": "can you lock the computer",
+        "parameters": {
+          "command": "lock computer",
+          "original_query": "can you lock the computer"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T18:14:42.168260",
+        "type": "app_control",
+        "text": "can you open Visual Studio",
+        "parameters": {
+          "app_name": "Visual Studio",
+          "operation": "launch",
+          "original_query": "can you open Visual Studio"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T18:14:59.291991",
+        "type": "app_control",
+        "text": "can you open ins",
+        "parameters": {
+          "app_name": "ins",
+          "operation": "open",
+          "original_query": "can you open ins"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T18:16:10.128829",
+        "type": "app_control",
+        "text": "can you open Visual Studio inside",
+        "parameters": {
+          "app_name": "Visual Studio",
+          "operation": "open",
+          "original_query": "can you open Visual Studio inside"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T18:16:39.399446",
+        "type": "app_control",
+        "text": "can you open Visual Studio",
+        "parameters": {
+          "app_name": "Visual Studio",
+          "operation": "open",
+          "original_query": "open Visual Studio"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T18:16:59.252532",
+        "type": "app_control",
+        "text": "open everything",
+        "parameters": {
+          "app_name": "Visual Studio",
+          "operation": "open",
+          "original_query": "open everything"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T18:17:14.045812",
+        "type": "app_control",
+        "text": "open everything application",
+        "parameters": {
+          "app_name": "everything",
+          "operation": "open",
+          "original_query": "open everything application"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T18:17:49.097050",
+        "type": "unknown",
+        "text": "stop stop stop stop stop stop stop stop stop stop",
+        "parameters": {
+          "original_query": "stop stop stop stop stop stop stop stop stop stop"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T18:19:20.001178",
+        "type": "app_control",
+        "text": "lock the computer",
+        "parameters": {
+          "app_name": "Visual Studio",
+          "operation": "launch",
+          "original_query": "open Visual Studio"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T18:26:50.242231",
+        "type": "provide_information",
+        "text": "Eden how are you",
+        "parameters": {
+          "original_query": "Eden how are you",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-16T18:27:04.209286",
+        "type": "app_control",
+        "text": "open Chrome",
+        "parameters": {
+          "app_name": "Chrome",
+          "operation": "launch",
+          "original_query": "open Chrome"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T18:27:19.883255",
+        "type": "app_control",
+        "text": "open Visual Studio inside",
+        "parameters": {
+          "app_name": "Visual Studio",
+          "operation": "launch",
+          "original_query": "open Visual Studio inside"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T18:27:34.647636",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-16T18:27:44.840131",
+        "type": "fan_control",
+        "text": "turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-16T18:28:02.060051",
+        "type": "app_control",
+        "text": "open everything application",
+        "parameters": {
+          "app_name": "everything",
+          "operation": "launch",
+          "original_query": "open everything application"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T18:28:23.809543",
+        "type": "app_control",
+        "text": "open spotify",
+        "parameters": {
+          "app_name": "spotify",
+          "operation": "launch",
+          "original_query": "open spotify"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T18:28:43.552893",
+        "type": "app_control",
+        "text": "open Netflix",
+        "parameters": {
+          "app_name": "Netflix",
+          "operation": "launch",
+          "original_query": "open Netflix"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T18:29:04.859503",
+        "type": "app_control",
+        "text": "open YouTube",
+        "parameters": {
+          "app_name": "YouTube",
+          "operation": "launch",
+          "original_query": "open YouTube"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T18:29:25.014056",
+        "type": "provide_information",
+        "text": "go to Chitta",
+        "parameters": {
+          "query": "go to Chitta",
+          "original_query": "go to Chitta",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-16T18:29:39.024708",
+        "type": "web_search",
+        "text": "go to github.com",
+        "parameters": {
+          "query": "github.com",
+          "engine": "google",
+          "original_query": "go to github.com"
+        }
+      },
+      {
+        "timestamp": "2025-06-16T18:30:29.142420",
+        "type": "system_command",
+        "text": "lock the free",
+        "parameters": {
+          "operation": "lock",
+          "original_query": "lock the free"
         }
       }
     ],
     "last_commands": [
-      "change the fan",
-      "change the fan speed",
-      "what the fan status",
-      "what's the famous status",
-      "what the fan status",
-      "what's the fan status",
-      "what's the fan status",
-      "what's the fan status",
-      "what's the fan status",
-      "stop"
+      "open Visual Studio inside",
+      "turn off the fan",
+      "turn on the fan",
+      "open everything application",
+      "open spotify",
+      "open Netflix",
+      "open YouTube",
+      "go to Chitta",
+      "go to github.com",
+      "lock the free"
     ],
-    "total_commands": 349,
-    "total_sessions": 69
+    "total_commands": 426,
+    "total_sessions": 71
   },
   "patterns": {
     "frequent_apps": {},

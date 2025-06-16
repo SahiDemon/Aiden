@@ -410,6 +410,125 @@ class AidenDashboardBackend:
                 return jsonify({'success': result, 'message': message})
             except Exception as e:
                 return jsonify({'error': str(e), 'success': False}), 500
+        
+        @self.app.route('/api/system/stats')
+        def get_system_stats():
+            """Get real system statistics"""
+            try:
+                import psutil
+                import time
+                from datetime import datetime, timedelta
+                
+                # Get system uptime
+                boot_time = datetime.fromtimestamp(psutil.boot_time())
+                uptime = datetime.now() - boot_time
+                uptime_str = f"{uptime.days}d {uptime.seconds//3600}h {(uptime.seconds//60)%60}m"
+                
+                # Get memory usage
+                memory = psutil.virtual_memory()
+                
+                # Get CPU usage
+                cpu_percent = psutil.cpu_percent(interval=1)
+                
+                # Get process info for Aiden
+                current_process = psutil.Process()
+                aiden_memory = current_process.memory_info().rss / 1024 / 1024  # MB
+                
+                # Get interaction stats from user profile
+                user_profile = self.config_manager.get_user_profile()
+                interactions = user_profile.get("history", {}).get("interactions", [])
+                total_sessions = user_profile.get("history", {}).get("total_sessions", 0)
+                
+                # Count interaction types
+                voice_interactions = len([i for i in interactions if i.get("input_type") == "voice"])
+                text_interactions = len([i for i in interactions if i.get("input_type") == "text"])
+                
+                # Get recent interactions (last 24 hours)
+                now = datetime.now()
+                recent_interactions = []
+                for interaction in interactions:
+                    try:
+                        interaction_time = datetime.fromisoformat(interaction.get("timestamp", "").replace("Z", "+00:00"))
+                        if (now - interaction_time.replace(tzinfo=None)).total_seconds() < 86400:  # 24 hours
+                            recent_interactions.append(interaction)
+                    except:
+                        continue
+                
+                return jsonify({
+                    'success': True,
+                    'system': {
+                        'uptime': uptime_str,
+                        'cpu_percent': cpu_percent,
+                        'memory_percent': memory.percent,
+                        'memory_used_gb': memory.used / 1024 / 1024 / 1024,
+                        'memory_total_gb': memory.total / 1024 / 1024 / 1024,
+                        'aiden_memory_mb': aiden_memory
+                    },
+                    'interactions': {
+                        'total': len(interactions),
+                        'voice': voice_interactions,
+                        'text': text_interactions,
+                        'recent_24h': len(recent_interactions),
+                        'total_sessions': total_sessions
+                    },
+                    'timestamp': datetime.now().isoformat()
+                })
+            except Exception as e:
+                return jsonify({'error': str(e), 'success': False}), 500
+        
+        @self.app.route('/api/system/components')
+        def get_component_status():
+            """Get real component status"""
+            try:
+                components = {}
+                
+                # Test Voice System
+                try:
+                    if hasattr(self, 'voice_system') and self.voice_system:
+                        # Try to get voice settings to test if it's working
+                        voice_config = self.voice_system.config.get("voice", {})
+                        components['voice_system'] = True
+                    else:
+                        components['voice_system'] = False
+                except:
+                    components['voice_system'] = False
+                
+                # Test STT System
+                try:
+                    if hasattr(self, 'stt_system') and self.stt_system:
+                        components['stt_system'] = True
+                    else:
+                        components['stt_system'] = False
+                except:
+                    components['stt_system'] = False
+                
+                # Test LLM Connector
+                try:
+                    if hasattr(self, 'llm_connector') and self.llm_connector:
+                        components['llm_connector'] = True
+                    else:
+                        components['llm_connector'] = False
+                except:
+                    components['llm_connector'] = False
+                
+                # Test ESP32 Controller
+                try:
+                    if hasattr(self, 'esp32_controller') and self.esp32_controller:
+                        # Actually test ESP32 connectivity
+                        status = self.esp32_controller.get_status()
+                        components['esp32_controller'] = status.get('connected', False)
+                    else:
+                        components['esp32_controller'] = False
+                except:
+                    components['esp32_controller'] = False
+                
+                return jsonify({
+                    'success': True,
+                    'components': components,
+                    'timestamp': datetime.now().isoformat()
+                })
+            except Exception as e:
+                return jsonify({'error': str(e), 'success': False}), 500
     
     def _setup_socket_handlers(self):
         """Setup SocketIO event handlers"""

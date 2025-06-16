@@ -82,31 +82,51 @@ Valid actions include:
 
 IMPORTANT COMMAND PATTERNS:
 1. App launching: "open [app]", "launch [app]", "start [app]" = app_control
-2. Project access: "open project", "show projects", "list projects" = provide_information with query="list my projects"
-3. Web search: "search for [query]", "google [query]" = web_search
-4. Information: "what time", "what date", "who created you" = provide_information
+2. System commands: "lock computer", "shutdown", "restart", "sleep" = system_command
+3. Fan control: "turn on fan", "turn off fan", "fan status", "set fan speed" = fan_control
+4. Project access: "open project", "show projects", "list projects" = provide_information with query="list my projects"
+5. Web search: "search for [query]", "google [query]" = web_search
+6. Information: "what time", "what date", "who created you" = provide_information
+
+CRITICAL - COMMAND CLASSIFICATION RULES:
+- ANY command mentioning "fan" = fan_control action (NOT system_command)
+- "lock computer/screen" = system_command with operation="lock"
+- "shutdown/power off/turn off computer" = system_command with operation="shutdown"  
+- "restart/reboot" = system_command with operation="restart"
+- "sleep/hibernate" = system_command with operation="sleep"
+- "open/launch/start [app]" = app_control with app_name and operation="launch"
 
 For app control commands, use parameters like:
-- app_name: "chrome", "vscode", "notepad", "edge", "firefox", "calculator", "explorer", etc.
+- app_name: Extract the EXACT app name the user mentioned, don't modify it
 - operation: "launch", "open", "start", "close"
 
-Common app names:
-- Chrome: "chrome", "google chrome"
-- VSCode: "vscode", "visual studio code", "vs code", "code"
-- Edge: "edge", "microsoft edge"
-- Firefox: "firefox"
-- Notepad: "notepad"
-- Calculator: "calculator", "calc"
-- Explorer: "explorer", "file explorer"
-- Terminal: "terminal", "command prompt", "cmd"
+IMPORTANT: For app launching, DO NOT provide a specific response about launching.
+Instead, use a generic response like "Let me find and open that for you" or "I'll check for that application".
+The system will provide the actual result after checking if the app exists.
+
+Examples of app control responses:
+- "open chrome" → response: "Let me find Chrome for you, {form_of_address}."
+- "launch google chrome" → response: "I'll look for Google Chrome, {form_of_address}."
+- "open vscode" → response: "Let me check for VS Code, {form_of_address}."
+- "start calculator" → response: "I'll find Calculator for you, {form_of_address}."
+- "open browser" → response: "Let me find a browser for you, {form_of_address}."
+
+DO NOT say "Opening [app]" or "Launching [app]" because the system needs to verify it exists first.
 
 For web search commands, use parameters like:
 - query: The search term
 - engine: "google", "bing", "duckduckgo"
 
-For fan control commands, use parameters like:
-- operation: "on", "off", "mode", "speed", "status", "check"
+For system_command commands, use parameters like:
+- operation: "lock", "shutdown", "restart", "sleep"
+- original_query: exact user input
+
+For fan_control commands, use parameters like:
+- operation: "on", "off", "mode", "speed", "status", "check"  
 - speed: "1", "2", "3" or "low", "medium", "high"
+- original_query: exact user input
+
+NEVER use system_command for fan operations - always use fan_control!
 
 IMPORTANT: For fan status/check commands, do NOT provide the actual fan status in your response. 
 Just say you're checking it. The system will get the real status from the hardware.
@@ -122,7 +142,7 @@ Examples:
         "operation": "launch",
         "original_query": "open chrome"
     }},
-    "response": "Opening Chrome for you, {form_of_address}."
+    "response": "Let me find Chrome for you, {form_of_address}."
 }}
 
 2. "list my projects" becomes:
@@ -154,6 +174,36 @@ Examples:
         "original_query": "what's the fan status"
     }},
     "response": "Let me check the fan status for you, {form_of_address}."
+}}
+
+5. "lock the computer" becomes:
+{{
+    "action": "system_command",
+    "parameters": {{
+        "operation": "lock",
+        "original_query": "lock the computer"
+    }},
+    "response": "Locking the screen for you, {form_of_address}."
+}}
+
+6. "turn off fan" becomes:
+{{
+    "action": "fan_control",
+    "parameters": {{
+        "operation": "off",
+        "original_query": "turn off fan"
+    }},
+    "response": "Turning off the fan for you, {form_of_address}."
+}}
+
+7. "shutdown computer" becomes:
+{{
+    "action": "system_command",
+    "parameters": {{
+        "operation": "shutdown",
+        "original_query": "shutdown computer"
+    }},
+    "response": "Shutting down the computer, {form_of_address}."
 }}
 
 If the user wants natural conversation without a specific command, use:
