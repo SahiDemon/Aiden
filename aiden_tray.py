@@ -37,6 +37,7 @@ sys.path.insert(0, os.path.abspath('.'))
 from src.utils.config_manager import ConfigManager
 from src.utils.voice_system import VoiceSystem
 from src.utils.hotkey_listener import HotkeyListener
+from src.utils.vosk_wake_word import VoskWakeWordDetector
 from src.dashboard_backend import AidenDashboardBackend
 
 class AidenTrayApp:
@@ -51,11 +52,17 @@ class AidenTrayApp:
         # Dashboard and hotkey components (will be initialized when needed)
         self.dashboard_backend = None
         self.hotkey_listener = None
+        self.wake_word_detector = None
         self.dashboard_thread = None
         
         # State flags
         self.running = False
+        self.wake_word_enabled = False
         self.initialization_complete = True  # Mark as complete immediately for faster startup
+        
+        # Auto-start timer for wake word detection
+        self.auto_start_timer = None
+        self.auto_start_delay = 15  # seconds
         
         print("Aiden components initialized successfully")
     
@@ -82,6 +89,18 @@ class AidenTrayApp:
             try:
                 print("Starting Aiden dashboard...")
                 self.dashboard_backend = AidenDashboardBackend()
+                
+                # Pass wake word detector reference to dashboard for pause/resume control
+                if hasattr(self, 'wake_word_detector'):
+                    self.dashboard_backend.wake_word_detector = self.wake_word_detector
+                    
+                    # Also pass to dashboard's voice system 
+                    if hasattr(self.dashboard_backend, 'voice_system'):
+                        self.dashboard_backend.voice_system.wake_word_detector = self.wake_word_detector
+                    
+                    # Also pass to command dispatcher's voice system
+                    if hasattr(self.dashboard_backend, 'command_dispatcher') and hasattr(self.dashboard_backend.command_dispatcher, 'voice_system'):
+                        self.dashboard_backend.command_dispatcher.voice_system.wake_word_detector = self.wake_word_detector
                 
                 def run_dashboard():
                     try:
@@ -146,6 +165,162 @@ class AidenTrayApp:
             print(f"Error in hotkey activation: {e}")
             self.show_notification("Aiden Error", f"Hotkey activation failed: {str(e)}")
     
+    def start_wake_word_detection(self):
+        """Start the Vosk wake word detection system"""
+        print("🎯 Starting wake word detection...")
+        
+        # If detector exists but is not enabled, try to restart it
+        if self.wake_word_detector is not None:
+            if self.wake_word_enabled:
+                print("Wake word detection already running and enabled")
+                return True
+            else:
+                print("Detector exists but not enabled, clearing and recreating...")
+                self.wake_word_detector = None
+        
+        try:
+            print("Initializing new Vosk wake word detector...")
+            self.wake_word_detector = VoskWakeWordDetector(
+                self.config_manager,
+                self.voice_system,
+                self._on_wake_word_detected
+            )
+            
+            success = self.wake_word_detector.start_listening()
+            if success:
+                self.wake_word_enabled = True
+                print("✨ Vosk wake word detection started! Say 'Aiden' to activate...")
+                
+                # Pass wake word detector reference to dashboard if it exists
+                if self.dashboard_backend:
+                    self.dashboard_backend.wake_word_detector = self.wake_word_detector
+                    
+                    # Also pass to dashboard's voice system 
+                    if hasattr(self.dashboard_backend, 'voice_system'):
+                        self.dashboard_backend.voice_system.wake_word_detector = self.wake_word_detector
+                        
+                    # Also pass to command dispatcher's voice system
+                    if hasattr(self.dashboard_backend, 'command_dispatcher') and hasattr(self.dashboard_backend.command_dispatcher, 'voice_system'):
+                        self.dashboard_backend.command_dispatcher.voice_system.wake_word_detector = self.wake_word_detector
+                
+                # Pass wake word detector reference to voice system to prevent hearing own voice
+                if self.voice_system:
+                    self.voice_system.wake_word_detector = self.wake_word_detector
+                
+                self.show_notification("Wake Word Active", "Say 'Aiden' to activate voice assistant (Offline & Trained)")
+                return True
+            else:
+                print("❌ Failed to start Vosk wake word detection")
+                self.wake_word_detector = None
+                return False
+                
+        except Exception as e:
+            print(f"❌ Error starting wake word detection: {e}")
+            self.wake_word_detector = None
+            self.show_notification("Wake Word Error", f"Failed to start: {str(e)}")
+            return False
+    
+    def stop_wake_word_detection(self):
+        """Stop the wake word detection system"""
+        try:
+            if self.wake_word_detector and self.wake_word_enabled:
+                print("Stopping wake word detection...")
+                self.wake_word_detector.stop_listening()
+                self.wake_word_enabled = False
+                # Clear the detector object so it can be recreated on restart
+                self.wake_word_detector = None
+                print("✅ Wake word detection stopped successfully")
+                self.show_notification("Wake Word Stopped", "Voice activation disabled")
+                return True
+            elif self.wake_word_detector and not self.wake_word_enabled:
+                print("Wake word detector exists but was already disabled")
+                # Clear the detector object for clean restart
+                self.wake_word_detector = None
+                return True
+            else:
+                print("No wake word detector to stop")
+                return False
+        except Exception as e:
+            print(f"❌ Error stopping wake word detection: {e}")
+            # Force disable even if there was an error and clear detector
+            self.wake_word_enabled = False
+            self.wake_word_detector = None
+            return False
+        
+    def auto_start_wake_word_detection(self):
+        """Automatically start wake word detection after delay"""
+        print(f"Auto-starting wake word detection after {self.auto_start_delay} seconds...")
+        success = self.start_wake_word_detection()
+        if success:
+            print("✅ Auto-start successful - Wake word detection is now active!")
+            # Update the menu to reflect the new state if icon exists
+            if hasattr(self, '_icon_ref') and self._icon_ref:
+                self._icon_ref.menu = self.create_menu()
+        else:
+            print("❌ Auto-start failed - Wake word detection could not start")
+    
+    def toggle_wake_word_detection(self, icon, item):
+        """Toggle wake word detection on/off from tray menu"""
+        try:
+            # Cancel auto-start timer if it's still pending
+            if self.auto_start_timer and self.auto_start_timer.is_alive():
+                self.auto_start_timer.cancel()
+                print("Cancelled auto-start timer due to manual toggle")
+            
+            if self.wake_word_enabled:
+                success = self.stop_wake_word_detection()
+                if success:
+                    print("✅ Wake word detection disabled via tray menu")
+            else:
+                # Ensure dashboard is running before starting wake word detection
+                if self.dashboard_backend is None:
+                    print("Starting dashboard for wake word detection...")
+                    self.start_dashboard()
+                    time.sleep(1)
+                
+                print("🔄 Attempting to restart wake word detection...")
+                success = self.start_wake_word_detection()
+                if success:
+                    print("✅ Wake word detection enabled via tray menu")
+                else:
+                    print("❌ Failed to enable wake word detection")
+            
+            # Update the menu to reflect the new state using stored icon reference
+            if hasattr(self, '_icon_ref') and self._icon_ref:
+                self._icon_ref.menu = self.create_menu()
+                status = "enabled" if self.wake_word_enabled else "disabled"
+                print(f"✅ Menu updated successfully - Wake word is now {status}")
+            
+        except Exception as e:
+            print(f"Error toggling wake word detection: {e}")
+            self.show_notification("Wake Word Error", f"Toggle failed: {str(e)}")
+    
+    def _on_wake_word_detected(self):
+        """Handle wake word detection - this triggers voice command listening"""
+        try:
+            print("🎯 Wake word 'Aiden' detected by Vosk!")
+            
+            if not self.initialization_complete:
+                self.show_notification("Aiden Error", "Assistant not properly initialized")
+                return
+            
+            # Start dashboard if not already running
+            if self.dashboard_backend is None:
+                self.start_dashboard()
+                time.sleep(1)
+            
+            # Trigger wake word activation through dashboard (continuous conversation mode)
+            if self.dashboard_backend:
+                # Use continuous mode for wake word activation (not one-shot like hotkey)
+                self.dashboard_backend._on_wake_word_activated()
+                print("🎤 Listening for your command after wake word...")
+            else:
+                self.show_notification("Aiden Error", "Dashboard not available")
+                
+        except Exception as e:
+            print(f"Error in wake word activation: {e}")
+            self.show_notification("Aiden Error", f"Wake word activation failed: {str(e)}")
+    
     def open_dashboard_for_verification(self):
         """Open dashboard in browser for verification (called when needed)"""
         try:
@@ -198,10 +373,22 @@ class AidenTrayApp:
         self.show_notification("Aiden", "Shutting down AI Assistant")
         self.running = False
         
+        # Cancel auto-start timer if still running
+        if self.auto_start_timer and self.auto_start_timer.is_alive():
+            self.auto_start_timer.cancel()
+            print("Cancelled auto-start timer")
+        
         # Stop hotkey listener
         if self.hotkey_listener:
             try:
                 self.hotkey_listener.stop_listening()
+            except:
+                pass
+        
+        # Stop wake word detector
+        if self.wake_word_detector:
+            try:
+                self.wake_word_detector.stop_listening()
             except:
                 pass
         
@@ -233,18 +420,38 @@ class AidenTrayApp:
             print(f"Notification error: {e}")
     
     def create_menu(self):
+        # Dynamic menu text based on wake word status
+        wake_word_text = "🔇 Disable Wake Word" if self.wake_word_enabled else "🎯 Enable Wake Word ('Aiden')"
+        
         return pystray.Menu(
             item('🎤 Activate Assistant', self.activate_assistant, default=True),
             item('🌐 Open Dashboard', self.open_dashboard),
+            item(wake_word_text, self.toggle_wake_word_detection),
             pystray.Menu.SEPARATOR,
             item('❌ Quit', self.quit_app)
         )
     
     def speak_startup_message(self):
-        """Speak the startup message"""
+        """Speak the startup message with startup sound effect"""
         try:
             if self.voice_system and self.initialization_complete:
-                startup_message = "Aiden is active! Press star key or use the tray menu to call me."
+                # Play startup sound effect first
+                print("🔊 Playing startup sound...")
+                if hasattr(self.voice_system, '_play_sound_effect'):
+                    self.voice_system._play_sound_effect("startup")
+                    # Brief pause to let startup sound play
+                    time.sleep(0.5)
+                
+                # Get user's name from profile
+                user_profile = self.config_manager.get_user_profile()
+                user_name = user_profile.get("personal", {}).get("name", "")
+                
+                # Create personalized startup message
+                if user_name:
+                    startup_message = f"Hello {user_name}! Aiden is active and ready to assist you. Say 'Aiden' or press the star key to call me."
+                else:
+                    startup_message = "Aiden is active and ready to assist you! Say 'Aiden' or press the star key to call me."
+                
                 print(f"Speaking: {startup_message}")
                 self.voice_system.speak(startup_message)
         except Exception as e:
@@ -264,6 +471,9 @@ class AidenTrayApp:
                 menu
             )
             
+            # Store icon reference for menu updates
+            self._icon_ref = icon
+            
             print("Starting Aiden system tray application...")
             
             # Start dashboard early to enable hotkey functionality
@@ -277,6 +487,12 @@ class AidenTrayApp:
                 startup_thread = threading.Thread(target=self.speak_startup_message)
                 startup_thread.daemon = True
                 startup_thread.start()
+            
+            # Schedule auto-start of wake word detection after delay
+            self.auto_start_timer = threading.Timer(self.auto_start_delay, self.auto_start_wake_word_detection)
+            self.auto_start_timer.daemon = True
+            self.auto_start_timer.start()
+            print(f"⏰ Wake word detection will auto-start in {self.auto_start_delay} seconds...")
             
             # Run the icon (this blocks until quit)
             icon.run()

@@ -329,17 +329,26 @@ class VoiceSystem:
             
         logging.info(f"Speaking: {text[:50]}{'...' if len(text) > 50 else ''}")
         
+        # Pause wake word detection during TTS to prevent hearing our own voice
+        if hasattr(self, 'wake_word_detector') and self.wake_word_detector:
+            self.wake_word_detector.pause_listening()
+        
         # Play sound effect if requested
         if play_sound_effect and effect:
             self._play_sound_effect(effect)
         
-        if self.tts_engine == "edge-tts" and self.edge_tts_available:
-            asyncio.run(self._edge_tts_speak(text, False, None))
-        elif self.pyttsx3_available:
-            self._pyttsx3_speak(text)
-        else:
-            logging.error("No TTS engine available")
-            print(f"[SPEECH]: {text}")
+        try:
+            if self.tts_engine == "edge-tts" and self.edge_tts_available:
+                asyncio.run(self._edge_tts_speak(text, False, None))
+            elif self.pyttsx3_available:
+                self._pyttsx3_speak(text)
+            else:
+                logging.error("No TTS engine available")
+                print(f"[SPEECH]: {text}")
+        finally:
+            # Resume wake word detection after TTS completes
+            if hasattr(self, 'wake_word_detector') and self.wake_word_detector:
+                self.wake_word_detector.resume_listening()
     
     def say_greeting(self) -> None:
         """Play just the activation sound without speaking a greeting"""

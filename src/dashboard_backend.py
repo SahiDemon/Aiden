@@ -64,6 +64,9 @@ class AidenDashboardBackend:
         self.dashboard_mode = False  # True when activated by dashboard (continuous mode)
         self.verification_pending = False  # Track if verification is needed
         
+        # Wake word detector reference (set by aiden_tray.py)
+        self.wake_word_detector = None
+        
         # Setup routes and socket handlers
         self._setup_routes()
         self._setup_socket_handlers()
@@ -787,6 +790,26 @@ class AidenDashboardBackend:
             thread.daemon = True
             thread.start()
     
+    def _on_wake_word_activated(self):
+        """Handle wake word activation - continuous conversation mode (like voice assistants)"""
+        print("Wake word 'Aiden' detected - CONTINUOUS CONVERSATION mode")
+        
+        # Set mode flags (continuous like tray menu, not one-shot like hotkey)
+        self.hotkey_mode = False
+        self.dashboard_mode = True
+        
+        # Notify all connected clients
+        self.socketio.emit('wake_word_activated', {
+            'message': 'Wake word detected - Voice conversation started',
+            'timestamp': datetime.now().isoformat()
+        })
+        
+        # Start voice interaction in continuous mode
+        if not self.is_listening:
+            thread = threading.Thread(target=self._start_voice_interaction)
+            thread.daemon = True
+            thread.start()
+    
     def _start_voice_interaction(self):
         """Start a voice interaction session"""
         try:
@@ -831,17 +854,19 @@ class AidenDashboardBackend:
                         'status': 'processing'
                     })
                     
+                    # Pause wake word detection while processing and responding
+                    if self.wake_word_detector:
+                        self.wake_word_detector.pause_listening()
+                    
                     # Process the voice command
                     self._process_voice_message(text)
                     
-                    # Check for exit commands only - don't end on simple greetings
-                    text_lower = text.lower().strip()
+                    # Exit detection now handled in _process_message_common before processing
+                    # If we reach here, the conversation should continue normally
                     
-                    # Only end conversation for explicit exit commands
-                    if any(phrase in text_lower for phrase in ["bye", "goodbye", "stop", "exit", "quit", "end conversation", "stop conversation", "thank you", "thanks"]):
-                        print(f"Ending conversation due to exit command: {text}")
-                        self.conversation_active = False
-                        break
+                    # Resume wake word detection after processing
+                    if self.wake_word_detector:
+                        self.wake_word_detector.resume_listening()
                     
                     # For all other responses, continue the conversation normally
                     # Only ask follow-up for substantial commands that need clarification
@@ -887,6 +912,10 @@ class AidenDashboardBackend:
             print(f"Error in voice interaction: {e}")
             self._emit_ai_message(f"Error in voice interaction: {str(e)}", "error")
         finally:
+            # Resume wake word detection if it was paused
+            if self.wake_word_detector:
+                self.wake_word_detector.resume_listening()
+                
             self.is_listening = False
             self.conversation_active = False
             self.dashboard_mode = False  # Reset mode flag
@@ -936,6 +965,10 @@ class AidenDashboardBackend:
                         'speaking': False,
                         'status': 'processing'
                     })
+                    
+                    # Pause wake word detection while processing and responding
+                    if self.wake_word_detector:
+                        self.wake_word_detector.pause_listening()
                     
                     # Set a flag to pause listening for verification if needed
                     waiting_for_verification = False
@@ -1017,6 +1050,10 @@ class AidenDashboardBackend:
             print(f"Error in one-shot voice interaction: {e}")
             self._emit_ai_message(f"Error in voice interaction: {str(e)}", "error")
         finally:
+            # Resume wake word detection if it was paused
+            if self.wake_word_detector:
+                self.wake_word_detector.resume_listening()
+                
             self.is_listening = False
             self.conversation_active = False
             self.hotkey_mode = False  # Reset mode flag
@@ -1039,6 +1076,29 @@ class AidenDashboardBackend:
     def _process_message_common(self, text: str):
         """Common message processing logic for both voice and text"""
         try:
+            # FIRST: Check for exit commands before any processing
+            text_lower = text.lower().strip()
+            
+            # End conversation immediately for any thank expression or exit command
+            exit_patterns = [
+                "bye", "goodbye", "stop", "exit", "quit", 
+                "end conversation", "stop conversation"
+            ]
+            
+            # Check for thank expressions first (most common way to end)
+            if text_lower in ["thank you", "thanks", "no thank you", "no thanks", "thank"]:
+                print(f"Ending conversation immediately due to dismissal: {text}")
+                self.conversation_active = False
+                # Don't process further, just end
+                return
+            
+            # Check for other exit patterns
+            elif any(phrase in text_lower for phrase in exit_patterns):
+                print(f"Ending conversation immediately due to exit command: {text}")
+                self.conversation_active = False
+                # Don't process further, just end
+                return
+            
             # Store the user message first
             user_message = {
                 'type': 'user',

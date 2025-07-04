@@ -5840,21 +5840,228 @@
           "operation": "abort",
           "original_query": "can you stop the shutdown"
         }
+      },
+      {
+        "timestamp": "2025-07-04T16:04:34.552694",
+        "type": "provide_information",
+        "text": "ocean",
+        "parameters": {
+          "query": "ocean",
+          "original_query": "ocean",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-04T16:04:58.984245",
+        "type": "provide_information",
+        "text": "thank you stop the conver",
+        "parameters": {
+          "query": "stop the conver",
+          "original_query": "stop the conver",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-04T16:05:14.095942",
+        "type": "provide_information",
+        "text": "thank",
+        "parameters": {
+          "original_query": "thank"
+        }
+      },
+      {
+        "timestamp": "2025-07-04T17:13:57.032388",
+        "type": "provide_information",
+        "text": "hi how are you",
+        "parameters": {
+          "query": "how are you",
+          "original_query": "hi how are you"
+        }
+      },
+      {
+        "timestamp": "2025-07-04T23:48:01.372105",
+        "type": "fan_control",
+        "text": "turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-04T23:48:47.914593",
+        "type": "provide_information",
+        "text": "thank you end the conversation",
+        "parameters": {
+          "query": "end the conversation",
+          "original_query": "thank you end the conversation",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-04T23:51:08.475173",
+        "type": "fan_control",
+        "text": "turn on the",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-04T23:52:22.352091",
+        "type": "fan_control",
+        "text": "turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-04T23:52:35.993928",
+        "type": "provide_information",
+        "text": "that's it thank you",
+        "parameters": {
+          "original_query": "that's it thank you",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-04T23:52:49.409828",
+        "type": "provide_information",
+        "text": "thank",
+        "parameters": {
+          "original_query": "thank"
+        }
+      },
+      {
+        "timestamp": "2025-07-05T00:01:04.269276",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-05T00:02:38.361298",
+        "type": "fan_control",
+        "text": "turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-05T00:06:15.701694",
+        "type": "system_command",
+        "text": "can you close CMD",
+        "parameters": {
+          "operation": "close",
+          "original_query": "can you close CMD"
+        }
+      },
+      {
+        "timestamp": "2025-07-05T00:15:23.325207",
+        "type": "app_control",
+        "text": "close the Notepad for me",
+        "parameters": {
+          "app_name": "Notepad",
+          "operation": "close",
+          "original_query": "close the Notepad for me"
+        }
+      },
+      {
+        "timestamp": "2025-07-05T00:17:26.425322",
+        "type": "app_control",
+        "text": "can you close WhatsApp",
+        "parameters": {
+          "app_name": "WhatsApp",
+          "operation": "close",
+          "original_query": "can you close WhatsApp"
+        }
+      },
+      {
+        "timestamp": "2025-07-05T00:17:56.127253",
+        "type": "provide_information",
+        "text": "thank",
+        "parameters": {
+          "original_query": "thank"
+        }
+      },
+      {
+        "timestamp": "2025-07-05T00:25:20.642701",
+        "type": "app_control",
+        "text": "can you open the chrome",
+        "parameters": {
+          "app_name": "chrome",
+          "operation": "launch",
+          "original_query": "can you open the chrome"
+        }
+      },
+      {
+        "timestamp": "2025-07-05T00:25:43.045251",
+        "type": "provide_information",
+        "text": "thank you",
+        "parameters": {
+          "original_query": "thank you",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-05T00:25:56.757205",
+        "type": "provide_information",
+        "text": "thank",
+        "parameters": {
+          "original_query": "thank"
+        }
+      },
+      {
+        "timestamp": "2025-07-05T00:55:36.348566",
+        "type": "system_command",
+        "text": "close python",
+        "parameters": {
+          "operation": "shutdown",
+          "original_query": "close python"
+        }
+      },
+      {
+        "timestamp": "2025-07-05T00:56:02.933457",
+        "type": "system_command",
+        "text": "kill python process",
+        "parameters": {
+          "operation": "kill",
+          "process": "python",
+          "original_query": "kill python process"
+        }
+      },
+      {
+        "timestamp": "2025-07-05T00:56:18.568655",
+        "type": "system_command",
+        "text": "close pyth",
+        "parameters": {
+          "operation": "kill",
+          "process": "python",
+          "original_query": "close pyth"
+        }
       }
     ],
     "last_commands": [
+      "can you close CMD",
+      "close the Notepad for me",
+      "can you close WhatsApp",
+      "thank",
+      "can you open the chrome",
       "thank you",
-      "turn off the fan for",
-      "lock the computer",
-      "shutdown the computer in",
-      "shutdown the computer in 10 minutes",
-      "shutdown the computer",
-      "hello how are you",
-      "thank you stop",
-      "can you shut down the computer in 10 minutes",
-      "can you stop the shutdown"
+      "thank",
+      "close python",
+      "kill python process",
+      "close pyth"
     ],
-    "total_commands": 635,
+    "total_commands": 657,
     "total_sessions": 77
   },
   "patterns": {

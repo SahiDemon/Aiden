@@ -970,6 +970,10 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
             return False
         
         try:
+            # Handle close operations directly without confirmation (not dangerous)
+            if operation == "close":
+                return self._handle_close_operation(original_query)
+            
             # Handle direct shell commands from tgpt shell mode
             if command_type == "shell" and command:
                 print(f"Executing shell command: {command}")
@@ -1300,6 +1304,105 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
         except Exception as e:
             logging.error(f"Error executing immediate system command: {e}")
             self.voice_system.speak("I had trouble executing that system command.")
+            return False
+    
+    def _handle_close_operation(self, original_query: str) -> bool:
+        """Handle close operation for applications - execute directly without confirmation
+        
+        Args:
+            original_query: Original user query containing app to close
+            
+        Returns:
+            True if handled successfully, False otherwise
+        """
+        try:
+            form_of_address = self.config_manager.get_user_profile()["personal"]["form_of_address"]
+            query_lower = original_query.lower()
+            
+            # Map common application names to their process names
+            app_mappings = {
+                "notepad": "notepad.exe",
+                "calculator": "calc.exe", 
+                "chrome": "chrome.exe",
+                "firefox": "firefox.exe",
+                "edge": "msedge.exe",
+                "explorer": "explorer.exe",
+                "cmd": "cmd.exe",
+                "command prompt": "cmd.exe",
+                "terminal": "cmd.exe",
+                "powershell": "powershell.exe",
+                "task manager": "taskmgr.exe",
+                "word": "winword.exe",
+                "excel": "excel.exe",
+                "outlook": "outlook.exe",
+                "teams": "teams.exe",
+                "discord": "discord.exe",
+                "spotify": "spotify.exe",
+                "steam": "steam.exe",
+                "vscode": "code.exe",
+                "visual studio code": "code.exe"
+            }
+            
+            # Find which app to close
+            app_to_close = None
+            process_name = None
+            
+            for app_name, process in app_mappings.items():
+                if app_name in query_lower:
+                    app_to_close = app_name
+                    process_name = process
+                    break
+            
+            if not app_to_close:
+                # Try to extract app name from generic patterns
+                if "close " in query_lower:
+                    # Extract what comes after "close"
+                    close_index = query_lower.find("close ") + 6
+                    app_name = query_lower[close_index:].strip()
+                    # Remove common words
+                    app_name = app_name.replace("the ", "").replace("application", "").replace("app", "").strip()
+                    if app_name:
+                        app_to_close = app_name
+                        process_name = f"{app_name}.exe"
+            
+            if not app_to_close:
+                self.voice_system.speak(f"I'm not sure which application you want to close, {form_of_address}. Could you be more specific?")
+                if self.dashboard_backend:
+                    self.dashboard_backend._emit_ai_message("I'm not sure which application you want to close. Could you be more specific?", "response")
+                return False
+            
+            # Generate taskkill command
+            command = f"taskkill /F /IM {process_name}"
+            
+            print(f"Executing close command: {command}")
+            
+            # Execute the command
+            result = subprocess.run(command, shell=True, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            
+            if result.returncode == 0:
+                # Success
+                response_msg = f"Successfully closed {app_to_close}, {form_of_address}."
+                self.voice_system.speak(response_msg)
+                if self.dashboard_backend:
+                    self.dashboard_backend._emit_ai_message(response_msg, "response")
+                return True
+            else:
+                # Failed - process might not be running
+                if "not found" in result.stderr.lower() or "no tasks are running" in result.stderr.lower():
+                    response_msg = f"{app_to_close.title()} is not currently running, {form_of_address}."
+                else:
+                    response_msg = f"I couldn't close {app_to_close}, {form_of_address}. It might not be running or might require elevated permissions."
+                
+                self.voice_system.speak(response_msg)
+                if self.dashboard_backend:
+                    self.dashboard_backend._emit_ai_message(response_msg, "response")
+                return True  # Return True even if app wasn't running (not an error)
+                
+        except Exception as e:
+            logging.error(f"Error in close operation: {e}")
+            self.voice_system.speak(f"I had trouble closing that application, {form_of_address}.")
+            if self.dashboard_backend:
+                self.dashboard_backend._emit_ai_message("I had trouble closing that application.", "error")
             return False
     
     def _handle_settings(self, parameters: Dict[str, Any]) -> bool:
