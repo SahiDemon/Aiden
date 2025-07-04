@@ -4,6 +4,8 @@ Handles global hotkey detection for activating the AI assistant
 """
 import logging
 import threading
+import time
+import sys
 from typing import Callable, List, Dict, Any, Optional
 
 # Try to import optional dependencies
@@ -76,99 +78,138 @@ class HotkeyListener:
         self.listener = None
         self.is_listening = False
         
+        # Windows-specific error handling
+        self.last_activation_time = 0
+        self.activation_cooldown = 0.5  # Prevent rapid re-activation
+        
         logging.info(f"Hotkey listener initialized with key: {self.key}, modifiers: {self.modifiers}")
     
     def on_press(self, key):
-        """Handle key press events
+        """Handle key press events with improved error handling
         
         Args:
             key: The key that was pressed
         """
         try:
-            # Log key press for debugging (only in log file)
-            logging.debug(f"Key pressed: {key}")
-            
             # Add key to currently pressed keys
             self.current_keys.add(key)
             
-            # For simple asterisk key detection
+            # Check for asterisk key in multiple formats with error handling
             asterisk_pressed = False
             
-            # Check for asterisk key in two different formats
-            if hasattr(key, 'char') and key.char == '*':
-                asterisk_pressed = True
-                logging.info("Asterisk (*) key pressed")
-                
-                # Call the activation callback in a separate thread to avoid blocking
-                threading.Thread(target=self.activation_callback).start()
-                return
+            try:
+                if hasattr(key, 'char') and key.char == '*':
+                    asterisk_pressed = True
+                    logging.info("Asterisk (*) key pressed")
+                    
+                    # Check cooldown to prevent rapid re-activation
+                    current_time = time.time()
+                    if current_time - self.last_activation_time < self.activation_cooldown:
+                        logging.debug("Activation cooldown active, ignoring")
+                        return True  # Explicitly return True for Windows API
+                    
+                    self.last_activation_time = current_time
+                    
+                    # Call the activation callback in a separate thread to avoid blocking
+                    # Use daemon thread to prevent hanging on exit
+                    activation_thread = threading.Thread(target=self._safe_activation_callback)
+                    activation_thread.daemon = True
+                    activation_thread.start()
+                    return True  # Explicitly return True for Windows API
+            except Exception as e:
+                logging.debug(f"Error checking asterisk key: {e}")
+                # Continue with other key checks
             
             # If we have modifiers configured, check for the full hotkey combination
             if self.modifiers:
-                # Check if all modifier keys are pressed
-                all_modifiers_pressed = True
-                for mod in self.modifier_keys:
-                    # Handle left/right variants of modifier keys
-                    if mod == keyboard.Key.ctrl:
-                        if not (keyboard.Key.ctrl_l in self.current_keys or keyboard.Key.ctrl_r in self.current_keys):
+                try:
+                    # Check if all modifier keys are pressed
+                    all_modifiers_pressed = True
+                    for mod in self.modifier_keys:
+                        # Handle left/right variants of modifier keys
+                        if mod == keyboard.Key.ctrl:
+                            if not (keyboard.Key.ctrl_l in self.current_keys or keyboard.Key.ctrl_r in self.current_keys):
+                                all_modifiers_pressed = False
+                        elif mod == keyboard.Key.shift:
+                            if not (keyboard.Key.shift in self.current_keys or 
+                                   keyboard.Key.shift_l in self.current_keys or 
+                                   keyboard.Key.shift_r in self.current_keys):
+                                all_modifiers_pressed = False
+                        elif mod == keyboard.Key.alt:
+                            if not (keyboard.Key.alt in self.current_keys or 
+                                   keyboard.Key.alt_l in self.current_keys or 
+                                   keyboard.Key.alt_r in self.current_keys):
+                                all_modifiers_pressed = False
+                        elif mod not in self.current_keys:
                             all_modifiers_pressed = False
-                    elif mod == keyboard.Key.shift:
-                        if not (keyboard.Key.shift in self.current_keys or 
-                               keyboard.Key.shift_l in self.current_keys or 
-                               keyboard.Key.shift_r in self.current_keys):
-                            all_modifiers_pressed = False
-                    elif mod == keyboard.Key.alt:
-                        if not (keyboard.Key.alt in self.current_keys or 
-                               keyboard.Key.alt_l in self.current_keys or 
-                               keyboard.Key.alt_r in self.current_keys):
-                            all_modifiers_pressed = False
-                    elif mod not in self.current_keys:
-                        all_modifiers_pressed = False
-                
-                # Check if main key is pressed
-                main_key_pressed = False
-                for k in self.current_keys:
-                    if hasattr(k, 'char') and hasattr(self, 'key_char') and k.char == self.key_char:
-                        main_key_pressed = True
-                    elif k == self.main_key:
-                        main_key_pressed = True
-                
-                # Debug output (only in log file)
-                logging.debug(f"Main key pressed: {main_key_pressed}")
-                logging.debug(f"All modifiers pressed: {all_modifiers_pressed}")
-                
-                # Full hotkey combination
-                if main_key_pressed and all_modifiers_pressed:
-                    hotkey_str = '+'.join([m.capitalize() for m in self.modifiers] + [self.key.capitalize()])
-                    logging.info(f"Hotkey detected: {hotkey_str}")
-                    print(f"\n**** HOTKEY DETECTED: {hotkey_str} ****\n")
                     
-                    # Clear current keys to prevent repeated triggers
-                    self.current_keys.clear()
+                    # Check if main key is pressed
+                    main_key_pressed = False
+                    for k in self.current_keys:
+                        if hasattr(k, 'char') and hasattr(self, 'key_char') and k.char == self.key_char:
+                            main_key_pressed = True
+                        elif k == self.main_key:
+                            main_key_pressed = True
                     
-                    # Call the activation callback in a separate thread to avoid blocking
-                    threading.Thread(target=self.activation_callback).start()
+                    # Full hotkey combination
+                    if main_key_pressed and all_modifiers_pressed:
+                        # Check cooldown
+                        current_time = time.time()
+                        if current_time - self.last_activation_time < self.activation_cooldown:
+                            logging.debug("Activation cooldown active, ignoring")
+                            return True  # Explicitly return True for Windows API
+                        
+                        self.last_activation_time = current_time
+                        
+                        hotkey_str = '+'.join([m.capitalize() for m in self.modifiers] + [self.key.capitalize()])
+                        logging.info(f"Hotkey detected: {hotkey_str}")
+                        print(f"\n**** HOTKEY DETECTED: {hotkey_str} ****\n")
+                        
+                        # Clear current keys to prevent repeated triggers
+                        self.current_keys.clear()
+                        
+                        # Call the activation callback in a separate thread to avoid blocking
+                        activation_thread = threading.Thread(target=self._safe_activation_callback)
+                        activation_thread.daemon = True
+                        activation_thread.start()
+                        return True  # Explicitly return True for Windows API
+                except Exception as e:
+                    logging.debug(f"Error in hotkey combination check: {e}")
+                    
         except Exception as e:
-            logging.error(f"Error in on_press: {e}")
-            print(f"Error in key press handler: {e}")
+            # Catch all exceptions to prevent Windows WNDPROC errors
+            logging.debug(f"Error in on_press (suppressed for stability): {e}")
+            # Don't print to console to avoid spam
+        
+        # Always return True to satisfy Windows API requirements
+        return True
     
     def on_release(self, key):
-        """Handle key release events
+        """Handle key release events with improved error handling
         
         Args:
             key: The key that was released
         """
         try:
-            # Log key release for debugging
-            logging.debug(f"Key released: {key}")
-            
             # Remove key from currently pressed keys if it's there
             self.current_keys.discard(key)
         except Exception as e:
-            logging.error(f"Error in on_release: {e}")
+            # Suppress errors to prevent Windows WNDPROC issues
+            logging.debug(f"Error in on_release (suppressed for stability): {e}")
+        
+        # Always return True to satisfy Windows API requirements
+        return True
+    
+    def _safe_activation_callback(self):
+        """Safely call the activation callback with error handling"""
+        try:
+            self.activation_callback()
+        except Exception as e:
+            logging.error(f"Error in activation callback: {e}")
+            print(f"Error in activation callback: {e}")
     
     def start_listening(self):
-        """Start listening for hotkey presses"""
+        """Start listening for hotkey presses with improved error handling"""
         if not PYNPUT_AVAILABLE:
             logging.error("Cannot start hotkey listener - pynput not available")
             print("ERROR: pynput library not available. Hotkey detection will not work.")
@@ -179,11 +220,34 @@ class HotkeyListener:
             return True
             
         try:
-            # Create and start keyboard listener
+            # Create keyboard listener with Windows-specific error handling
+            def safe_on_press(key):
+                try:
+                    result = self.on_press(key)
+                    # Ensure we always return a proper value for Windows API
+                    return True if result is None else result
+                except Exception as e:
+                    logging.debug(f"Error in safe_on_press: {e}")
+                    return True  # Always return True to satisfy Windows API
+            
+            def safe_on_release(key):
+                try:
+                    result = self.on_release(key)
+                    # Ensure we always return a proper value for Windows API
+                    return True if result is None else result
+                except Exception as e:
+                    logging.debug(f"Error in safe_on_release: {e}")
+                    return True  # Always return True to satisfy Windows API
+            
+            # Create and start keyboard listener with Windows-optimized settings
             self.listener = keyboard.Listener(
-                on_press=self.on_press,
-                on_release=self.on_release
+                on_press=safe_on_press,
+                on_release=safe_on_release,
+                suppress=False  # Don't suppress keys to avoid Windows issues
             )
+            
+            # Start in daemon mode to prevent hanging
+            self.listener.daemon = True
             self.listener.start()
             self.is_listening = True
             
@@ -192,15 +256,19 @@ class HotkeyListener:
             logging.info(f"Hotkey listener started - Listening for: {hotkey_str}")
             print(f"Hotkey listener started - Listening for: {hotkey_str}")
             
+            # Give listener time to initialize
+            time.sleep(0.1)
+            
             # Verify listener is running
-            if not self.listener.is_alive():
-                logging.error("Listener thread is not alive!")
-                print("ERROR: Hotkey listener thread is not running!")
+            if not self.listener.running:
+                logging.error("Listener thread failed to start!")
+                print("ERROR: Hotkey listener thread failed to start!")
                 return False
                 
             return True
         except Exception as e:
             logging.error(f"Error starting hotkey listener: {e}")
+            print(f"Error starting hotkey listener: {e}")
             return False
     
     def stop_listening(self):
@@ -209,7 +277,8 @@ class HotkeyListener:
             return
             
         try:
-            self.listener.stop()
+            if self.listener.running:
+                self.listener.stop()
             self.is_listening = False
             logging.info("Hotkey listener stopped")
         except Exception as e:

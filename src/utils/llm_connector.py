@@ -287,29 +287,74 @@ If the user wants natural conversation without a specific command, use:
         return context
     
     def _process_with_tgpt(self, prompt: str) -> Dict[str, Any]:
-        """Process a prompt with tgpt
+        """Process command using tgpt with smart mode selection
         
         Args:
-            prompt: The prompt to process
+            prompt: The prompt to send to tgpt
             
         Returns:
             Dictionary containing the parsed response
         """
         try:
-            # Write prompt to temporary file with UTF-8 encoding
+            # Smart detection for shell mode vs built-in handlers
+            command_lower = self.last_command.lower()
+            
+            # NEVER use shell mode for scheduling or timed commands
+            scheduling_keywords = [
+                "in ", " in ", "after ", "later", "schedule", "timer", "delay",
+                "minute", "minutes", "hour", "hours", "second", "seconds",
+                "tomorrow", "tonight", "morning", "afternoon", "evening"
+            ]
+            has_scheduling = any(keyword in command_lower for keyword in scheduling_keywords)
+            
+            # Only use shell mode for simple, immediate app launching commands that tgpt handles well
+            simple_app_commands = [
+                "open notepad", "launch notepad", "start notepad",
+                "open calculator", "launch calculator", "start calculator", "calc",
+                "open chrome", "launch chrome", "start chrome",
+                "open firefox", "launch firefox", "start firefox", 
+                "open edge", "launch edge", "start edge",
+                "open explorer", "launch explorer", "file explorer", "start explorer"
+            ]
+            
+            # Check if this is a simple app command that tgpt handles well
+            is_simple_app_command = any(cmd in command_lower for cmd in simple_app_commands)
+            
+            # Use shell mode ONLY for simple app commands WITHOUT scheduling
+            is_system_command = is_simple_app_command and not has_scheduling
+            
+            # Log the decision for debugging
+            if has_scheduling:
+                print(f"Detected scheduling keywords - using built-in handlers instead of shell mode")
+            elif is_simple_app_command:
+                print(f"Detected simple app command - using shell mode")
+            else:
+                print(f"Using regular LLM mode for complex command processing")
+            
+            # Create temporary file for the prompt
             with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt', encoding='utf-8') as temp:
                 temp_file_path = temp.name
                 # Clean the prompt to remove problematic Unicode characters
                 cleaned_prompt = prompt.encode('ascii', errors='replace').decode('ascii')
                 temp.write(cleaned_prompt)
             
-            # Build command based on OS with optimized flags:
-            # -q: quiet mode (no loading animations)
-            # -w: return whole response as text (faster)
-            if platform.system() == "Windows":
-                cmd = f'type "{temp_file_path}" | {self.tgpt_path} -q -w'
-            else:  # Unix-like
-                cmd = f'cat "{temp_file_path}" | {self.tgpt_path} -q -w'
+            # Build command based on OS and command type
+            if is_system_command:
+                print(f"Detected simple app command, using shell mode...")
+                # Use shell mode (-s) for simple app commands with auto-yes (-y) only
+                # Note: -q and -w don't work with shell mode, they give answers instead of commands
+                if platform.system() == "Windows":
+                    cmd = f'echo "{self.last_command}" | {self.tgpt_path} -s -y'
+                else:  # Unix-like
+                    cmd = f'echo "{self.last_command}" | {self.tgpt_path} -s -y'
+            else:
+                # Use regular mode with optimized flags:
+                # -q: quiet mode (no loading animations)
+                # -w: return whole response as text (faster)
+                if platform.system() == "Windows":
+                    cmd = f'type "{temp_file_path}" | {self.tgpt_path} -q -w'
+                else:  # Unix-like
+                    cmd = f'cat "{temp_file_path}" | {self.tgpt_path} -q -w'
             
             # Print information about what's happening
             print(f"Executing command: {cmd}")
@@ -326,7 +371,13 @@ If the user wants natural conversation without a specific command, use:
             stdout, stderr = process.communicate()
             
             # Clean up temp file
-            os.unlink(temp_file_path)
+            if not is_system_command:  # Only delete if we used the temp file
+                os.unlink(temp_file_path)
+            else:
+                try:
+                    os.unlink(temp_file_path)  # Try to clean up anyway
+                except:
+                    pass
             
             if process.returncode != 0:
                 logging.error(f"tgpt error: {stderr}")
@@ -334,12 +385,16 @@ If the user wants natural conversation without a specific command, use:
                 print("Please make sure tgpt is installed and configured correctly")
                 return self._default_error_response()
             
-            # Clean the output from tgpt (remove loading spinners, etc.)
-            clean_output = self._clean_tgpt_output(stdout)
-            print(f"AI response cleaned and ready for processing")
-            
-            # Parse the response
-            return self._parse_llm_response(clean_output)
+            # Handle shell command responses differently
+            if is_system_command:
+                return self._handle_shell_command_response(stdout, self.last_command)
+            else:
+                # Clean the output from tgpt (remove loading spinners, etc.)
+                clean_output = self._clean_tgpt_output(stdout)
+                print(f"AI response cleaned and ready for processing")
+                
+                # Parse the response
+                return self._parse_llm_response(clean_output)
             
         except Exception as e:
             logging.error(f"Error processing with tgpt: {e}")
@@ -545,3 +600,71 @@ If the user wants natural conversation without a specific command, use:
             "parameters": {"original_query": self.last_command},
             "response": f"I'm sorry, {form_of_address}. I encountered an error processing your request."
         }
+
+    def _handle_shell_command_response(self, tgpt_output: str, original_command: str) -> Dict[str, Any]:
+        """Handle responses from tgpt shell mode for app launching
+        
+        Args:
+            tgpt_output: Output from tgpt -s command
+            original_command: Original user command
+            
+        Returns:
+            Dictionary containing the app control action
+        """
+        # Get user's preferred address for responses
+        form_of_address = self.user_profile["personal"]["form_of_address"]
+        
+        # Extract the shell command from tgpt output
+        shell_command = tgpt_output.strip()
+        
+        # Create response based on command type
+        command_lower = original_command.lower()
+        
+        if not shell_command or len(shell_command) < 3:
+            return {
+                "action": "provide_information",
+                "parameters": {"original_query": original_command},
+                "response": f"I couldn't generate a command for that, {form_of_address}. Could you be more specific?"
+            }
+        
+        # Extract app name from the original command
+        app_name = "application"
+        if "notepad" in command_lower:
+            app_name = "notepad"
+        elif "calculator" in command_lower or "calc" in command_lower:
+            app_name = "calculator"
+        elif "chrome" in command_lower:
+            app_name = "chrome"
+        elif "firefox" in command_lower:
+            app_name = "firefox"
+        elif "edge" in command_lower:
+            app_name = "edge"
+        elif "explorer" in command_lower:
+            app_name = "file explorer"
+        
+        response_msg = f"Opening {app_name} for you, {form_of_address}."
+        
+        # For simple commands like "notepad.exe", execute directly
+        # For complex commands, let the system command handler decide
+        if shell_command.endswith(".exe") and " " not in shell_command:
+            # Simple executable - use system command with shell execution
+            return {
+                "action": "system_command",
+                "parameters": {
+                    "command": shell_command,
+                    "original_query": original_command,
+                    "command_type": "shell"
+                },
+                "response": response_msg
+            }
+        else:
+            # Complex command - fall back to app_control handler which is more robust
+            return {
+                "action": "app_control",
+                "parameters": {
+                    "app_name": app_name,
+                    "operation": "launch",
+                    "original_query": original_command
+                },
+                "response": response_msg
+            }

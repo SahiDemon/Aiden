@@ -26,6 +26,9 @@ except ImportError:
     PYTTSX3_AVAILABLE = False
     logging.warning("pyttsx3 not available")
 
+# Google TTS removed - not available in current setup
+GOOGLE_TTS_AVAILABLE = False
+
 # Try pygame for audio playback (preferred over playsound for newer Python versions)
 try:
     import pygame
@@ -87,6 +90,11 @@ class VoiceSystem:
         
         # Initialize TTS engines
         self._init_tts_engines()
+        
+        # Google TTS removed - fallback to edge-tts if google-tts was configured
+        if self.tts_engine == "google-tts":
+            self.tts_engine = "edge-tts"
+            logging.info("Google TTS not available, using edge-tts instead")
         
         # Create temp directory if it doesn't exist
         temp_dir = config_manager.get_config("general")["temp_dir"]
@@ -199,20 +207,30 @@ class VoiceSystem:
             effect: Name of the sound effect to play
         """
         try:
-            # Generate a completely new unique filename using uuid
+            # Generate a completely new unique filename using uuid and process ID
             import uuid
             import time
+            import os
             
-            # Create a unique filename that doesn't depend on the previous one
-            unique_id = str(uuid.uuid4())
+            # Create a more unique filename that includes process ID to avoid conflicts
+            unique_id = str(uuid.uuid4()).replace('-', '')[:8]
             timestamp = int(time.time())
-            unique_path = os.path.join(self.temp_dir, f"speech_{unique_id}_{timestamp}.mp3")
+            process_id = os.getpid()
+            unique_path = os.path.join(self.temp_dir, f"speech_{unique_id}_{timestamp}_{process_id}.mp3")
             
             print(f"Generating speech to file: {unique_path}")
             
             # Play sound effect if requested
             if play_sound_effect and effect:
                 self._play_sound_effect(effect)
+            
+            # Clean up any previous temp files to avoid accumulation
+            try:
+                if hasattr(self, 'temp_audio_path') and self.temp_audio_path and os.path.exists(self.temp_audio_path):
+                    if self.temp_audio_path != unique_path:  # Don't delete the file we're about to create
+                        os.remove(self.temp_audio_path)
+            except Exception as cleanup_error:
+                logging.debug(f"Could not clean up previous temp file: {cleanup_error}")
                 
             # Use edge-tts's built-in rate parameter instead of SSML
             # Edge-TTS Communicate class supports rate parameter directly
@@ -233,29 +251,58 @@ class VoiceSystem:
             # Update the path to use this file
             self.temp_audio_path = unique_path
             
+            # Verify file was created successfully
+            if not os.path.exists(unique_path):
+                raise Exception(f"Failed to create audio file: {unique_path}")
+            
+            # Play the audio with improved error handling
             if PYGAME_AVAILABLE:
-                # Use pygame for audio playback
-                pygame.mixer.music.load(self.temp_audio_path)
-                pygame.mixer.music.play()
-                # Wait for playback to finish
-                while pygame.mixer.music.get_busy():
-                    time.sleep(0.1)
+                try:
+                    # Use pygame for audio playback
+                    pygame.mixer.music.load(self.temp_audio_path)
+                    pygame.mixer.music.play()
+                    # Wait for playback to finish
+                    while pygame.mixer.music.get_busy():
+                        time.sleep(0.1)
+                except Exception as pygame_error:
+                    logging.warning(f"Pygame playback failed: {pygame_error}")
+                    # Fall back to other methods
+                    if PLAYSOUND_AVAILABLE:
+                        playsound(self.temp_audio_path)
+                    else:
+                        self._fallback_audio_playback(self.temp_audio_path)
             elif PLAYSOUND_AVAILABLE:
-                playsound(self.temp_audio_path)
+                try:
+                    playsound(self.temp_audio_path)
+                except Exception as playsound_error:
+                    logging.warning(f"Playsound playback failed: {playsound_error}")
+                    self._fallback_audio_playback(self.temp_audio_path)
             else:
-                # Fallback to OS-specific audio playback
-                if platform.system() == "Windows":
-                    os.startfile(self.temp_audio_path)
-                elif platform.system() == "Darwin":  # macOS
-                    subprocess.call(["afplay", self.temp_audio_path])
-                else:  # Linux
-                    subprocess.call(["aplay", self.temp_audio_path])
+                self._fallback_audio_playback(self.temp_audio_path)
                     
         except Exception as e:
             logging.error(f"Error with edge-tts: {e}")
             # Fall back to pyttsx3 if available
             if self.pyttsx3_available:
                 self._pyttsx3_speak(text)
+            else:
+                # Last resort - just print the text
+                print(f"[SPEECH FALLBACK]: {text}")
+    
+    def _fallback_audio_playback(self, audio_file: str):
+        """Fallback audio playback using OS-specific methods"""
+        try:
+            if platform.system() == "Windows":
+                # Use Windows Media Player or default audio player
+                import subprocess
+                subprocess.run(['start', '', audio_file], shell=True, check=False)
+            elif platform.system() == "Darwin":  # macOS
+                subprocess.call(["afplay", audio_file])
+            else:  # Linux
+                subprocess.call(["aplay", audio_file])
+        except Exception as fallback_error:
+            logging.error(f"All audio playback methods failed: {fallback_error}")
+            print(f"[AUDIO PLAYBACK FAILED]: Could not play audio file {audio_file}")
     
     def _pyttsx3_speak(self, text: str) -> None:
         """Speak using pyttsx3
@@ -282,11 +329,13 @@ class VoiceSystem:
             
         logging.info(f"Speaking: {text[:50]}{'...' if len(text) > 50 else ''}")
         
+        # Play sound effect if requested
+        if play_sound_effect and effect:
+            self._play_sound_effect(effect)
+        
         if self.tts_engine == "edge-tts" and self.edge_tts_available:
-            asyncio.run(self._edge_tts_speak(text, play_sound_effect, effect))
+            asyncio.run(self._edge_tts_speak(text, False, None))
         elif self.pyttsx3_available:
-            if play_sound_effect and effect:
-                self._play_sound_effect(effect)
             self._pyttsx3_speak(text)
         else:
             logging.error("No TTS engine available")

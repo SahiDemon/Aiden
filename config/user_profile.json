@@ -4347,21 +4347,1514 @@
           "operation": "on",
           "original_query": "turn on the fan"
         }
+      },
+      {
+        "timestamp": "2025-06-17T01:51:33.443501",
+        "type": "provide_information",
+        "text": "hey how are you",
+        "parameters": {
+          "query": "how are you",
+          "original_query": "hey how are you",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-17T01:51:49.691693",
+        "type": "provide_information",
+        "text": "no thank you",
+        "parameters": {
+          "original_query": "no thank you"
+        }
+      },
+      {
+        "timestamp": "2025-06-17T02:22:23.694692",
+        "type": "provide_information",
+        "text": "Hi, how are you?",
+        "parameters": {
+          "query": "Hi, how are you?",
+          "original_query": "Hi, how are you?",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-17T02:22:42.977194",
+        "type": "provide_information",
+        "text": "I'm good. Um,",
+        "parameters": {
+          "query": "Um",
+          "original_query": "I'm good. Um",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-17T02:23:01.837829",
+        "type": "fan_control",
+        "text": "Can you turn off the fan?",
+        "parameters": {
+          "operation": "off",
+          "original_query": "Can you turn off the fan?",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-17T02:23:26.907627",
+        "type": "fan_control",
+        "text": "Turn on the fan for me.",
+        "parameters": {
+          "operation": "on",
+          "original_query": "Turn on the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-17T02:23:47.523051",
+        "type": "web_search",
+        "text": "Tell me oh no no no. Go to uh, github.com.",
+        "parameters": {
+          "query": "github.com",
+          "original_query": "go to uh, github.com"
+        }
+      },
+      {
+        "timestamp": "2025-06-17T02:49:21.300777",
+        "type": "provide_information",
+        "text": "Hello, how are you?",
+        "parameters": {
+          "original_query": "Hello, how are you?"
+        }
+      },
+      {
+        "timestamp": "2025-06-17T13:19:04.127342",
+        "type": "fan_control",
+        "text": "turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "Turn on the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-17T18:24:49.899229",
+        "type": "fan_control",
+        "text": "turn on the fan for me",
+        "parameters": {
+          "operation": "on",
+          "original_query": "Turn on the fan for me",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-17T18:25:05.743764",
+        "type": "fan_control",
+        "text": "change the fan mode",
+        "parameters": {
+          "operation": "change_mode",
+          "original_query": "change the fan mode",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-17T18:40:11.091299",
+        "type": "fan_control",
+        "text": "turn off the fan for",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan for",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-17T19:39:40.577922",
+        "type": "provide_information",
+        "text": "pataliya December",
+        "parameters": {
+          "original_query": "pataliya December",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-18T01:03:16.957174",
+        "type": "fan_control",
+        "text": "turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-18T01:27:41.387982",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-18T16:23:40.960789",
+        "type": "fan_control",
+        "text": "turn on the fan for me",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan for me",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-18T18:17:57.458890",
+        "type": "fan_control",
+        "text": "turn off the fan for me",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan for me",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-18T18:18:51.356671",
+        "type": "fan_control",
+        "text": "turn off the fan for me",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan for me",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-18T20:15:40.574671",
+        "type": "system_command",
+        "text": "lock the device",
+        "parameters": {
+          "operation": "lock",
+          "original_query": "lock the device"
+        }
+      },
+      {
+        "timestamp": "2025-06-19T01:49:50.197807",
+        "type": "fan_control",
+        "text": "turn on the fan phone",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan phone",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-19T02:20:21.862634",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-19T03:56:25.282179",
+        "type": "system_command",
+        "text": "shutdown the PC",
+        "parameters": {
+          "operation": "shutdown",
+          "original_query": "shutdown the PC"
+        }
+      },
+      {
+        "timestamp": "2025-06-19T03:56:48.820226",
+        "type": "system_command",
+        "text": "shutdown the PC",
+        "parameters": {
+          "operation": "shutdown",
+          "original_query": "shutdown the PC"
+        }
+      },
+      {
+        "timestamp": "2025-06-19T14:31:09.084651",
+        "type": "fan_control",
+        "text": "change the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-19T14:31:20.712395",
+        "type": "fan_control",
+        "text": "change the fan speed",
+        "parameters": {
+          "operation": "speed",
+          "original_query": "change the fan speed",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-19T22:05:48.065412",
+        "type": "fan_control",
+        "text": "turn off the fan for me",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-19T22:39:53.898358",
+        "type": "fan_control",
+        "text": "turn on the fan phone",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan phone",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-19T22:40:34.099580",
+        "type": "fan_control",
+        "text": "turn on the fan for me",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan for me",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-19T22:49:12.656444",
+        "type": "fan_control",
+        "text": "turn off the fan for me",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan for me",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-19T23:02:25.558761",
+        "type": "system_command",
+        "text": "lock the screen",
+        "parameters": {
+          "operation": "lock",
+          "original_query": "lock the screen"
+        }
+      },
+      {
+        "timestamp": "2025-06-19T23:02:52.047585",
+        "type": "system_command",
+        "text": "lock the screen",
+        "parameters": {
+          "operation": "lock",
+          "original_query": "lock the screen"
+        }
+      },
+      {
+        "timestamp": "2025-06-19T23:03:10.292216",
+        "type": "system_command",
+        "text": "lock the computer",
+        "parameters": {
+          "operation": "lock",
+          "original_query": "lock the computer"
+        }
+      },
+      {
+        "timestamp": "2025-06-20T00:56:13.322408",
+        "type": "fan_control",
+        "text": "turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-20T01:09:55.450607",
+        "type": "fan_control",
+        "text": "turn off the fan for home",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-20T02:35:06.992429",
+        "type": "fan_control",
+        "text": "turn on the fan for me",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan for me",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-20T04:05:55.440927",
+        "type": "fan_control",
+        "text": "change the fan speed",
+        "parameters": {
+          "operation": "speed",
+          "original_query": "change the fan speed"
+        }
+      },
+      {
+        "timestamp": "2025-06-20T13:44:22.071855",
+        "type": "provide_information",
+        "text": "Dil aashikana",
+        "parameters": {
+          "original_query": "Dil aashikana",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-20T13:44:51.003979",
+        "type": "provide_information",
+        "text": "Ek Vinod",
+        "parameters": {
+          "query": "Dil aashikana",
+          "original_query": "Dil aashikana"
+        }
+      },
+      {
+        "timestamp": "2025-06-20T14:25:59.981513",
+        "type": "fan_control",
+        "text": "turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-20T14:26:21.713993",
+        "type": "fan_control",
+        "text": "turn on the fan for",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan for me",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-20T14:26:46.817901",
+        "type": "fan_control",
+        "text": "increase the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "increase the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-20T14:57:01.543907",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-20T15:12:17.518859",
+        "type": "fan_control",
+        "text": "turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-20T15:18:50.763664",
+        "type": "provide_information",
+        "text": "thanos",
+        "parameters": {
+          "query": "thanos",
+          "original_query": "thanos",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-20T15:19:10.776434",
+        "type": "fan_control",
+        "text": "no no no no no I said fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-20T15:19:23.654816",
+        "type": "fan_control",
+        "text": "turn off the fan man turn off the",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-20T15:21:03.843671",
+        "type": "fan_control",
+        "text": "can you turn on the fan for",
+        "parameters": {
+          "operation": "on",
+          "original_query": "can you turn on the fan for",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-20T16:02:04.833064",
+        "type": "provide_information",
+        "text": "lower the",
+        "parameters": {
+          "query": "lower the",
+          "original_query": "lower the",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-20T16:02:17.516894",
+        "type": "fan_control",
+        "text": "decrease the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "decrease the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-20T16:02:43.390844",
+        "type": "fan_control",
+        "text": "set the fan speed to maximum",
+        "parameters": {
+          "operation": "maximum_speed",
+          "original_query": "set the fan speed to maximum",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-20T16:02:56.539379",
+        "type": "fan_control",
+        "text": "lower the fan",
+        "parameters": {
+          "operation": "decrease",
+          "original_query": "lower the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-20T16:03:11.972952",
+        "type": "fan_control",
+        "text": "lower the fan",
+        "parameters": {
+          "operation": "decrease",
+          "original_query": "lower the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-20T16:03:30.242668",
+        "type": "fan_control",
+        "text": "decrease the fan",
+        "parameters": {
+          "operation": "lower",
+          "original_query": "decrease the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-20T16:03:47.654099",
+        "type": "fan_control",
+        "text": "increase the fan speed twice",
+        "parameters": {
+          "operation": "increase",
+          "times": 2,
+          "original_query": "increase the fan speed twice",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-20T16:04:09.877110",
+        "type": "fan_control",
+        "text": "decrease the fan",
+        "parameters": {
+          "operation": "lower",
+          "original_query": "decrease the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-20T17:11:15.303656",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-20T17:19:29.970732",
+        "type": "fan_control",
+        "text": "fan on please",
+        "parameters": {
+          "operation": "on",
+          "original_query": "fan on please",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-20T21:59:20.175170",
+        "type": "provide_information",
+        "text": "hello hi how are you",
+        "parameters": {
+          "original_query": "hello hi how are you",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-20T21:59:37.453095",
+        "type": "provide_information",
+        "text": "stop listening",
+        "parameters": {
+          "query": "conversation",
+          "original_query": "user's exact words",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-20T22:01:25.021833",
+        "type": "provide_information",
+        "text": "what is the btc price",
+        "parameters": {
+          "query": "BTC price",
+          "original_query": "what is the BTC price"
+        }
+      },
+      {
+        "timestamp": "2025-06-21T16:11:29.019859",
+        "type": "provide_information",
+        "text": "makeup",
+        "parameters": {
+          "query": "makeup",
+          "original_query": "makeup",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-21T18:30:29.520386",
+        "type": "fan_control",
+        "text": "turn the fan off",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn the fan off",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-21T20:14:58.479123",
+        "type": "fan_control",
+        "text": "turn the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn the fan off"
+        }
+      },
+      {
+        "timestamp": "2025-06-21T21:57:20.211655",
+        "type": "fan_control",
+        "text": "turn off the fan for me",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan"
+        }
+      },
+      {
+        "timestamp": "2025-06-22T17:30:41.763882",
+        "type": "provide_information",
+        "text": "Hibernate the",
+        "parameters": {
+          "query": "Hibernate the computer",
+          "original_query": "Hibernate the",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-22T21:10:26.064594",
+        "type": "fan_control",
+        "text": "turn on the",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-22T21:22:22.539647",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan"
+        }
+      },
+      {
+        "timestamp": "2025-06-23T18:26:47.647711",
+        "type": "fan_control",
+        "text": "turn on the fan for me",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan for me",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-23T18:28:04.959997",
+        "type": "app_control",
+        "text": "open the chrome for me",
+        "parameters": {
+          "app_name": "chrome",
+          "operation": "launch",
+          "original_query": "open chrome"
+        }
+      },
+      {
+        "timestamp": "2025-06-23T22:57:31.514150",
+        "type": "provide_information",
+        "text": "turn on the",
+        "parameters": {
+          "original_query": "turn on the",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-23T22:57:47.778506",
+        "type": "fan_control",
+        "text": "turn the fan on",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn the fan on"
+        }
+      },
+      {
+        "timestamp": "2025-06-24T23:35:36.933884",
+        "type": "fan_control",
+        "text": "turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan"
+        }
+      },
+      {
+        "timestamp": "2025-06-25T21:05:23.133810",
+        "type": "fan_control",
+        "text": "turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-25T21:07:15.612134",
+        "type": "app_control",
+        "text": "can you open watchdog",
+        "parameters": {
+          "app_name": "watchdog",
+          "operation": "launch",
+          "original_query": "open watchdog"
+        }
+      },
+      {
+        "timestamp": "2025-06-28T13:49:47.075335",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-28T13:50:55.052356",
+        "type": "fan_control",
+        "text": "turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-28T13:51:06.091164",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-28T13:59:43.478494",
+        "type": "fan_control",
+        "text": "turn on the",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-28T14:29:03.953956",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-28T16:31:12.411191",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-28T18:09:07.462048",
+        "type": "fan_control",
+        "text": "turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-29T00:13:54.366251",
+        "type": "app_control",
+        "text": "open speed Gate",
+        "parameters": {
+          "app_name": "SpeedGate",
+          "operation": "launch",
+          "original_query": "open SpeedGate"
+        }
+      },
+      {
+        "timestamp": "2025-06-29T16:30:17.380759",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-29T18:01:00.575253",
+        "type": "fan_control",
+        "text": "turn on the",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-29T20:33:32.799191",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-30T18:04:38.924316",
+        "type": "fan_control",
+        "text": "turn off the fan for",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-30T18:05:17.428566",
+        "type": "fan_control",
+        "text": "turn off the",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-06-30T21:51:12.901711",
+        "type": "app_control",
+        "text": "turn on the",
+        "parameters": {
+          "app_name": "",
+          "operation": "",
+          "original_query": "turn on the"
+        }
+      },
+      {
+        "timestamp": "2025-06-30T21:51:45.183700",
+        "type": "fan_control",
+        "text": "turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan"
+        }
+      },
+      {
+        "timestamp": "2025-07-01T13:38:07.827094",
+        "type": "fan_control",
+        "text": "can you turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "can you turn on the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-01T14:27:13.083598",
+        "type": "fan_control",
+        "text": "turn off the fan for me",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-01T14:27:30.454813",
+        "type": "fan_control",
+        "text": "turn the fan back",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn the fan back",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-01T14:27:47.186997",
+        "type": "fan_control",
+        "text": "change the fan",
+        "parameters": {
+          "operation": "change",
+          "original_query": "change the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-01T14:28:02.939292",
+        "type": "fan_control",
+        "text": "change the fan setting to hai",
+        "parameters": {
+          "operation": "setting",
+          "value": "hai",
+          "original_query": "change the fan setting to hai",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-01T14:28:17.410369",
+        "type": "fan_control",
+        "text": "increase the fan speed",
+        "parameters": {
+          "operation": "speed_up",
+          "original_query": "increase the fan speed",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-01T14:28:34.756712",
+        "type": "app_control",
+        "text": "open the chrome for me",
+        "parameters": {
+          "app_name": "chrome",
+          "operation": "launch",
+          "original_query": "open chrome"
+        }
+      },
+      {
+        "timestamp": "2025-07-01T15:15:01.061988",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-01T18:49:32.360145",
+        "type": "fan_control",
+        "text": "turn on the fan for me",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-01T21:20:49.087180",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-01T22:35:04.495776",
+        "type": "fan_control",
+        "text": "turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-02T02:48:53.185190",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off fan"
+        }
+      },
+      {
+        "timestamp": "2025-07-02T16:54:08.977981",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-02T16:54:45.657437",
+        "type": "fan_control",
+        "text": "turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-02T16:55:06.904314",
+        "type": "fan_control",
+        "text": "increase the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "increase the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-02T16:55:22.454068",
+        "type": "fan_control",
+        "text": "change the fan mode",
+        "parameters": {
+          "operation": "mode_change",
+          "original_query": "change the fan mode",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-02T16:55:39.615551",
+        "type": "fan_control",
+        "text": "change the fan",
+        "parameters": {
+          "operation": "change",
+          "original_query": "change the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-02T16:55:55.284327",
+        "type": "fan_control",
+        "text": "change the fan mode to",
+        "parameters": {
+          "operation": "mode_change",
+          "original_query": "change the fan mode to",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-02T16:58:00.274110",
+        "type": "provide_information",
+        "text": "open speed Gate to form",
+        "parameters": {
+          "query": "open speed Gate to form",
+          "original_query": "open speed Gate to form",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-02T16:58:17.777707",
+        "type": "provide_information",
+        "text": "open speed Gate",
+        "parameters": {
+          "query": "open speed Gate",
+          "original_query": "open speed Gate",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-02T16:58:34.783009",
+        "type": "app_control",
+        "text": "open the split Gate game in ste",
+        "parameters": {
+          "app_name": "split gate game",
+          "operation": "open",
+          "original_query": "open the split Gate game in ste"
+        }
+      },
+      {
+        "timestamp": "2025-07-02T16:58:56.334956",
+        "type": "app_control",
+        "text": "open Chrome for me",
+        "parameters": {
+          "app_name": "Chrome",
+          "operation": "launch",
+          "original_query": "open Chrome"
+        }
+      },
+      {
+        "timestamp": "2025-07-02T16:59:12.644281",
+        "type": "system_command",
+        "text": "when at the system in 10 minutes",
+        "parameters": {
+          "operation": "shutdown",
+          "time": "10 minutes",
+          "original_query": "when at the system in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-07-02T22:24:50.842825",
+        "type": "fan_control",
+        "text": "turn on the fan for",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on fan"
+        }
+      },
+      {
+        "timestamp": "2025-07-02T23:51:13.355220",
+        "type": "fan_control",
+        "text": "turn on the fan show me",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan show me"
+        }
+      },
+      {
+        "timestamp": "2025-07-03T14:56:58.109490",
+        "type": "fan_control",
+        "text": "turn on the fan for",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan for",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-03T14:57:45.316381",
+        "type": "provide_information",
+        "text": "what is the fan",
+        "parameters": {
+          "query": "what is the fan",
+          "original_query": "what is the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-03T14:58:03.544789",
+        "type": "fan_control",
+        "text": "increase the fan",
+        "parameters": {
+          "operation": "increase",
+          "original_query": "increase the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-03T14:58:18.945028",
+        "type": "fan_control",
+        "text": "increase the fan speed",
+        "parameters": {
+          "operation": "increase",
+          "original_query": "increase the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-03T14:58:35.814947",
+        "type": "change_settings",
+        "text": "change the panel mode",
+        "parameters": {
+          "setting": "panel mode",
+          "original_query": "change the panel mode"
+        }
+      },
+      {
+        "timestamp": "2025-07-03T14:59:32.123498",
+        "type": "fan_control",
+        "text": "change the fan mode",
+        "parameters": {
+          "operation": "change",
+          "original_query": "change the fan mode",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-03T14:59:53.609722",
+        "type": "fan_control",
+        "text": "increase the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "increase the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-03T15:00:12.116822",
+        "type": "app_control",
+        "text": "open the chrome for",
+        "parameters": {
+          "app_name": "chrome",
+          "operation": "launch",
+          "original_query": "open the chrome"
+        }
+      },
+      {
+        "timestamp": "2025-07-03T19:02:29.116903",
+        "type": "fan_control",
+        "text": "turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-03T20:27:19.540621",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-03T21:24:42.252460",
+        "type": "fan_control",
+        "text": "turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-03T21:25:15.422291",
+        "type": "app_control",
+        "text": "open YouTube",
+        "parameters": {
+          "app_name": "YouTube",
+          "operation": "launch",
+          "original_query": "open YouTube"
+        }
+      },
+      {
+        "timestamp": "2025-07-04T00:03:32.208371",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-04T01:47:07.381192",
+        "type": "fan_control",
+        "text": "turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan"
+        }
+      },
+      {
+        "timestamp": "2025-07-04T12:17:31.757445",
+        "type": "provide_information",
+        "text": "hey how are you",
+        "parameters": {
+          "query": "conversation",
+          "original_query": "hey how are you"
+        }
+      },
+      {
+        "timestamp": "2025-07-04T14:32:47.916079",
+        "type": "provide_information",
+        "text": "how are you",
+        "parameters": {
+          "query": "how are you",
+          "original_query": "hey how are you"
+        }
+      },
+      {
+        "timestamp": "2025-07-04T14:57:54.228879",
+        "type": "provide_information",
+        "text": "hey how",
+        "parameters": {
+          "original_query": "hey how",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-04T14:58:07.130479",
+        "type": "provide_information",
+        "text": "turn off the",
+        "parameters": {
+          "original_query": "turn off the",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-04T14:58:21.787813",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-04T14:58:42.248451",
+        "type": "provide_information",
+        "text": "turn on the",
+        "parameters": {
+          "query": "how are you",
+          "original_query": "how are you",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-04T14:58:55.304430",
+        "type": "fan_control",
+        "text": "turn on the",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-04T14:59:16.333326",
+        "type": "provide_information",
+        "text": "what is the time now",
+        "parameters": {
+          "query": "what is the time now",
+          "original_query": "what is the time now"
+        }
+      },
+      {
+        "timestamp": "2025-07-04T14:59:31.920131",
+        "type": "provide_information",
+        "text": "thank you EX",
+        "parameters": {
+          "original_query": "thank you EX"
+        }
+      },
+      {
+        "timestamp": "2025-07-04T15:22:10.854968",
+        "type": "provide_information",
+        "text": "shutdown the computer in",
+        "parameters": {
+          "original_query": "shutdown the computer in",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-04T15:22:23.961358",
+        "type": "provide_information",
+        "text": "shutdown the computer in",
+        "parameters": {
+          "original_query": "shutdown the computer in",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-04T15:22:39.716407",
+        "type": "provide_information",
+        "text": "hybrid system in",
+        "parameters": {
+          "query": "hybrid system in",
+          "original_query": "hybrid system in",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-04T15:23:13.314321",
+        "type": "system_command",
+        "text": "hybrid the PC in 10",
+        "parameters": {
+          "operation": "shutdown",
+          "time": "10",
+          "original_query": "hybrid the PC in 10"
+        }
+      },
+      {
+        "timestamp": "2025-07-04T15:23:54.777271",
+        "type": "provide_information",
+        "text": "hey",
+        "parameters": {
+          "original_query": "hey",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-04T15:24:26.944995",
+        "type": "provide_information",
+        "text": "Hibernate the system in",
+        "parameters": {
+          "original_query": "Hibernate the system in",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-04T15:24:41.116929",
+        "type": "provide_information",
+        "text": "shutdown the computer in",
+        "parameters": {
+          "original_query": "shutdown the computer in",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-04T15:24:53.781895",
+        "type": "provide_information",
+        "text": "thank you",
+        "parameters": {
+          "original_query": "thank you"
+        }
+      },
+      {
+        "timestamp": "2025-07-04T15:42:13.820017",
+        "type": "fan_control",
+        "text": "turn off the fan for",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan for",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-04T15:42:46.822812",
+        "type": "system_command",
+        "text": "lock the computer",
+        "parameters": {
+          "operation": "lock",
+          "original_query": "lock the computer"
+        }
+      },
+      {
+        "timestamp": "2025-07-04T15:43:08.581728",
+        "type": "system_command",
+        "text": "shutdown the computer in",
+        "parameters": {
+          "operation": "shutdown",
+          "original_query": "shutdown the computer in"
+        }
+      },
+      {
+        "timestamp": "2025-07-04T15:43:29.012643",
+        "type": "system_command",
+        "text": "shutdown the computer in 10 minutes",
+        "parameters": {
+          "operation": "shutdown",
+          "time": "10",
+          "original_query": "shutdown the computer in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-07-04T15:44:54.333576",
+        "type": "system_command",
+        "text": "shutdown the computer",
+        "parameters": {
+          "operation": "shutdown",
+          "original_query": "shutdown computer"
+        }
+      },
+      {
+        "timestamp": "2025-07-04T15:52:43.697978",
+        "type": "provide_information",
+        "text": "hello how are you",
+        "parameters": {
+          "original_query": "hello how are you",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-04T15:52:58.425125",
+        "type": "provide_information",
+        "text": "thank you stop",
+        "parameters": {
+          "original_query": "thank you stop",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-04T15:53:30.041927",
+        "type": "system_command",
+        "text": "can you shut down the computer in 10 minutes",
+        "parameters": {
+          "operation": "shutdown",
+          "time": "10",
+          "original_query": "shutdown in 10 minutes"
+        }
+      },
+      {
+        "timestamp": "2025-07-04T15:53:56.916911",
+        "type": "system_command",
+        "text": "can you stop the shutdown",
+        "parameters": {
+          "operation": "abort",
+          "original_query": "can you stop the shutdown"
+        }
       }
     ],
     "last_commands": [
-      "10 minutes",
-      "automobile name",
-      "tubeless hibernate in 10 minutes",
-      "scheduler shutdown in 10",
-      "shutdown in 5 minutes",
-      "scheduler Hibernate in 5 minutes",
-      "scheduler shutdown in",
-      "shutdown in 5 minutes",
-      "cancel the scheduled",
-      "turn on the fan for"
+      "thank you",
+      "turn off the fan for",
+      "lock the computer",
+      "shutdown the computer in",
+      "shutdown the computer in 10 minutes",
+      "shutdown the computer",
+      "hello how are you",
+      "thank you stop",
+      "can you shut down the computer in 10 minutes",
+      "can you stop the shutdown"
     ],
-    "total_commands": 481,
+    "total_commands": 635,
     "total_sessions": 77
   },
   "patterns": {

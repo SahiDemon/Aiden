@@ -1,9 +1,9 @@
 .verification-prompt-container {
     background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
-    border: 1px solid #4c82f7;
+    border: 2px solid #f87171;
     border-radius: 12px;
-    padding: 24px;
-    box-shadow: 0 8px 32px rgba(76, 130, 247, 0.2);
+    padding: 20px;
+    box-shadow: 0 8px 32px rgba(248, 113, 113, 0.3);
     margin-bottom: 16px;
     width: 100%;
     animation: fadeInBounce 0.5s ease-out;
@@ -18,7 +18,7 @@
     left: 0;
     right: 0;
     height: 3px;
-    background: linear-gradient(90deg, #4c82f7, #3b82f6, #2563eb, #3b82f6, #4c82f7);
+    background: linear-gradient(90deg, #f87171, #ef4444, #dc2626, #ef4444, #f87171);
     animation: glow 2s ease-in-out infinite alternate;
 }
 
@@ -38,19 +38,19 @@
 }
 
 @keyframes glow {
-    from { box-shadow: 0 0 10px rgba(76, 130, 247, 0.5); }
-    to { box-shadow: 0 0 20px rgba(76, 130, 247, 0.8); }
+    from { box-shadow: 0 0 10px rgba(248, 113, 113, 0.5); }
+    to { box-shadow: 0 0 20px rgba(248, 113, 113, 0.8); }
 }
 
 .verification-header {
-    border-bottom: 2px solid #4c82f7;
+    border-bottom: 2px solid #f87171;
     padding-bottom: 16px;
     margin-bottom: 16px;
     display: flex;
     align-items: center;
-    background: rgba(76, 130, 247, 0.1);
-    margin: -24px -24px 16px -24px;
-    padding: 16px 24px;
+    background: rgba(248, 113, 113, 0.1);
+    margin: -20px -20px 16px -20px;
+    padding: 16px 20px;
     border-radius: 12px 12px 0 0;
 }
 
@@ -81,7 +81,7 @@
     padding: 16px;
     background: rgba(255, 255, 255, 0.05);
     border-radius: 8px;
-    border-left: 4px solid #4c82f7;
+    border-left: 4px solid #f87171;
 }
 
 .verification-message p {

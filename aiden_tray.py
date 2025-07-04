@@ -41,44 +41,43 @@ from src.dashboard_backend import AidenDashboardBackend
 
 class AidenTrayApp:
     def __init__(self):
-        self.running = False
-        self.dashboard_backend = None
-        self.dashboard_thread = None
-        self.hotkey_listener = None
-        self.initialization_complete = False
+        """Initialize the Aiden tray application"""
+        print("Initializing Aiden components...")
         
-        try:
-            print("Initializing Aiden components...")
-            self.config_manager = ConfigManager()
-            self.voice_system = VoiceSystem(self.config_manager)
-            logging.getLogger().setLevel(logging.WARNING)
-            print("Aiden components initialized successfully")
-            self.initialization_complete = True
-        except Exception as e:
-            print(f"Error initializing: {e}")
-            self.initialization_complete = False
+        # Initialize core components first
+        self.config_manager = ConfigManager()
+        self.voice_system = VoiceSystem(self.config_manager)
+        
+        # Dashboard and hotkey components (will be initialized when needed)
+        self.dashboard_backend = None
+        self.hotkey_listener = None
+        self.dashboard_thread = None
+        
+        # State flags
+        self.running = False
+        self.initialization_complete = True  # Mark as complete immediately for faster startup
+        
+        print("Aiden components initialized successfully")
     
     def create_icon_image(self):
-        width = 64
-        height = 64
-        image = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+        """Create a system tray icon"""
+        # Create a simple blue circle icon
+        size = (64, 64)
+        image = Image.new('RGBA', size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(image)
         
-        margin = 4
-        draw.ellipse(
-            [margin, margin, width-margin, height-margin], 
-            fill=(0, 120, 255, 255),
-            outline=(255, 255, 255, 255),
-            width=2
-        )
+        # Draw a blue circle
+        margin = 8
+        draw.ellipse([margin, margin, size[0]-margin, size[1]-margin], 
+                    fill=(70, 130, 180, 255), outline=(25, 25, 112, 255), width=3)
         
-        text_x = width // 2 - 10
-        text_y = height // 2 - 8
-        draw.text((text_x, text_y), "AI", fill=(255, 255, 255, 255))
+        # Draw "A" in the center
+        draw.text((size[0]//2-8, size[1]//2-12), "A", fill=(255, 255, 255, 255))
         
         return image
     
     def start_dashboard(self):
+        """Start the Aiden dashboard - optimized for faster startup"""
         if self.dashboard_backend is None:
             try:
                 print("Starting Aiden dashboard...")
@@ -94,10 +93,11 @@ class AidenTrayApp:
                 self.dashboard_thread.daemon = True
                 self.dashboard_thread.start()
                 
-                time.sleep(2)
+                # Reduced wait time for faster startup
+                time.sleep(1)
                 print("Dashboard started successfully")
                 
-                # Start the hotkey listener after dashboard is ready
+                # Start the hotkey listener immediately after dashboard
                 self.start_hotkey_listener()
                 
             except Exception as e:

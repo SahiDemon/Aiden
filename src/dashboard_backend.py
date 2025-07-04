@@ -819,8 +819,8 @@ class AidenDashboardBackend:
                     'status': 'listening'
                 })
                 
-                # Listen for voice input
-                success, text, error = self.stt_system.listen()
+                # Listen for voice input (pass hotkey listener to avoid conflicts)
+                success, text, error = self.stt_system.listen(self.hotkey_listener)
                 
                 if success and text:
                     # Update status to processing
@@ -838,7 +838,7 @@ class AidenDashboardBackend:
                     text_lower = text.lower().strip()
                     
                     # Only end conversation for explicit exit commands
-                    if any(phrase in text_lower for phrase in ["bye", "goodbye", "stop", "exit", "quit", "end conversation", "stop conversation"]):
+                    if any(phrase in text_lower for phrase in ["bye", "goodbye", "stop", "exit", "quit", "end conversation", "stop conversation", "thank you", "thanks"]):
                         print(f"Ending conversation due to exit command: {text}")
                         self.conversation_active = False
                         break
@@ -925,8 +925,8 @@ class AidenDashboardBackend:
                     'status': 'listening'
                 })
                 
-                # Listen for voice input
-                success, text, error = self.stt_system.listen()
+                # Listen for voice input (pass hotkey listener to avoid conflicts)
+                success, text, error = self.stt_system.listen(self.hotkey_listener)
                 
                 if success and text:
                     # Update status to processing
@@ -1223,7 +1223,7 @@ class AidenDashboardBackend:
             "hi", "hello", "hey", "good morning", "good afternoon", "good evening",
             "how are you", "how r u", "how's it going", "what's up", "thanks", "thank you", 
             "no thanks", "nope", "ok", "okay", "fine", "good", "great", "alright", 
-            "sure", "yes", "yeah", "yep", "bye", "goodbye", "stop", "exit", "quit"
+            "sure", "yes", "yeah", "yep", "bye", "goodbye", "stop", "exit", "quit", "thank you", "thanks"
         ]
         
         for simple in simple_responses:

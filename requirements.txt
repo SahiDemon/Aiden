@@ -6,6 +6,11 @@ pyttsx3>=2.90  # As fallback TTS
 requests>=2.31.0  # For API calls
 pyaudio>=0.2.13  # For microphone input
 
+# Google Cloud dependencies
+google-cloud-texttospeech>=2.16.0  # For Google TTS
+google-cloud-speech>=2.21.0  # For Google Speech Recognition
+google-auth>=2.22.0  # For Google authentication
+
 # Audio playback - options (uncomment one)
 # Option 1: playsound version that works with Python 3.9-3.10
 # playsound==1.2.2
@@ -24,3 +29,11 @@ selenium>=4.10.0  # For browser automation
 
 # Optional: Local LLM integration
 # llama-cpp-python>=0.2.19
+
+# Dashboard dependencies
+flask>=2.3.0  # For web dashboard backend
+flask-socketio>=5.3.0  # For real-time communication
+flask-cors>=4.0.0  # For cross-origin requests
+
+# Additional audio processing
+numpy>=1.24.0  # For audio processing and sound generation
