@@ -1121,13 +1121,13 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
                         self.voice_system.speak(f"Command cancelled, {form_of_address}.")
                         if self.dashboard_backend:
                             self.dashboard_backend._emit_ai_message("Command cancelled.", "response")
-                        return True
-            
+                    return True
+                    
             elif action == "request_time_specification":
                 # Handle incomplete schedule request - ask for time using system dialog
                 operation = result.get("operation")
                 form_of_address = self.config_manager.get_user_profile()["personal"]["form_of_address"]
-                
+                    
                 action_phrases = {
                     "shutdown": "shut down",
                     "restart": "restart", 
@@ -1137,7 +1137,7 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
                 }
                 
                 action = action_phrases.get(operation, operation)
-                
+                    
                 # Use system dialog to ask for time specification
                 if platform.system() == "Windows" and TKINTER_AVAILABLE:
                     try:
@@ -1199,8 +1199,8 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
                         logging.error(f"Error showing time input dialog: {e}")
                         # Fallback to voice prompt
                         self.voice_system.speak(f"Please say the time for the {operation}, {form_of_address}. For example, '10 minutes' or '1 hour'.")
-                        return True
-                        
+                    return True
+            
                 else:
                     # For non-Windows, use console input
                     print(f"\nSchedule {action} the computer")
@@ -2402,4 +2402,4 @@ Created on: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
             self.voice_system.speak(error_msg)
             if self.dashboard_backend:
                 self.dashboard_backend._emit_ai_message(error_msg, "error")
-            return False
+        return False

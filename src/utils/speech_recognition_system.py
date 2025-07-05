@@ -132,7 +132,7 @@ class SpeechRecognitionSystem:
         
         Args:
             hotkey_listener: Optional hotkey listener to temporarily pause during listening
-            
+        
         Returns:
             Tuple containing:
                 - Success status (bool)
@@ -254,50 +254,50 @@ class SpeechRecognitionSystem:
                         else:
                             return False, None, f"Microphone access error: {error_type} - {error_message}"
                 
-                    # Attempt to recognize speech
-                    print("Processing speech...")
+                # Attempt to recognize speech
+                print("Processing speech...")
+                
+                # Use try/except for each recognition attempt
+                try:
+                    engine = self.stt_config.get("engine", "google")
                     
-                    # Use try/except for each recognition attempt
-                    try:
-                        engine = self.stt_config.get("engine", "google")
-                        
-                        if engine == "google":
-                            text = self.recognizer.recognize_google(audio, language=self.language)
-                        elif engine == "sphinx":
-                            text = self.recognizer.recognize_sphinx(audio, language=self.language)
-                        elif engine == "whisper":
-                            text = self.recognizer.recognize_whisper(audio, language=self.language)
-                        else:
-                            # Default to Google
-                            text = self.recognizer.recognize_google(audio, language=self.language)
-                        
-                        if text:
-                            success = True
-                            logging.info(f"Recognized: {text}")
-                            print(f"Recognized: \"{text}\"")
-                        else:
-                            error = "I didn't hear anything. Please try speaking again."
-                            logging.warning("Empty recognition result")
-                            print("Empty recognition result")
-                    except sr.UnknownValueError:
-                        error = "I couldn't understand that. Please try speaking more clearly."
-                        logging.warning("Speech not understood")
-                        print("Speech not understood - Could not recognize what was said.")
-                    except sr.RequestError as e:
-                        error = f"Network issue with speech service: {str(e)}"
-                        logging.error(f"Speech recognition request error: {e}")
-                        print(f"Network error with speech recognition service: {e}")
-                    except Exception as recog_error:
-                        error_msg = str(recog_error)
-                        logging.error(f"Recognition engine error: {error_msg}")
-                        print(f"Recognition engine error: {error_msg}")
-                        error = f"Speech recognition failed: {error_msg or 'Unknown error'}"
-                        
+                    if engine == "google":
+                        text = self.recognizer.recognize_google(audio, language=self.language)
+                    elif engine == "sphinx":
+                        text = self.recognizer.recognize_sphinx(audio, language=self.language)
+                    elif engine == "whisper":
+                        text = self.recognizer.recognize_whisper(audio, language=self.language)
+                    else:
+                        # Default to Google
+                        text = self.recognizer.recognize_google(audio, language=self.language)
+                    
+                    if text:
+                        success = True
+                        logging.info(f"Recognized: {text}")
+                        print(f"Recognized: \"{text}\"")
+                    else:
+                        error = "I didn't hear anything. Please try speaking again."
+                        logging.warning("Empty recognition result")
+                        print("Empty recognition result")
+                except sr.UnknownValueError:
+                    error = "I couldn't understand that. Please try speaking more clearly."
+                    logging.warning("Speech not understood")
+                    print("Speech not understood - Could not recognize what was said.")
+                except sr.RequestError as e:
+                    error = f"Network issue with speech service: {str(e)}"
+                    logging.error(f"Speech recognition request error: {e}")
+                    print(f"Network error with speech recognition service: {e}")
+                except Exception as recog_error:
+                    error_msg = str(recog_error)
+                    logging.error(f"Recognition engine error: {error_msg}")
+                    print(f"Recognition engine error: {error_msg}")
+                    error = f"Speech recognition failed: {error_msg or 'Unknown error'}"
+                    
             except Exception as mic_error:
                 logging.error(f"Microphone context error: {mic_error}")
                 print(f"Microphone context error: {mic_error}")
                 return False, None, f"Microphone context error: {str(mic_error)}"
-                    
+            
         except Exception as e:
             # Capture and log the full traceback for better debugging
             tb = traceback.format_exc()

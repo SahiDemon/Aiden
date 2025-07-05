@@ -1,10 +1,13 @@
 @echo off
 cd /d "G:\GitHub\Aiden"
-rem Try local Python installation first
-if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" (
-    start /min "" "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" aiden_tray.py
+
+rem Use Python from virtual environment if available
+if exist ".venv\Scripts\python.exe" (
+    echo Using Python from virtual environment...
+    start /min "" ".venv\Scripts\python.exe" aiden_tray.py
 ) else (
-    rem Fallback to system Python
+    echo Virtual environment not found, using system Python...
     start /min "" python aiden_tray.py
 )
+
 exit 

@@ -313,3 +313,4 @@ class EfficientWakeWordDetector:
             "optimized": True,
             "library": "Efficient SpeechRecognition"
         }
+ 

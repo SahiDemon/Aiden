@@ -6047,21 +6047,69 @@
           "process": "python",
           "original_query": "close pyth"
         }
+      },
+      {
+        "timestamp": "2025-07-05T12:17:03.624811",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-05T12:19:14.198896",
+        "type": "system_command",
+        "text": "lock the computer",
+        "parameters": {
+          "operation": "lock",
+          "original_query": "lock the computer"
+        }
+      },
+      {
+        "timestamp": "2025-07-05T12:53:44.850542",
+        "type": "fan_control",
+        "text": "turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-05T15:15:28.401094",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-07-05T15:40:06.299676",
+        "type": "fan_control",
+        "text": "turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan"
+        }
       }
     ],
     "last_commands": [
-      "can you close CMD",
-      "close the Notepad for me",
-      "can you close WhatsApp",
-      "thank",
-      "can you open the chrome",
       "thank you",
       "thank",
       "close python",
       "kill python process",
-      "close pyth"
+      "close pyth",
+      "turn off the fan",
+      "lock the computer",
+      "turn on the fan",
+      "turn off the fan",
+      "turn on the fan"
     ],
-    "total_commands": 657,
+    "total_commands": 662,
     "total_sessions": 77
   },
   "patterns": {

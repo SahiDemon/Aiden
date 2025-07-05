@@ -27,7 +27,7 @@ except ImportError:
     logging.warning("pyttsx3 not available")
 
 # Google TTS removed - not available in current setup
-GOOGLE_TTS_AVAILABLE = False
+    GOOGLE_TTS_AVAILABLE = False
 
 # Try pygame for audio playback (preferred over playsound for newer Python versions)
 try:
