@@ -51,7 +51,7 @@ class VoskWakeWordDetector:
         # Wake word configuration
         self.wake_word = "aiden"
         self.wake_word_alternatives = [
-            "aiden", "hayden", "aidan"
+            "aiden", "eden", "hayden", "aidan", "aden"
         ]
         self.is_listening = False
         self.should_stop = False

@@ -842,8 +842,16 @@ class AidenDashboardBackend:
                     'status': 'listening'
                 })
                 
+                # Release microphone from Vosk for speech recognition
+                if self.wake_word_detector and hasattr(self.wake_word_detector, 'pause_with_microphone_release'):
+                    self.wake_word_detector.pause_with_microphone_release()
+                
                 # Listen for voice input (pass hotkey listener to avoid conflicts)
                 success, text, error = self.stt_system.listen(self.hotkey_listener)
+                
+                # Resume Vosk after speech recognition (regardless of success/failure)
+                if self.wake_word_detector:
+                    self.wake_word_detector.resume_listening()
                 
                 if success and text:
                     # Update status to processing
@@ -854,9 +862,7 @@ class AidenDashboardBackend:
                         'status': 'processing'
                     })
                     
-                    # Pause wake word detection while processing and responding
-                    if self.wake_word_detector:
-                        self.wake_word_detector.pause_listening()
+                    # Wake word detection already paused for speech recognition - no need to pause again
                     
                     # Process the voice command
                     self._process_voice_message(text)
@@ -864,9 +870,7 @@ class AidenDashboardBackend:
                     # Exit detection now handled in _process_message_common before processing
                     # If we reach here, the conversation should continue normally
                     
-                    # Resume wake word detection after processing
-                    if self.wake_word_detector:
-                        self.wake_word_detector.resume_listening()
+                    # Wake word detection automatically resumed after speech recognition
                     
                     # For all other responses, continue the conversation normally
                     # Only ask follow-up for substantial commands that need clarification
@@ -954,8 +958,16 @@ class AidenDashboardBackend:
                     'status': 'listening'
                 })
                 
+                # Release microphone from Vosk for speech recognition
+                if self.wake_word_detector and hasattr(self.wake_word_detector, 'pause_with_microphone_release'):
+                    self.wake_word_detector.pause_with_microphone_release()
+                
                 # Listen for voice input (pass hotkey listener to avoid conflicts)
                 success, text, error = self.stt_system.listen(self.hotkey_listener)
+                
+                # Resume Vosk after speech recognition (regardless of success/failure)
+                if self.wake_word_detector:
+                    self.wake_word_detector.resume_listening()
                 
                 if success and text:
                     # Update status to processing
@@ -966,9 +978,7 @@ class AidenDashboardBackend:
                         'status': 'processing'
                     })
                     
-                    # Pause wake word detection while processing and responding
-                    if self.wake_word_detector:
-                        self.wake_word_detector.pause_listening()
+                    # Wake word detection already paused for speech recognition - no need to pause again
                     
                     # Set a flag to pause listening for verification if needed
                     waiting_for_verification = False
@@ -1110,21 +1120,7 @@ class AidenDashboardBackend:
             self.current_conversation.append(user_message)
             self._emit_user_message(text, user_message['input_type'])
             
-            # SPECIAL HANDLING: Check for verification responses FIRST
-            # This ensures that "yes", "no", etc. are properly handled in context
-            if self._is_verification_response(text):
-                print(f"Detected verification response: '{text}'")
-                # Process as verification response through command dispatcher
-                handled = self.command_dispatcher._handle_pending_verifications(text)
-                if handled:
-                    print("Verification response successfully handled")
-                    # Check if we should end conversation based on mode
-                    if hasattr(self, 'hotkey_mode') and self.hotkey_mode:
-                        print("HOTKEY MODE: Verification completed, ending conversation")
-                        self.conversation_active = False
-                    return
-                else:
-                    print("Verification response not handled, continuing as normal command")
+            # Verification system removed - all commands execute directly
             
             # FIRST: Check for pending actions that need to be continued
             if self.pending_action:
@@ -1146,6 +1142,22 @@ class AidenDashboardBackend:
             
             # Process as new command
             command = self.llm_connector.process_command(text)
+            
+            # DEBUG: Log what we got from LLM
+            print(f"🔍 DASHBOARD: LLM returned command type: {type(command)}")
+            if command is None:
+                print(f"🔍 DASHBOARD: ERROR - LLM returned None!")
+                return
+            
+            print(f"🔍 DASHBOARD: Command keys: {list(command.keys()) if isinstance(command, dict) else 'NOT A DICT'}")
+            
+            if command.get("compound_command"):
+                print(f"🔍 DASHBOARD: LLM returned compound command with {len(command.get('actions', []))} actions")
+            else:
+                print(f"🔍 DASHBOARD: LLM returned single action: {command.get('action', 'NO ACTION')}")
+            
+            # Store AI response before any modifications
+            ai_response = command.get("response", "Processing your request...")
             
             # Handle end_conversation action specially
             if command.get("action") == "end_conversation":
@@ -1179,7 +1191,6 @@ class AidenDashboardBackend:
             # Always emit AI response for regular conversations, but let specific handlers manage their own responses
             if not is_system_info_query and not is_project_listing_query:
                 # Get AI response and emit it
-                ai_response = command.get("response", "Processing your request...")
                 self._emit_ai_message(ai_response, "response")
                 
                 # Update status to speaking for AI response
@@ -1214,6 +1225,11 @@ class AidenDashboardBackend:
                         command.get("parameters", {})["_prevent_speech"] = True
             
             # Execute the command
+            print(f"🔍 DASHBOARD: Dispatching command: {command}")
+            if command.get("compound_command"):
+                print(f"🔍 DASHBOARD: This IS a compound command with {len(command.get('actions', []))} actions")
+            else:
+                print(f"🔍 DASHBOARD: This is NOT a compound command")
             result = self.command_dispatcher.dispatch(command)
             
             # DISABLED: Add proactive suggestions after command execution
@@ -1519,8 +1535,37 @@ class AidenDashboardBackend:
         """
         text_lower = text.lower().strip()
         
+        # DEBUG: Add logging to trace verification detection
+        print(f"🔍 VERIFICATION CHECK: '{text}' (length: {len(text_lower)})")
+        
+        # IMPORTANT: Don't treat compound commands as verification responses
+        # Check for compound command indicators first
+        compound_indicators = [
+            " and ", " then ", " also ", " plus ", ",", " & ", " after "
+        ]
+        
+        # If it contains compound indicators, it's NOT a verification response
+        for indicator in compound_indicators:
+            if indicator in text_lower:
+                print(f"🔍 VERIFICATION: REJECTED - Contains compound indicator '{indicator}'")
+                return False
+        
+        # Don't treat commands with "open", "launch", "start", etc. as verification
+        command_verbs = [
+            "open ", "launch ", "start ", "run ", "execute ", "close ", "shut down",
+            "restart ", "lock ", "turn on", "turn off", "search ", "find ",
+            "create ", "delete ", "move ", "copy "
+        ]
+        
+        # If it contains command verbs, it's NOT a verification response
+        for verb in command_verbs:
+            if verb in text_lower:
+                print(f"🔍 VERIFICATION: REJECTED - Contains command verb '{verb}'")
+                return False
+        
+        # Now check for actual verification keywords (but be more specific)
         verification_keywords = [
-            # Positive responses
+            # Positive responses (exact matches or short phrases)
             "yes", "confirm", "ok", "okay", "proceed", "do it", "go ahead", 
             "execute", "run it", "sure", "yep", "yeah", "affirmative", 
             "correct", "right", "that's right", "approve",
@@ -1533,7 +1578,30 @@ class AidenDashboardBackend:
             "change to", "make it", "modify"
         ]
         
-        return any(keyword in text_lower for keyword in verification_keywords)
+        # For verification, the text should be relatively short and focused
+        # Long commands are almost never verification responses
+        if len(text_lower) > 50:
+            print(f"🔍 VERIFICATION: REJECTED - Too long ({len(text_lower)} > 50)")
+            return False
+        
+        # Check if it's a simple verification keyword or exact match
+        if text_lower in verification_keywords:
+            print(f"🔍 VERIFICATION: ACCEPTED - Exact match '{text_lower}'")
+            return True
+        
+        # Check for keywords but ensure they're not part of longer commands
+        for keyword in verification_keywords:
+            if keyword in text_lower:
+                # Make sure the keyword is not part of a longer command
+                # by checking if it's at word boundaries
+                import re
+                pattern = r'\b' + re.escape(keyword) + r'\b'
+                if re.search(pattern, text_lower) and len(text_lower) <= 20:
+                    print(f"🔍 VERIFICATION: ACCEPTED - Keyword match '{keyword}'")
+                    return True
+        
+        print(f"🔍 VERIFICATION: REJECTED - No verification patterns found")
+        return False
     
     def _get_contextual_follow_up(self):
         """Get a contextual follow-up message based on conversation state"""

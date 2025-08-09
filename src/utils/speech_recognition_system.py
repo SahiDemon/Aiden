@@ -27,13 +27,8 @@ except ImportError:
     print("WARNING: PyAudio not found. Install it with: pip install pyaudio")
     print("If installation fails, try: pip install pipwin && pipwin install pyaudio")
 
-# Try to import Google Speech Recognition
-try:
-    from .google_speech_system import GoogleSpeechSystem
-    GOOGLE_SPEECH_AVAILABLE = True
-except ImportError:
-    GOOGLE_SPEECH_AVAILABLE = False
-    logging.warning("Google Speech Recognition not available")
+# Google Cloud Speech system not implemented yet
+GOOGLE_SPEECH_AVAILABLE = False
 
 class SpeechRecognitionSystem:
     """Handles speech-to-text functionality"""
@@ -50,16 +45,7 @@ class SpeechRecognitionSystem:
         # Check which engine to use
         self.engine = self.stt_config.get("engine", "google")
         
-        # Initialize Google Cloud Speech if configured
-        if self.engine == "google-cloud" and GOOGLE_SPEECH_AVAILABLE:
-            try:
-                self.google_speech = GoogleSpeechSystem(config_manager)
-                logging.info("Google Cloud Speech system initialized")
-                return
-            except Exception as e:
-                logging.error(f"Failed to initialize Google Cloud Speech: {e}")
-                # Fallback to regular speech recognition
-                self.engine = "google"
+        # Google Cloud Speech not implemented yet - using standard Google Web Speech API
         
         if not SR_AVAILABLE:
             logging.error("Speech recognition dependencies not installed")
@@ -71,10 +57,10 @@ class SpeechRecognitionSystem:
         # Configure recognition parameters for natural speech patterns
         self.timeout = self.stt_config.get("timeout", 8)  # Longer timeout for natural speech
         self.language = self.stt_config.get("language", "en-US")
-        self.energy_threshold = self.stt_config.get("energy_threshold", 2000)  # Lower for better sensitivity
+        self.energy_threshold = self.stt_config.get("energy_threshold", 600)  # Lowered from 2000 to 600 for better sensitivity
         self.pause_threshold = self.stt_config.get("pause_threshold", 1.2)  # More forgiving for natural pauses
         self.phrase_threshold = self.stt_config.get("phrase_threshold", 0.3)
-        self.dynamic_energy = True
+        self.dynamic_energy = False
         
         # Apply configuration with proper validation
         self.recognizer.energy_threshold = self.energy_threshold
@@ -95,7 +81,8 @@ class SpeechRecognitionSystem:
             self.recognizer.non_speaking_duration = 0.3
         
         # Log the final configuration for debugging
-        logging.info(f"Speech recognition parameters: pause_threshold={self.recognizer.pause_threshold}, non_speaking_duration={self.recognizer.non_speaking_duration}, phrase_threshold={self.recognizer.phrase_threshold}")
+        logging.info(f"Speech recognition parameters: energy_threshold={self.recognizer.energy_threshold}, pause_threshold={self.recognizer.pause_threshold}, non_speaking_duration={self.recognizer.non_speaking_duration}, phrase_threshold={self.recognizer.phrase_threshold}")
+        print(f"🎚️ Speech Recognition Config: energy={self.recognizer.energy_threshold}, pause={self.recognizer.pause_threshold}, timeout={self.timeout}s")
         
         # Test microphone availability during initialization
         self._test_microphone_access()
@@ -140,10 +127,6 @@ class SpeechRecognitionSystem:
                 - Error message if unsuccessful, None otherwise
         """
         import time  # Import time at the beginning to avoid duplication
-        
-        # Use Google Cloud Speech if configured
-        if self.engine == "google-cloud" and hasattr(self, 'google_speech'):
-            return self.google_speech.listen()
         
         if not SR_AVAILABLE:
             return False, None, "Speech recognition not available"
@@ -195,22 +178,18 @@ class SpeechRecognitionSystem:
                 with microphone as source:
                     print("Ready to listen...")
                     
-                    # Try to adjust for ambient noise, but continue even if it fails
-                    try:
-                        print("Adjusting for ambient noise...")
-                        self.recognizer.adjust_for_ambient_noise(source, duration=0.2)
-                        print("Ambient noise adjustment complete")
-                    except Exception as e:
-                        logging.warning(f"Could not adjust for ambient noise: {e}")
-                        print(f"Warning: Could not adjust for ambient noise: {e}")
-                        print("Continuing with default settings...")
+                    # Skip ambient noise adjustment to preserve manual energy threshold
+                    # This prevents the system from overriding our carefully configured threshold
+                    print(f"Using fixed energy threshold: {self.recognizer.energy_threshold}")
+                    print("Skipping ambient noise adjustment to preserve manual settings")
                     
                     print(f"Ready to capture your voice (timeout: {self.timeout}s)...")
                     
                     # Listen for audio input with improved error handling
                     try:
+                        print(f"🔊 Listening with energy threshold: {self.recognizer.energy_threshold}")
                         audio = self.recognizer.listen(source, timeout=self.timeout, phrase_time_limit=10)
-                        print("Audio captured successfully!")
+                        print("✅ Audio captured successfully!")
                     except sr.WaitTimeoutError:
                         # This is expected behavior - user didn't speak
                         logging.info("Speech recognition timeout - no speech detected")

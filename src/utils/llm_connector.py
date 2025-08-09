@@ -48,6 +48,39 @@ class LLMConnector:
         # Store the command for context
         self.last_command = command_text
         
+        # DIRECT FAN CONTROL BYPASS - Skip LLM for fan commands entirely
+        command_lower = command_text.lower().strip()
+        form_of_address = self.user_profile["personal"]["form_of_address"]
+        
+        # Check for fan control patterns directly
+        fan_patterns = {
+            # Turn off patterns
+            ("turn off", "fan"): "off",
+            ("fan", "off"): "off", 
+            ("stop", "fan"): "off",
+            ("fan", "stop"): "off",
+            # Turn on patterns  
+            ("turn on", "fan"): "on",
+            ("fan", "on"): "on",
+            ("start", "fan"): "on", 
+            ("fan", "start"): "on",
+            # Mode patterns
+            ("fan", "mode"): "mode",
+            ("change", "fan"): "mode"
+        }
+        
+        for (word1, word2), operation in fan_patterns.items():
+            if word1 in command_lower and word2 in command_lower:
+                print(f"🎯 DIRECT FAN CONTROL: '{command_text}' -> operation '{operation}'")
+                return {
+                    "action": "fan_control",
+                    "parameters": {
+                        "operation": operation,
+                        "original_query": command_text
+                    },
+                    "response": f"{'Turning off' if operation == 'off' else 'Turning on' if operation == 'on' else 'Changing mode of'} the fan for you, {form_of_address}."
+                }
+        
         # Get context for the prompt
         context = self._build_context()
         
@@ -55,192 +88,54 @@ class LLMConnector:
         form_of_address = self.user_profile["personal"]["form_of_address"]
         
         # Build the full prompt
-        full_prompt = f"{context}\n\nThe user said: \"{command_text}\"\n\n"
-        full_prompt += f"""You are Aiden, an AI assistant. Be helpful and direct. Use "Boss" in your responses, not "Boss" or any other title.
+        full_prompt = f"""
+{context}
 
-Respond ONLY in JSON format with the following structure:
-{{
-    "action": "action_name",
-    "parameters": {{
-        "param1": "value1",
-        "original_query": "exact user input",
-        ...
-    }},
-    "response": "Your response to the user"
-}}
+User command: "{command_text}"
 
-IMPORTANT: Always address the user as "{form_of_address}" in your responses.
+⚠️ CRITICAL INSTRUCTION: If the user mentions ANY variation of fan control (turn on fan, turn off fan, fan on, fan off, start fan, stop fan, etc.), you MUST use fan_control action. This is for ESP32 smart home control.
 
-Valid actions include:
-- "provide_information": For answering questions, getting system info, listing projects
-- "file_operation": For file/folder operations
-- "app_control": For launching or controlling applications
-- "web_search": For web searches and opening URLs
-- "system_command": For system commands
-- "change_settings": For changing assistant settings
-- "fan_control": For controlling the fan connected to ESP32
-- "unknown": If you cannot determine the action
+IMPORTANT INSTRUCTIONS FOR RESPONSE:
 
-IMPORTANT COMMAND PATTERNS:
-1. App launching: "open [app]", "launch [app]", "start [app]" = app_control
-2. System commands: "lock computer", "shutdown", "restart", "sleep" = system_command
-3. Fan control: "turn on fan", "turn off fan", "fan status", "set fan speed" = fan_control
-4. Project access: "open project", "show projects", "list projects" = provide_information with query="list my projects"
-5. Web search: "search for [query]", "google [query]" = web_search
-6. Information: "what time", "what date", "who created you" = provide_information
+1. FAN CONTROL (HIGHEST PRIORITY): For ANY fan operations, use fan_control action:
+   - "turn off fan" → {{"action": "fan_control", "parameters": {{"operation": "off"}}}}
+   - "turn on fan" → {{"action": "fan_control", "parameters": {{"operation": "on"}}}}
+   - "fan off" → {{"action": "fan_control", "parameters": {{"operation": "off"}}}}
+   - "fan on" → {{"action": "fan_control", "parameters": {{"operation": "on"}}}}
+   - "start fan" → {{"action": "fan_control", "parameters": {{"operation": "on"}}}}
+   - "stop fan" → {{"action": "fan_control", "parameters": {{"operation": "off"}}}}
+   - "change fan speed" → {{"action": "fan_control", "parameters": {{"operation": "on"}}}}
+   - "fan mode" → {{"action": "fan_control", "parameters": {{"operation": "mode"}}}}
 
-CRITICAL - COMMAND CLASSIFICATION RULES:
-- ANY command mentioning "fan" = fan_control action (NOT system_command)
-- "lock computer/screen" = system_command with operation="lock"
-- "shutdown/power off/turn off computer" = system_command with operation="shutdown"  
-- "restart/reboot" = system_command with operation="restart"
-- "sleep/hibernate" = system_command with operation="sleep"
-- "open/launch/start [app]" = app_control with app_name and operation="launch"
-- Single word "turn" WITHOUT "off" or "computer" = NOT a system command (ask for clarification)
+2. SIMPLE APP COMMANDS: For commands like "open chrome", "launch notepad", "start spotify", ALWAYS respond with app_control action:
+   - "open chrome" → {{"action": "app_control", "parameters": {{"app_name": "chrome", "operation": "launch"}}}}
+   - "open notepad" → {{"action": "app_control", "parameters": {{"app_name": "notepad", "operation": "launch"}}}}
+   - "launch spotify" → {{"action": "app_control", "parameters": {{"app_name": "spotify", "operation": "launch"}}}}
 
-SCHEDULING PATTERNS:
-- "shutdown in 10 minutes" = system_command with operation="shutdown" 
-- "restart in 5 minutes" = system_command with operation="restart"
-- "sleep in 30 minutes" = system_command with operation="sleep"
+3. SYSTEM COMMANDS: For system operations, use system_command action:
+   - "lock computer" → {{"action": "system_command", "parameters": {{"operation": "lock"}}}}
+   - "restart computer" → {{"action": "system_command", "parameters": {{"operation": "restart"}}}}
 
-For app control commands, use parameters like:
-- app_name: Extract the EXACT app name the user mentioned, don't modify it
-- operation: "launch", "open", "start", "close"
+4. COMPOUND COMMANDS: For multiple actions, create compound command structure:
+   - "open chrome and open notepad" → {{"compound_command": true, "actions": [...]}}
 
-RESPONSE GUIDELINES:
-- For system commands: Give brief confirmation like "Shutting down now, Boss" or "I'll restart in 10 minutes, Boss"
-- For app launching: Say "Let me find and open that for you, Boss"
-- For time-based commands: Give simple confirmation without asking for verification
-- NEVER ask "You can say 'yes' to confirm" or similar verification prompts
-- Be direct and execute commands as requested
-- NEVER add default values like "10 minutes" if user doesn't specify time
-- For incomplete commands like "can you schedule", use action "provide_information" and ask what to schedule
+REMEMBER: FAN CONTROL has highest priority!
 
-Examples:
-- "shutdown in 10 minutes" → "I'll shut down the computer in 10 minutes, Boss"
-- "open chrome" → "Let me find Chrome for you, Boss"
+Respond ONLY with valid JSON. Use provide_information ONLY when you truly cannot understand the request.
 
-IMPORTANT: For fan status/check commands, do NOT provide the actual fan status in your response. 
-Just say you're checking it. The system will get the real status from the hardware.
-
-ALWAYS include the original_query in parameters for context.
-
-Examples:
-1. "open chrome" becomes:
-{{
-    "action": "app_control",
-    "parameters": {{
-        "app_name": "chrome",
-        "operation": "launch",
-        "original_query": "open chrome"
-    }},
-    "response": "Let me find Chrome for you, {form_of_address}."
-}}
-
-2. "list my projects" becomes:
-{{
-    "action": "provide_information",
-    "parameters": {{
-        "query": "list my projects",
-        "original_query": "list my projects"
-    }},
-    "response": "Let me show you your projects, {form_of_address}."
-}}
-
-3. "search for AI tutorials" becomes:
-{{
-    "action": "web_search",
-    "parameters": {{
-        "query": "AI tutorials",
-        "engine": "google",
-        "original_query": "search for AI tutorials"
-    }},
-    "response": "Searching for AI tutorials on Google, {form_of_address}."
-}}
-
-4. "what's the fan status" becomes:
-{{
-    "action": "fan_control",
-    "parameters": {{
-        "operation": "status",
-        "original_query": "what's the fan status"
-    }},
-    "response": "Let me check the fan status for you, {form_of_address}."
-}}
-
-5. "lock the computer" becomes:
-{{
-    "action": "system_command",
-    "parameters": {{
-        "operation": "lock",
-        "original_query": "lock the computer"
-    }},
-    "response": "Locking the screen for you, {form_of_address}."
-}}
-
-6. "turn off fan" becomes:
-{{
-    "action": "fan_control",
-    "parameters": {{
-        "operation": "off",
-        "original_query": "turn off fan"
-    }},
-    "response": "Turning off the fan for you, {form_of_address}."
-}}
-
-7. "shutdown computer" becomes:
-{{
-    "action": "system_command",
-    "parameters": {{
-        "operation": "shutdown",
-        "original_query": "shutdown computer"
-    }},
-    "response": "Shutting down the computer, {form_of_address}."
-}}
-
-8. "shutdown in 10 minutes" becomes:
-{{
-    "action": "system_command",
-    "parameters": {{
-        "operation": "shutdown",
-        "original_query": "shutdown in 10 minutes"
-    }},
-    "response": "I'll shut down the computer in 10 minutes, {form_of_address}."
-}}
-
-9. "change to 20 minutes" becomes:
-{{
-    "action": "system_command",
-    "parameters": {{
-        "operation": "modify",
-        "original_query": "change to 20 minutes"
-    }},
-    "response": "I'll update the time for you, {form_of_address}."
-}}
-
-10. "cancel shutdown" becomes:
-{{
-    "action": "system_command",
-    "parameters": {{
-        "operation": "abort",
-        "original_query": "cancel shutdown"
-    }},
-    "response": "I'll cancel that for you, {form_of_address}."
-}}
-
-If the user wants natural conversation without a specific command, use:
-{{
-    "action": "provide_information", 
-    "parameters": {{
-        "query": "conversation",
-        "original_query": "user's exact words"
-    }},
-    "response": "Your conversational response (remember to address them as {form_of_address})"
-}}
+Examples of CORRECT responses:
+- User: "open chrome" → {{"action": "app_control", "parameters": {{"app_name": "chrome", "operation": "launch", "original_query": "open chrome"}}, "response": "Opening Chrome for you, {self.user_profile['personal']['form_of_address']}."}}
+- User: "lock my computer" → {{"action": "system_command", "parameters": {{"operation": "lock", "original_query": "lock my computer"}}, "response": "Locking the computer for you, {self.user_profile['personal']['form_of_address']}."}}
+- User: "turn off the fan" → {{"action": "fan_control", "parameters": {{"operation": "off", "original_query": "turn off the fan"}}, "response": "Turning off the fan for you, {self.user_profile['personal']['form_of_address']}."}}
+- User: "turn on fan" → {{"action": "fan_control", "parameters": {{"operation": "on", "original_query": "turn on fan"}}, "response": "Turning on the fan for you, {self.user_profile['personal']['form_of_address']}."}}
 """
+        
         # Process with the appropriate LLM engine
         if self.engine == "tgpt":
             print(f"Connecting to AI with tgpt...")
+            print(f"🔍 DEBUG: Command being processed: '{command_text}'")
+            if "fan" in command_text.lower():
+                print(f"🔍 DEBUG: FAN COMMAND DETECTED! Sending enhanced prompt...")
             result = self._process_with_tgpt(full_prompt)
             print(f"AI response received")
             
@@ -317,15 +212,21 @@ If the user wants natural conversation without a specific command, use:
                 "open explorer", "launch explorer", "file explorer", "start explorer"
             ]
             
+            # Check for compound command indicators
+            compound_indicators = [" and ", " then ", " also ", " plus ", ","]
+            has_compound_indicator = any(indicator in command_lower for indicator in compound_indicators)
+            
             # Check if this is a simple app command that tgpt handles well
             is_simple_app_command = any(cmd in command_lower for cmd in simple_app_commands)
             
-            # Use shell mode ONLY for simple app commands WITHOUT scheduling
-            is_system_command = is_simple_app_command and not has_scheduling
+            # Use shell mode ONLY for simple app commands WITHOUT scheduling AND WITHOUT compound indicators
+            is_system_command = is_simple_app_command and not has_scheduling and not has_compound_indicator
             
             # Log the decision for debugging
             if has_scheduling:
                 print(f"Detected scheduling keywords - using built-in handlers instead of shell mode")
+            elif has_compound_indicator:
+                print(f"Detected compound command - using regular LLM mode for multi-action processing")
             elif is_simple_app_command:
                 print(f"Detected simple app command - using shell mode")
             else:
@@ -514,6 +415,92 @@ If the user wants natural conversation without a specific command, use:
             # Get user's preferred address for fallback responses
             form_of_address = self.user_profile["personal"]["form_of_address"]
             
+            # CRITICAL FIX: Clean malformed JSON with ? prefix
+            response_text = response_text.strip()
+            
+            # Remove leading ? or other non-JSON characters that tgpt sometimes adds
+            if response_text.startswith('?'):
+                response_text = response_text[1:].strip()
+            elif response_text.startswith('```json'):
+                response_text = response_text.replace('```json', '').replace('```', '').strip()
+            elif response_text.startswith('```'):
+                response_text = response_text.replace('```', '').strip()
+            
+            # Also remove any other common prefixes that break JSON
+            prefixes_to_remove = ['Sure!', 'Certainly!', 'Here\'s', 'Here is']
+            for prefix in prefixes_to_remove:
+                if response_text.startswith(prefix):
+                    # Find the first { and take everything from there
+                    json_start = response_text.find('{')
+                    if json_start > 0:
+                        response_text = response_text[json_start:].strip()
+                    break
+            
+            # CRITICAL FIX: Handle escaped quotes in JSON
+            # Remove any text before the JSON starts
+            json_start_idx = response_text.find('{')
+            if json_start_idx > 0:
+                response_text = response_text[json_start_idx:]
+            
+            # Fix escaped quotes - convert {\"action\": to {"action":
+            if '\\\"' in response_text:
+                print(f"🔧 FIXING ESCAPED QUOTES: Found escaped quotes, converting...")
+                response_text = response_text.replace('\\\"', '"')
+                print(f"🔧 AFTER UNESCAPE: {response_text[:100]}...")
+            
+            print(f"🔧 JSON CLEANING: Cleaned response: {response_text[:150]}...")
+            
+            # Check if response contains multiple JSON objects (compound command failure)
+            lines = response_text.strip().split('\n')
+            json_objects = []
+            
+            # Look for multiple JSON objects in the response
+            json_blocks = []
+            current_block = ""
+            in_json = False
+            
+            for line in lines:
+                if line.strip().startswith('{'):
+                    if in_json and current_block.strip():
+                        # Save previous block
+                        json_blocks.append(current_block.strip())
+                    current_block = line + '\n'
+                    in_json = True
+                elif in_json:
+                    current_block += line + '\n'
+                    if line.strip().endswith('}'):
+                        # Check if this completes a JSON object
+                        try:
+                            json.loads(current_block.strip())
+                            json_blocks.append(current_block.strip())
+                            current_block = ""
+                            in_json = False
+                        except:
+                            # Not a complete JSON object yet, continue
+                            pass
+            
+            # Add final block if exists
+            if in_json and current_block.strip():
+                json_blocks.append(current_block.strip())
+            
+            # Parse each JSON block
+            for block in json_blocks:
+                try:
+                    obj = json.loads(block)
+                    if "action" in obj and obj["action"] != "provide_information":
+                        json_objects.append(obj)
+                except:
+                    pass
+            
+            # If we found multiple JSON objects, convert to compound command
+            if len(json_objects) > 1:
+                print(f"🔍 MULTI-JSON: Found {len(json_objects)} JSON objects, creating compound command")
+                return {
+                    "compound_command": True,
+                    "actions": json_objects,
+                    "response": f"I'll take care of those tasks, {form_of_address}."
+                }
+            
             # Try to find JSON in the response
             json_start = response_text.find('{')
             json_end = response_text.rfind('}') + 1
@@ -524,28 +511,74 @@ If the user wants natural conversation without a specific command, use:
                 # Fix common JSON issues
                 json_str = self._fix_json_formatting(json_str)
                 
+                print(f"🔧 PARSING JSON: {json_str[:100]}...")
                 result = json.loads(json_str)
                 
-                # Ensure required fields exist
-                if "action" not in result:
-                    result["action"] = "provide_information"
-                if "parameters" not in result:
-                    result["parameters"] = {}
-                if "response" not in result:
-                    result["response"] = f"I'll take care of that, {form_of_address}."
-                
-                # Ensure original_query is in parameters
-                if "original_query" not in result["parameters"]:
-                    result["parameters"]["original_query"] = self.last_command
-                    
-                return result
+                # If we got a result, check if it should be compound
+                if result:
+                    # Check if this is already a compound command
+                    if result.get("compound_command", False) and "actions" in result:
+                        # Handle compound command
+                        actions = result["actions"]
+                        response = result.get("response", f"I'll take care of those tasks, {form_of_address}.")
+                        
+                        # Ensure each action has required fields
+                        for action in actions:
+                            if "action" not in action:
+                                action["action"] = "provide_information"
+                            if "parameters" not in action:
+                                action["parameters"] = {}
+                            if "original_query" not in action["parameters"]:
+                                action["parameters"]["original_query"] = self.last_command
+                        
+                        print(f"🔍 LLM: Returning compound command with {len(actions)} actions")
+                        return {
+                            "compound_command": True,
+                            "actions": actions,
+                            "response": response
+                        }
+                    else:
+                        # Check if this should be a compound command but LLM didn't format it correctly
+                        original_query = result.get("parameters", {}).get("original_query", self.last_command)
+                        if self._should_be_compound_command(original_query):
+                            print(f"🔍 COMPOUND PATTERN DETECTED: LLM returned single action for compound query, converting")
+                            return self._convert_to_compound_command(result, original_query)
+                        
+                        # Handle single command (existing logic)
+                        if "action" not in result:
+                            result["action"] = "provide_information"
+                        if "parameters" not in result:
+                            result["parameters"] = {}
+                        if "response" not in result:
+                            result["response"] = f"I'll take care of that, {form_of_address}."
+                        
+                        # Ensure original_query is in parameters
+                        if "original_query" not in result["parameters"]:
+                            result["parameters"]["original_query"] = self.last_command
+                        
+                        print(f"🔍 LLM: Returning single action: {result.get('action')}")
+                        return result
             else:
-                # No JSON found, try to extract action from text
-                return self._extract_action_from_text(response_text)
+                # No valid JSON found at all - check if this should be compound
+                print(f"🔧 NO VALID JSON FOUND in response")
+                if self._should_be_compound_command(self.last_command):
+                    print(f"🔄 NO JSON BUT COMPOUND DETECTED: Creating fallback compound command")
+                    return self._create_fallback_compound_command(self.last_command)
+                
+                # Fall through to regular text extraction
+                print(f"🔧 FALLING BACK to text extraction")
                 
         except json.JSONDecodeError as e:
+            print(f"🚨 JSON DECODE ERROR: {e}")
+            print(f"🚨 FAILED TEXT: {response_text[:200]}...")
             logging.error(f"Failed to parse JSON from response: {response_text}")
             logging.error(f"JSON error: {e}")
+            
+            # ENHANCED FALLBACK: Check if this should be a compound command even with JSON failure
+            if self._should_be_compound_command(self.last_command):
+                print(f"🔄 JSON FAILED BUT COMPOUND DETECTED: Creating fallback compound command")
+                return self._create_fallback_compound_command(self.last_command)
+            
             return self._extract_action_from_text(response_text)
         except Exception as e:
             logging.error(f"Error parsing LLM response: {e}")
@@ -581,6 +614,89 @@ If the user wants natural conversation without a specific command, use:
         Returns:
             Dictionary with best-guess action and parameters
         """
+        # Get user's preferred address for responses
+        form_of_address = self.user_profile["personal"]["form_of_address"]
+        
+        # Fallback classification based on the original command
+        command_lower = self.last_command.lower().strip()
+        
+        # System command patterns
+        if any(phrase in command_lower for phrase in [
+            "lock computer", "lock the computer", "lock my computer", "lock screen", "lock the screen",
+            "shutdown", "shut down", "power off", "turn off computer", "turn off the computer",
+            "restart", "reboot", "restart computer", "restart the computer", 
+            "sleep", "hibernate", "put to sleep", "go to sleep"
+        ]):
+            operation = "lock"
+            if any(word in command_lower for word in ["shutdown", "shut down", "power off", "turn off"]):
+                operation = "shutdown"
+            elif any(word in command_lower for word in ["restart", "reboot"]):
+                operation = "restart"
+            elif any(word in command_lower for word in ["sleep", "hibernate"]):
+                operation = "sleep"
+            
+            return {
+                "action": "system_command",
+                "parameters": {
+                    "operation": operation,
+                    "original_query": self.last_command
+                },
+                "response": f"I'll {operation} the computer for you, {form_of_address}."
+            }
+        
+        # App control patterns
+        elif any(phrase in command_lower for phrase in [
+            "open ", "launch ", "start ", "run ", "execute "
+        ]):
+            # Extract app name
+            app_name = "application"
+            if "chrome" in command_lower:
+                app_name = "chrome"
+            elif "spotify" in command_lower:
+                app_name = "spotify"
+            elif "notepad" in command_lower:
+                app_name = "notepad"
+            elif "calculator" in command_lower:
+                app_name = "calculator"
+            elif "firefox" in command_lower:
+                app_name = "firefox"
+            elif "edge" in command_lower:
+                app_name = "edge"
+            
+            return {
+                "action": "app_control",
+                "parameters": {
+                    "app_name": app_name,
+                    "operation": "launch",
+                    "original_query": self.last_command
+                },
+                "response": f"Let me find {app_name} for you, {form_of_address}."
+            }
+        
+        # Fan control patterns
+        elif any(phrase in command_lower for phrase in [
+            "fan", "turn on fan", "turn off fan", "fan status", "check fan"
+        ]):
+            operation = "status"
+            if "turn on" in command_lower or "start" in command_lower:
+                operation = "on"
+            elif "turn off" in command_lower or "stop" in command_lower:
+                operation = "off"
+            
+            return {
+                "action": "fan_control",
+                "parameters": {
+                    "operation": operation,
+                    "original_query": self.last_command
+                },
+                "response": f"I'll handle the fan for you, {form_of_address}."
+            }
+        
+        # Check if this should be a compound command
+        if self._should_be_compound_command(self.last_command):
+            # Try to create a compound command from text analysis
+            return self._create_fallback_compound_command(self.last_command)
+        
         # Default to providing information with conversational response
         return {
             "action": "provide_information",
@@ -668,3 +784,316 @@ If the user wants natural conversation without a specific command, use:
                 },
                 "response": response_msg
             }
+    
+    def _should_be_compound_command(self, query: str) -> bool:
+        """Check if a query should be treated as a compound command
+        
+        Args:
+            query: User query to check
+            
+        Returns:
+            True if this should be a compound command
+        """
+        query_lower = query.lower()
+        compound_indicators = [
+            " and ", " then ", " also ", " plus ", ",", " & ", " after "
+        ]
+        
+        # Check if query contains compound indicators
+        has_indicators = any(indicator in query_lower for indicator in compound_indicators)
+        
+        if not has_indicators:
+            return False
+        
+        # Special check for repeated request patterns like "can you X and can you Y"
+        repeated_patterns = [
+            ("can you", "and can you"),
+            ("could you", "and could you"),
+            ("please", "and please"),
+            ("open", "and open"),
+            ("close", "and close"),
+            ("start", "and start"),
+            ("launch", "and launch"),
+            ("turn", "and turn")
+        ]
+        
+        for pattern_start, pattern_repeat in repeated_patterns:
+            if pattern_start in query_lower and pattern_repeat in query_lower:
+                print(f"🔍 COMPOUND PATTERN DETECTED: '{pattern_start}' + '{pattern_repeat}'")
+                return True
+        
+        # Check if it contains multiple distinct commands
+        # Look for multiple action verbs
+        action_verbs = [
+            "open", "launch", "start", "run", "execute", "close", "quit", "exit",
+            "turn", "set", "adjust", "change", "lock", "unlock", "shutdown", 
+            "restart", "sleep", "hibernate", "play", "pause", "stop", "search",
+            "find", "create", "delete", "move", "copy"
+        ]
+        
+        # Count action verbs in the query
+        verb_count = sum(1 for verb in action_verbs if verb in query_lower)
+        
+        if verb_count >= 2:
+            print(f"🔍 MULTIPLE VERBS DETECTED: {verb_count} action verbs found")
+            return True
+        
+        return has_indicators
+    
+    def _convert_to_compound_command(self, single_result: Dict[str, Any], original_query: str) -> Dict[str, Any]:
+        """Convert a single action result into a compound command
+        
+        Args:
+            single_result: Single action result from LLM
+            original_query: Original user query
+            
+        Returns:
+            Compound command structure
+        """
+        form_of_address = self.user_profile["personal"]["form_of_address"]
+        
+        # Split the query into parts based on compound indicators
+        query_lower = original_query.lower()
+        actions = []
+        
+        # Try to parse compound commands
+        if " and " in query_lower:
+            parts = original_query.split(" and ")
+        elif " then " in query_lower:
+            parts = original_query.split(" then ")
+        elif "," in query_lower:
+            parts = [part.strip() for part in original_query.split(",")]
+        else:
+            # Fallback - just duplicate the single action
+            parts = [original_query]
+        
+        for i, part in enumerate(parts):
+            part = part.strip()
+            if not part:
+                continue
+                
+            # Create action based on the part
+            action = self._create_action_from_part(part, i == 0, single_result)
+            if action:
+                actions.append(action)
+        
+        # If we couldn't parse multiple actions, at least include the original
+        if len(actions) <= 1 and single_result:
+            actions = [single_result]
+        
+        return {
+            "compound_command": True,
+            "actions": actions,
+            "response": f"I'll handle those tasks for you, {form_of_address}."
+        }
+    
+    def _create_action_from_part(self, part: str, is_first: bool, reference_action: Dict[str, Any]) -> Dict[str, Any]:
+        """Create an action from a part of a compound command
+        
+        Args:
+            part: Part of the command to process
+            is_first: True if this is the first part
+            reference_action: Reference action from LLM to use as template
+            
+        Returns:
+            Action dictionary
+        """
+        part_lower = part.lower().strip()
+        
+        # Clean up the part (remove leading "then", "and", etc.)
+        for prefix in ["then ", "and ", "also ", "plus ", "after "]:
+            if part_lower.startswith(prefix):
+                part_lower = part_lower[len(prefix):].strip()
+                part = part[len(prefix):].strip()
+        
+        # Determine action type based on content
+        if any(word in part_lower for word in ["open", "launch", "start", "run"]):
+            # App control action
+            app_name = "application"
+            if "chrome" in part_lower:
+                app_name = "chrome"
+            elif "spotify" in part_lower:
+                app_name = "spotify"
+            elif "notepad" in part_lower:
+                app_name = "notepad"
+            elif "calculator" in part_lower:
+                app_name = "calculator"
+            elif "firefox" in part_lower:
+                app_name = "firefox"
+            elif "edge" in part_lower:
+                app_name = "edge"
+            
+            return {
+                "action": "app_control",
+                "parameters": {
+                    "app_name": app_name,
+                    "operation": "launch",
+                    "original_query": part
+                }
+            }
+        
+        elif any(word in part_lower for word in ["lock", "sleep", "hibernate", "shutdown", "restart"]):
+            # System command
+            operation = "lock"
+            if "sleep" in part_lower or "hibernate" in part_lower:
+                operation = "sleep"
+            elif "shutdown" in part_lower or "turn off" in part_lower:
+                operation = "shutdown"
+            elif "restart" in part_lower:
+                operation = "restart"
+            
+            return {
+                "action": "system_command",
+                "parameters": {
+                    "operation": operation,
+                    "original_query": part
+                }
+            }
+        
+        elif any(word in part_lower for word in ["turn off", "turn on", "fan"]):
+            # Fan control
+            operation = "off" if "off" in part_lower else "on"
+            
+            return {
+                "action": "fan_control",
+                "parameters": {
+                    "operation": operation,
+                    "original_query": part
+                }
+            }
+        
+        else:
+            # Use the reference action as fallback but update the query
+            if reference_action:
+                new_action = reference_action.copy()
+                new_action["parameters"] = reference_action.get("parameters", {}).copy()
+                new_action["parameters"]["original_query"] = part
+                return new_action
+            
+            # Ultimate fallback
+            return {
+                "action": "provide_information",
+                "parameters": {"original_query": part}
+            }
+
+    def _create_fallback_compound_command(self, query: str) -> Dict[str, Any]:
+        """Create a compound command from text analysis when JSON parsing fails
+        
+        Args:
+            query: Original user query
+            
+        Returns:
+            Compound command structure
+        """
+        form_of_address = self.user_profile["personal"]["form_of_address"]
+        
+        # Split the query into parts based on compound indicators
+        query_lower = query.lower()
+        actions = []
+        
+        # Try to parse compound commands
+        if " and " in query_lower:
+            parts = query.split(" and ")
+        elif " then " in query_lower:
+            parts = query.split(" then ")
+        elif "," in query_lower:
+            parts = [part.strip() for part in query.split(",")]
+        else:
+            parts = [query]
+        
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+                
+            part_lower = part.lower()
+            
+            # Clean up the part (remove leading "then", "and", etc.)
+            for prefix in ["then ", "and ", "also ", "plus ", "after "]:
+                if part_lower.startswith(prefix):
+                    part_lower = part_lower[len(prefix):].strip()
+                    part = part[len(prefix):].strip()
+            
+            # Create action based on the part using the same logic as _extract_action_from_text
+            action = None
+            
+            # System command patterns
+            if any(phrase in part_lower for phrase in [
+                "lock computer", "lock the computer", "lock my computer", "lock screen", "lock the screen",
+                "shutdown", "shut down", "power off", "turn off computer", "turn off the computer",
+                "restart", "reboot", "restart computer", "restart the computer", 
+                "sleep", "hibernate", "put to sleep", "go to sleep"
+            ]):
+                operation = "lock"
+                if any(word in part_lower for word in ["shutdown", "shut down", "power off", "turn off"]):
+                    operation = "shutdown"
+                elif any(word in part_lower for word in ["restart", "reboot"]):
+                    operation = "restart"
+                elif any(word in part_lower for word in ["sleep", "hibernate"]):
+                    operation = "sleep"
+                
+                action = {
+                    "action": "system_command",
+                    "parameters": {
+                        "operation": operation,
+                        "original_query": part
+                    }
+                }
+            
+            # App control patterns
+            elif any(phrase in part_lower for phrase in ["open ", "launch ", "start ", "run ", "execute "]):
+                app_name = "application"
+                if "chrome" in part_lower:
+                    app_name = "chrome"
+                elif "spotify" in part_lower:
+                    app_name = "spotify"
+                elif "notepad" in part_lower:
+                    app_name = "notepad"
+                elif "calculator" in part_lower:
+                    app_name = "calculator"
+                elif "firefox" in part_lower:
+                    app_name = "firefox"
+                elif "edge" in part_lower:
+                    app_name = "edge"
+                
+                action = {
+                    "action": "app_control",
+                    "parameters": {
+                        "app_name": app_name,
+                        "operation": "launch",
+                        "original_query": part
+                    }
+                }
+            
+            # Fan control patterns
+            elif any(phrase in part_lower for phrase in ["fan", "turn on fan", "turn off fan"]):
+                operation = "status"
+                if "turn on" in part_lower or "start" in part_lower:
+                    operation = "on"
+                elif "turn off" in part_lower or "stop" in part_lower:
+                    operation = "off"
+                
+                action = {
+                    "action": "fan_control",
+                    "parameters": {
+                        "operation": operation,
+                        "original_query": part
+                    }
+                }
+            
+            if action:
+                actions.append(action)
+        
+        if not actions:
+            # Fallback to single information request
+            return {
+                "action": "provide_information",
+                "parameters": {"original_query": query},
+                "response": f"I couldn't understand that compound command, {form_of_address}. Could you try rephrasing it?"
+            }
+        
+        return {
+            "compound_command": True,
+            "actions": actions,
+            "response": f"I'll handle those tasks for you, {form_of_address}."
+        }

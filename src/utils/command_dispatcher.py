@@ -1048,80 +1048,33 @@ Just say "Hey Aiden" or press the asterisk (*) key and ask me anything! I'm here
             
             action = result.get("action")
             
-            if action == "request_verification":
-                # Always ask for user verification - don't auto-confirm
-                verification_type = result.get("verification_type")
+            if action == "execute_immediate":
+                # Execute immediate commands directly without verification
+                operation = result.get("operation")
+                response = result.get("response")
                 
-                if verification_type == "schedule_dangerous_command":
-                    # Use system dialog for scheduled command confirmation
-                    schedule_info = result.get("schedule_info")
-                    operation = schedule_info["operation"]
-                    time_info = schedule_info["time_info"]
-                    time_str = f"{time_info['value']} {time_info['unit']}"
-                    form_of_address = self.config_manager.get_user_profile()["personal"]["form_of_address"]
-                    
-                    action_phrases = {
-                        "shutdown": "shut down",
-                        "restart": "restart", 
-                        "sleep": "put to sleep",
-                        "hibernate": "hibernate",
-                        "lock": "lock"
-                    }
-                    
-                    action = action_phrases.get(operation, operation)
-                    
-                    # Show system confirmation dialog
-                    title = "⚠️ Confirm Scheduled Command"
-                    message = f"Schedule {action} the computer in {time_str}?\n\nAre you sure, {form_of_address}?"
-                    
-                    confirmed = self._show_system_confirmation_dialog(title, message)
-                    
-                    if confirmed:
-                        # Execute the scheduling
-                        result = self.scheduled_commands.confirm_schedule(schedule_info)
-                        response_msg = result.get("response", f"Scheduled {action} in {time_str}, {form_of_address}.")
-                        
-                        self.voice_system.speak(response_msg)
-                        if self.dashboard_backend:
-                            self.dashboard_backend._emit_ai_message(response_msg, "response")
-                        return True
-                    else:
-                        # User cancelled
-                        self.voice_system.speak(f"Schedule cancelled, {form_of_address}.")
-                        if self.dashboard_backend:
-                            self.dashboard_backend._emit_ai_message("Schedule cancelled.", "response")
-                        return True
-                    
-                elif verification_type == "immediate_dangerous_command":
-                    # Use system dialog for immediate command confirmation
-                    operation = result.get("operation")
-                    form_of_address = self.config_manager.get_user_profile()["personal"]["form_of_address"]
-                    
-                    action_phrases = {
-                        "shutdown": "shut down",
-                        "restart": "restart", 
-                        "sleep": "put to sleep",
-                        "hibernate": "hibernate",
-                        "lock": "lock"
-                    }
-                    
-                    action = action_phrases.get(operation, operation)
-                    
-                    # Show system confirmation dialog
-                    title = "⚠️ Confirm Immediate Command"
-                    message = f"Are you sure you want to {action} the computer right now, {form_of_address}?"
-                    
-                    confirmed = self._show_system_confirmation_dialog(title, message)
-                    
-                    if confirmed:
-                        # Execute the command immediately
-                        return self._execute_immediate_system_command(operation)
-                    else:
-                        # User cancelled
-                        self.voice_system.speak(f"Command cancelled, {form_of_address}.")
-                        if self.dashboard_backend:
-                            self.dashboard_backend._emit_ai_message("Command cancelled.", "response")
-                    return True
+                # Execute the immediate command
+                execute_result = self._execute_immediate_system_command(operation)
+                if execute_result:
+                    self.voice_system.speak(response)
+                    if self.dashboard_backend:
+                        self.dashboard_backend._emit_ai_message(response, "response")
+                else:
+                    error_msg = f"Failed to execute {operation} command."
+                    self.voice_system.speak(error_msg)
+                    if self.dashboard_backend:
+                        self.dashboard_backend._emit_ai_message(error_msg, "response")
+                return execute_result
+                
+            elif action == "execute_schedule":
+                # Handle scheduled commands that are already set up
+                schedule_info = result.get("schedule_info")
+                response = result.get("response")
+                
+                self.voice_system.speak(response)
+                if self.dashboard_backend:
+                    self.dashboard_backend._emit_ai_message(response, "response")
+                return True
                     
             elif action == "request_time_specification":
                 # Handle incomplete schedule request - ask for time using system dialog

@@ -6095,21 +6095,181 @@
           "operation": "on",
           "original_query": "turn on the fan"
         }
+      },
+      {
+        "timestamp": "2025-08-07T15:51:28.646626",
+        "type": "provide_information",
+        "text": "can you turn off the fan",
+        "parameters": {
+          "original_query": "can you turn off the fan"
+        }
+      },
+      {
+        "timestamp": "2025-08-07T15:58:02.180360",
+        "type": "provide_information",
+        "text": "can you turn off the fan for me",
+        "parameters": {
+          "original_query": "can you turn off the fan for me"
+        }
+      },
+      {
+        "timestamp": "2025-08-07T16:02:00.637504",
+        "type": "provide_information",
+        "text": "can you turn on the fan can you turn on the fan hey",
+        "parameters": {
+          "original_query": "can you turn on the fan can you turn on the fan hey",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-08-07T16:02:18.762670",
+        "type": "provide_information",
+        "text": "turn off the fan",
+        "parameters": {
+          "original_query": "turn off the fan"
+        }
+      },
+      {
+        "timestamp": "2025-08-07T16:06:22.262253",
+        "type": "provide_information",
+        "text": "can you turn off the fan for me",
+        "parameters": {
+          "original_query": "can you turn off the fan for me",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-08-07T16:06:49.820501",
+        "type": "provide_information",
+        "text": "turn off the fan",
+        "parameters": {
+          "original_query": "turn off the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-08-07T16:07:10.354849",
+        "type": "provide_information",
+        "text": "turn off fan",
+        "parameters": {
+          "original_query": "turn off fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-08-07T16:07:35.757020",
+        "type": "provide_information",
+        "text": "fuck you",
+        "parameters": {
+          "original_query": "fuck you"
+        }
+      },
+      {
+        "timestamp": "2025-08-07T17:01:32.837107",
+        "type": "fan_control",
+        "text": "turn off the fan turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan turn off the fan"
+        }
+      },
+      {
+        "timestamp": "2025-08-07T17:12:23.625469",
+        "type": "fan_control",
+        "text": "can you turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "can you turn on the fan"
+        }
+      },
+      {
+        "timestamp": "2025-08-08T12:54:05.150677",
+        "type": "provide_information",
+        "text": "lock the computer",
+        "parameters": {
+          "original_query": "lock the computer",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-08-08T12:54:25.854340",
+        "type": "provide_information",
+        "text": "lock the fucking computer",
+        "parameters": {
+          "original_query": "lock the fucking computer"
+        }
+      },
+      {
+        "timestamp": "2025-08-09T12:45:03.914792",
+        "type": "fan_control",
+        "text": "can you turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "can you turn off the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-08-09T12:45:58.594896",
+        "type": "fan_control",
+        "text": "can you turn off the fan and",
+        "parameters": {
+          "operation": "off",
+          "original_query": "can you turn off the fan and",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-08-09T12:47:00.561491",
+        "type": "fan_control",
+        "text": "turn on the fan",
+        "parameters": {
+          "operation": "on",
+          "original_query": "turn on the fan",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-08-09T13:24:50.933059",
+        "type": "provide_information",
+        "text": "lock the computer",
+        "parameters": {
+          "original_query": "lock the computer",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-08-09T13:25:22.123039",
+        "type": "provide_information",
+        "text": "lock the computer",
+        "parameters": {
+          "original_query": "lock the computer",
+          "_prevent_speech": true
+        }
+      },
+      {
+        "timestamp": "2025-08-09T13:34:06.360132",
+        "type": "fan_control",
+        "text": "turn off the fan",
+        "parameters": {
+          "operation": "off",
+          "original_query": "turn off the fan"
+        }
       }
     ],
     "last_commands": [
-      "thank you",
-      "thank",
-      "close python",
-      "kill python process",
-      "close pyth",
-      "turn off the fan",
+      "turn off the fan turn off the fan",
+      "can you turn on the fan",
       "lock the computer",
+      "lock the fucking computer",
+      "can you turn off the fan",
+      "can you turn off the fan and",
       "turn on the fan",
-      "turn off the fan",
-      "turn on the fan"
+      "lock the computer",
+      "lock the computer",
+      "turn off the fan"
     ],
-    "total_commands": 662,
+    "total_commands": 680,
     "total_sessions": 77
   },
   "patterns": {

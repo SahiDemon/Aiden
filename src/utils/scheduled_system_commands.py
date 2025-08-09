@@ -163,12 +163,92 @@ class ScheduledSystemCommands:
             "created_at": datetime.now()
         }
         
+        # Execute scheduled commands directly without verification
+        schedule_id = f"{operation}_{int(execution_time.timestamp())}"
+        self.scheduled_tasks[schedule_id] = schedule_info
+        
+        # Start the scheduled task
+        self._start_scheduled_task(schedule_id, schedule_info)
+        
         return {
-            "action": "request_verification",
+            "action": "execute_schedule",
             "schedule_info": schedule_info,
-            "response": self._create_verification_message(operation, time_info),
-            "verification_type": "schedule_dangerous_command"
+            "response": self._create_confirmation_message(operation, time_info),
+            "schedule_id": schedule_id
         }
+    
+    def _create_confirmation_message(self, operation: str, time_info: Dict[str, Any]) -> str:
+        """Create a confirmation message for scheduled commands"""
+        action_phrases = {
+            "shutdown": "shut down",
+            "restart": "restart",
+            "sleep": "put to sleep", 
+            "hibernate": "hibernate",
+            "lock": "lock"
+        }
+        
+        action = action_phrases.get(operation, operation)
+        time_str = f"{time_info['value']} {time_info['unit']}"
+        
+        return f"I'll {action} the computer in {time_str}. The schedule is now active."
+    
+    def _start_scheduled_task(self, schedule_id: str, schedule_info: Dict[str, Any]) -> None:
+        """Start a scheduled task timer"""
+        import threading
+        
+        execution_time = schedule_info["execution_time"]
+        delay = (execution_time - datetime.now()).total_seconds()
+        
+        if delay > 0:
+            # Update status to active
+            schedule_info["status"] = "active"
+            self.active_schedules[schedule_id] = schedule_info
+            
+            # Start timer thread
+            timer = threading.Timer(delay, self._execute_scheduled_command, args=[schedule_id])
+            timer.daemon = True
+            timer.start()
+            
+            # Update dashboard
+            self._update_dashboard_schedules()
+            
+            logging.info(f"Scheduled {schedule_info['operation']} to execute in {delay:.1f} seconds")
+        else:
+            # Execute immediately if time has passed
+            self._execute_scheduled_command(schedule_id)
+    
+    def _execute_scheduled_command(self, schedule_id: str) -> None:
+        """Execute a scheduled command"""
+        if schedule_id not in self.active_schedules:
+            return
+            
+        schedule_info = self.active_schedules[schedule_id]
+        operation = schedule_info["operation"]
+        
+        try:
+            # Execute the system command
+            if operation == "shutdown":
+                subprocess.run(["shutdown", "/s", "/t", "0"], check=True)
+            elif operation == "restart":
+                subprocess.run(["shutdown", "/r", "/t", "0"], check=True)
+            elif operation == "sleep":
+                subprocess.run(["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"], check=True)
+            elif operation == "hibernate":
+                subprocess.run(["shutdown", "/h"], check=True)
+            elif operation == "lock":
+                subprocess.run(["rundll32.exe", "user32.dll,LockWorkStation"], check=True)
+                
+            logging.info(f"Successfully executed scheduled {operation}")
+            
+        except Exception as e:
+            logging.error(f"Failed to execute scheduled {operation}: {e}")
+        finally:
+            # Clean up
+            if schedule_id in self.active_schedules:
+                del self.active_schedules[schedule_id]
+            if schedule_id in self.scheduled_tasks:
+                del self.scheduled_tasks[schedule_id]
+            self._update_dashboard_schedules()
     
     def _create_verification_message(self, operation: str, time_info: Dict[str, Any]) -> str:
         """Create a verification message for the user"""
@@ -477,7 +557,7 @@ class ScheduledSystemCommands:
         return any(keyword in query_lower for keyword in abort_keywords)
     
     def _request_immediate_verification(self, operation: str, original_query: str) -> Dict[str, Any]:
-        """Request verification for immediate dangerous commands"""
+        """Execute immediate commands directly without verification"""
         action_phrases = {
             "shutdown": "shut down",
             "restart": "restart", 
@@ -489,10 +569,10 @@ class ScheduledSystemCommands:
         action = action_phrases.get(operation, operation)
         
         return {
-            "action": "request_verification",
+            "action": "execute_immediate",
             "operation": operation,
-            "response": f"I'll {action} the computer now, Boss.",
-            "verification_type": "immediate_dangerous_command"
+            "verified": True,
+            "response": f"I'll {action} the computer now, Boss."
         }
     
     def _update_dashboard_schedules(self):
