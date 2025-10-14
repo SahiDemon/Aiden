@@ -12,7 +12,10 @@ import {
   ListItemText,
   Divider,
   Button,
-  Grid
+  Grid,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails
 } from '@mui/material';
 import {
   Check,
@@ -28,7 +31,13 @@ import {
   Image,
   MusicNote,
   Movie,
-  Games
+  Games,
+  ExpandMore,
+  Apps,
+  Business,
+  Chat,
+  Computer,
+  Videocam
 } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -59,12 +68,16 @@ const ActionCard = ({ action, onItemClick }) => {
     subtitle: action.subtitle || '',
     status: action.status || 'Active',
     items: action.items || [],
-    buttons: action.buttons || []
+    buttons: action.buttons || [],
+    categories: action.categories || {},
+    recent_apps: action.recent_apps || [],
+    total_count: action.total_count || 0
   };
 
   const getActionIcon = (actionType) => {
     switch (actionType) {
       case 'app_list':
+      case 'enhanced_app_list':
         return <Launch sx={{ color: '#4c82f7' }} />;
       case 'project_list':
         return <Folder sx={{ color: '#f59e0b' }} />;
@@ -78,6 +91,27 @@ const ActionCard = ({ action, onItemClick }) => {
         return <Code sx={{ color: '#8b5cf6' }} />;
       default:
         return <Info sx={{ color: '#9ca3af' }} />;
+    }
+  };
+
+  const getCategoryIcon = (categoryName) => {
+    switch (categoryName.toLowerCase()) {
+      case 'browsers':
+        return <Web sx={{ fontSize: 18 }} />;
+      case 'development':
+        return <Code sx={{ fontSize: 18 }} />;
+      case 'office':
+        return <Business sx={{ fontSize: 18 }} />;
+      case 'media':
+        return <Videocam sx={{ fontSize: 18 }} />;
+      case 'communication':
+        return <Chat sx={{ fontSize: 18 }} />;
+      case 'games':
+        return <Games sx={{ fontSize: 18 }} />;
+      case 'system':
+        return <Computer sx={{ fontSize: 18 }} />;
+      default:
+        return <Apps sx={{ fontSize: 18 }} />;
     }
   };
 
@@ -104,6 +138,7 @@ const ActionCard = ({ action, onItemClick }) => {
   const getActionColor = (actionType) => {
     switch (actionType) {
       case 'app_list':
+      case 'enhanced_app_list':
         return '#4c82f7';
       case 'project_list':
         return '#f59e0b';
@@ -122,8 +157,190 @@ const ActionCard = ({ action, onItemClick }) => {
 
   const handleItemClick = (item) => {
     if (onItemClick && item) {
-      onItemClick(item, safeAction.type);
+      // For enhanced app list, we need to pass the correct action type
+      const actionType = safeAction.type === 'enhanced_app_list' ? 'app_selection' : safeAction.type;
+      onItemClick(item, actionType);
     }
+  };
+
+  // Render enhanced app list with categories
+  const renderEnhancedAppList = () => {
+    const categories = safeAction.categories;
+    const recentApps = safeAction.recent_apps;
+    
+    return (
+      <Box>
+        {/* Recent Apps Section */}
+        {recentApps && recentApps.length > 0 && (
+          <Box sx={{ p: 2, pb: 1 }}>
+            <Typography variant="subtitle2" sx={{ 
+              color: '#9ca3af', 
+              mb: 1,
+              fontSize: '0.875rem',
+              fontWeight: 600
+            }}>
+              Recently Used
+            </Typography>
+            <Grid container spacing={1}>
+              {recentApps.slice(0, 5).map((app, index) => (
+                <Grid item xs={12} sm={6} md={4} key={index}>
+                  <Button
+                    fullWidth
+                    variant="outlined"
+                    size="small"
+                    onClick={() => handleItemClick(app)}
+                    sx={{
+                      borderColor: '#4c82f7',
+                      color: '#fff',
+                      textTransform: 'none',
+                      justifyContent: 'flex-start',
+                      '&:hover': {
+                        borderColor: '#4c82f7',
+                        backgroundColor: '#4c82f710'
+                      }
+                    }}
+                    startIcon={getItemIcon(app)}
+                  >
+                    <Typography variant="caption" sx={{ 
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      {app.name}
+                    </Typography>
+                  </Button>
+                </Grid>
+              ))}
+            </Grid>
+          </Box>
+        )}
+
+        {/* Categories Section */}
+        <Box sx={{ p: 2, pt: recentApps && recentApps.length > 0 ? 1 : 2 }}>
+          {Object.entries(categories).map(([categoryName, apps]) => {
+            if (!apps || apps.length === 0) return null;
+            
+            return (
+              <Accordion 
+                key={categoryName}
+                sx={{
+                  backgroundColor: '#2a2a2a',
+                  border: '1px solid #333',
+                  borderRadius: '8px !important',
+                  mb: 1,
+                  '&:before': { display: 'none' },
+                  '&.Mui-expanded': {
+                    margin: '0 0 8px 0'
+                  }
+                }}
+              >
+                <AccordionSummary
+                  expandIcon={<ExpandMore sx={{ color: '#9ca3af' }} />}
+                  sx={{
+                    minHeight: 48,
+                    '&.Mui-expanded': {
+                      minHeight: 48
+                    },
+                    '& .MuiAccordionSummary-content': {
+                      margin: '12px 0',
+                      '&.Mui-expanded': {
+                        margin: '12px 0'
+                      }
+                    }
+                  }}
+                >
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Box sx={{ color: '#4c82f7' }}>
+                      {getCategoryIcon(categoryName)}
+                    </Box>
+                    <Typography variant="subtitle2" sx={{ 
+                      color: '#fff',
+                      fontWeight: 600
+                    }}>
+                      {categoryName}
+                    </Typography>
+                    <Chip
+                      size="small"
+                      label={apps.length}
+                      sx={{
+                        backgroundColor: '#4c82f730',
+                        color: '#4c82f7',
+                        fontSize: '0.75rem',
+                        height: 20
+                      }}
+                    />
+                  </Box>
+                </AccordionSummary>
+                <AccordionDetails sx={{ pt: 0 }}>
+                  <List sx={{ py: 0 }}>
+                    {apps.slice(0, 10).map((app, index) => (
+                      <ListItem
+                        key={index}
+                        button
+                        onClick={() => handleItemClick(app)}
+                        sx={{
+                          py: 0.5,
+                          px: 1,
+                          borderRadius: '6px',
+                          '&:hover': {
+                            backgroundColor: '#4c82f710',
+                            transform: 'translateX(4px)'
+                          },
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <ListItemIcon sx={{ minWidth: 32 }}>
+                          <Box sx={{ color: '#4c82f7', fontSize: 16 }}>
+                            {getItemIcon(app)}
+                          </Box>
+                        </ListItemIcon>
+                        <ListItemText
+                          primary={
+                            <Typography variant="body2" sx={{ 
+                              color: '#fff',
+                              fontSize: '0.875rem'
+                            }}>
+                              {app.name}
+                            </Typography>
+                          }
+                          secondary={app.version && (
+                            <Typography variant="caption" sx={{ 
+                              color: '#9ca3af',
+                              fontSize: '0.75rem'
+                            }}>
+                              v{app.version}
+                            </Typography>
+                          )}
+                        />
+                        <PlayArrow sx={{ 
+                          color: '#9ca3af',
+                          fontSize: 14,
+                          opacity: 0.7
+                        }} />
+                      </ListItem>
+                    ))}
+                    {apps.length > 10 && (
+                      <ListItem>
+                        <ListItemText
+                          primary={
+                            <Typography variant="caption" sx={{ 
+                              color: '#9ca3af',
+                              fontStyle: 'italic'
+                            }}>
+                              ... and {apps.length - 10} more apps
+                            </Typography>
+                          }
+                        />
+                      </ListItem>
+                    )}
+                  </List>
+                </AccordionDetails>
+              </Accordion>
+            );
+          })}
+        </Box>
+      </Box>
+    );
   };
 
   return (
@@ -191,7 +408,7 @@ const ActionCard = ({ action, onItemClick }) => {
         <CardContent sx={{ p: 0 }}>
           {/* Message */}
           {safeAction.message && (
-            <Box sx={{ p: 2, pb: safeAction.items.length > 0 ? 1 : 2 }}>
+            <Box sx={{ p: 2, pb: (safeAction.items.length > 0 || safeAction.type === 'enhanced_app_list') ? 1 : 2 }}>
               <Typography variant="body2" sx={{ 
                 color: '#e5e7eb',
                 lineHeight: 1.6
@@ -201,8 +418,11 @@ const ActionCard = ({ action, onItemClick }) => {
             </Box>
           )}
 
-          {/* Items List */}
-          {safeAction.items.length > 0 && (
+          {/* Enhanced App List */}
+          {safeAction.type === 'enhanced_app_list' && renderEnhancedAppList()}
+
+          {/* Regular Items List */}
+          {safeAction.type !== 'enhanced_app_list' && safeAction.items.length > 0 && (
             <Box>
               {safeAction.message && <Divider sx={{ borderColor: '#333' }} />}
               <List sx={{ py: 1 }}>

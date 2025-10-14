@@ -111,19 +111,7 @@ const SystemStatus = ({ socket, status, isConnected, isListening, conversationAc
       <CardContent>
         {/* Header */}
         <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-          <motion.div
-            animate={{ 
-              scale: isConnected ? [1, 1.1, 1] : 1,
-              rotate: isListening ? [0, 360] : 0
-            }}
-            transition={{ 
-              duration: 2, 
-              repeat: isConnected ? Infinity : 0,
-              repeatType: "reverse"
-            }}
-          >
-            <SmartToy sx={{ color: '#4c82f7', fontSize: 28, mr: 1 }} />
-          </motion.div>
+          <SmartToy sx={{ color: '#4c82f7', fontSize: 28, mr: 1 }} />
           <Typography variant="h6" sx={{ fontWeight: 600 }}>
             System Status
           </Typography>

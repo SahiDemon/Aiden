@@ -265,6 +265,38 @@ const ConfigPanel = ({ open, onClose, socket }) => {
             Voice Settings
           </Typography>
           
+          {/* Quick Presets */}
+          <Grid container spacing={2} sx={{ mb: 3 }}>
+            <Grid item xs={12}>
+              <Typography variant="body2" sx={{ mb: 1, fontWeight: 500 }}>
+                Quick Presets
+              </Typography>
+              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                <Chip
+                  label="Optimized (Edge TTS)"
+                  color={config.voice.tts_engine === 'edge-tts' && config.stt.engine === 'google' ? 'primary' : 'default'}
+                  onClick={() => {
+                    updateConfig('voice.tts_engine', 'edge-tts');
+                    updateConfig('stt.engine', 'google');
+                    updateConfig('voice.tts_voice', 'en-US-AvaNeural');
+                  }}
+                  variant={config.voice.tts_engine === 'edge-tts' && config.stt.engine === 'google' ? 'filled' : 'outlined'}
+                />
+                <Chip
+                  label="Fallback (Local)"
+                  color={config.voice.tts_engine === 'pyttsx3' && config.stt.engine === 'sphinx' ? 'primary' : 'default'}
+                  onClick={() => {
+                    updateConfig('voice.tts_engine', 'pyttsx3');
+                    updateConfig('stt.engine', 'sphinx');
+                  }}
+                  variant={config.voice.tts_engine === 'pyttsx3' && config.stt.engine === 'sphinx' ? 'filled' : 'outlined'}
+                />
+              </Box>
+            </Grid>
+          </Grid>
+          
+          <Divider sx={{ my: 2 }} />
+          
           <Grid container spacing={3}>
             <Grid item xs={12}>
               <FormControl fullWidth>
@@ -275,7 +307,7 @@ const ConfigPanel = ({ open, onClose, socket }) => {
                   onChange={(e) => updateConfig('voice.tts_engine', e.target.value)}
                 >
                   <MenuItem value="edge-tts">Edge TTS (Recommended)</MenuItem>
-                  <MenuItem value="pyttsx3">PyTTSX3 (Fallback)</MenuItem>
+                  <MenuItem value="pyttsx3">PyTTSX3 (Local Fallback)</MenuItem>
                 </Select>
               </FormControl>
             </Grid>
@@ -288,11 +320,16 @@ const ConfigPanel = ({ open, onClose, socket }) => {
                   label="Voice"
                   onChange={(e) => updateConfig('voice.tts_voice', e.target.value)}
                 >
-                  <MenuItem value="en-US-AvaNeural">Ava (Female, US)</MenuItem>
-                  <MenuItem value="en-US-AriaNeural">Aria (Female, US)</MenuItem>
-                  <MenuItem value="en-US-JennyNeural">Jenny (Female, US)</MenuItem>
-                  <MenuItem value="en-US-BrianNeural">Brian (Male, US)</MenuItem>
-                  <MenuItem value="en-US-GuyNeural">Guy (Male, US)</MenuItem>
+                  <MenuItem value="en-US-AvaNeural">Ava (Female)</MenuItem>
+                  <MenuItem value="en-US-AndrewNeural">Andrew (Male)</MenuItem>
+                  <MenuItem value="en-US-EmmaNeural">Emma (Female)</MenuItem>
+                  <MenuItem value="en-US-BrianNeural">Brian (Male)</MenuItem>
+                  <MenuItem value="en-US-JennyNeural">Jenny (Female)</MenuItem>
+                  <MenuItem value="en-US-GuyNeural">Guy (Male)</MenuItem>
+                  <MenuItem value="en-US-AriaNeural">Aria (Female)</MenuItem>
+                  <MenuItem value="en-US-DavisNeural">Davis (Male)</MenuItem>
+                  <MenuItem value="en-US-JaneNeural">Jane (Female)</MenuItem>
+                  <MenuItem value="en-US-JasonNeural">Jason (Male)</MenuItem>
                 </Select>
               </FormControl>
             </Grid>
@@ -355,8 +392,9 @@ const ConfigPanel = ({ open, onClose, socket }) => {
                   label="STT Engine"
                   onChange={(e) => updateConfig('stt.engine', e.target.value)}
                 >
-                  <MenuItem value="google">Google Speech Recognition</MenuItem>
+                  <MenuItem value="google">Google Speech Recognition (Recommended)</MenuItem>
                   <MenuItem value="sphinx">CMU Sphinx (Offline)</MenuItem>
+                  <MenuItem value="whisper">OpenAI Whisper (Local)</MenuItem>
                 </Select>
               </FormControl>
             </Grid>

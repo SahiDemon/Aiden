@@ -1,0 +1,6 @@
+"""System tray application module"""
+
+
+
+
+
