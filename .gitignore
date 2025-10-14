@@ -65,3 +65,6 @@ coverage/
 .cache/
 .venv/
 .venv
+
+
+vosk_models/
