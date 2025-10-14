@@ -1,159 +1,200 @@
-*# Aiden - AI Desktop Agent
+# 🤖 Aiden AI Assistant
 
-Aiden is a voice-activated AI desktop agent that uses natural voice interaction to assist with computer tasks. It is designed to be respectful, efficient, and personalized to your preferences.
+A powerful voice-controlled AI assistant for Windows with context-aware conversations and intelligent command execution.
 
-## Features
+## ✨ Features
 
-- **Voice Activation**: Trigger with a hotkey (asterisk '*' key) and issue commands by voice
-- **Natural Voice Responses**: Speaks back in a natural female voice using edge-tts
-- **Personalized Interaction**: Addresses you as "Boss" and remembers your preferences
-- **Command Processing**: Uses LLM capabilities to understand natural language commands
-- **System Integration**: Controls applications, performs file operations, web searches, and more
-- **Memory**: Tracks interaction history to become more helpful over time
+- **🎤 Voice Wake Word** - Say "Aiden" to activate hands-free
+- **⌨️ Global Hotkey** - Press Ctrl+Shift+Space for instant access
+- **💬 Context-Aware** - Remembers conversation context for follow-up questions
+- **🚀 Multi-Command** - Execute multiple commands in one request
+- **🧠 Smart Discovery** - Automatically finds and launches applications
+- **⚡ Lightning Fast** - Sub-second response times with Groq AI
+- **🔇 Hidden Mode** - Runs silently in system tray
+- **📊 Web Dashboard** - Optional web interface at http://localhost:5000
 
-## Requirements
+## 📋 Requirements
 
-- Python 3.9 or higher
-- Operating System: Windows, macOS, or Linux
-- Microphone for voice input
-- Speakers for voice output
-- Internet connection (for STT and LLM capabilities)
+- Windows 10/11 (64-bit)
+- Python 3.10+
+- Microphone
+- Internet connection
 
-## Installation
+## 🔧 Quick Start
 
-1. Clone the repository:
-   ```
-   git clone https://github.com/yourusername/aiden.git
-   cd aiden
-   ```
+```powershell
+# 1. Clone repository
+git clone https://github.com/yourusername/aiden.git
+cd aiden
 
-2. Create a virtual environment:
-   ```
-   python -m venv .venv
-   ```
+# 2. Run installer (auto-downloads all models!)
+.\install.ps1
 
-3. Activate the virtual environment:
-   - Windows: `.\.venv\Scripts\activate`
-   - macOS/Linux: `source .venv/bin/activate`
+# 3. Edit .env with your API keys
+notepad .env
 
-4. Install dependencies:
-   ```
-   pip install -r requirements.txt
-   ```
+# 4. Start Aiden
+.\run_aiden.ps1
+```
 
-5. Install tgpt CLI tool for LLM capabilities:
-   - Visit https://github.com/aandrew-me/tgpt and follow installation instructions
-   - Ensure `tgpt` is available in your PATH
+**The installer automatically:**
+- ✅ Checks Python version
+- ✅ Creates virtual environment
+- ✅ Installs all dependencies
+- ✅ Downloads Vosk model (74 MB)
+- ✅ Creates .env configuration
+- ✅ Sets up database
 
-6. Alternatively, use the included installation script:
-   ```
-   python install.py
-   ```
+## ⚙️ Configuration
 
-## Configuration
+Create a `.env` file with:
 
-The configuration files are located in the `config` directory:
+```env
+# ===== AI Service (Groq Cloud) =====
+GROQ_API_KEY=
+GROQ_BASE_URL=https://api.groq.com/openai/v1/chat/completions
+GROQ_MODEL=llama-3.1-8b-instant
+GROQ_MAX_TOKENS=2000
+GROQ_TEMPERATURE=0.7
 
-- `config.json`: General application settings
-- `user_profile.json`: User-specific preferences and history
+# ===== Database (Neon DB) =====
+NEON_DATABASE_URL=
+NEON_POOL_SIZE=5
+NEON_MAX_OVERFLOW=10
+NEON_POOL_TIMEOUT=30
 
-You can modify these files directly to customize Aiden's behavior.
+# ===== Cache (Redis Cloud) =====
+REDIS_URL=
+REDIS_DECODE_RESPONSES=true
+REDIS_SOCKET_TIMEOUT=5
+REDIS_SOCKET_CONNECT_TIMEOUT=5
 
-## Usage
+# ===== Application Settings =====
+APP_NAME=Aiden
+USER_NAME=Boss
+WAKE_WORD=aiden
+HOTKEY=*
+DEBUG=false
 
-1. Activate the virtual environment:
-   - Windows: `.\.venv\Scripts\activate`
-   - macOS/Linux: `source .venv/bin/activate`
+# ===== API Server =====
+API_HOST=localhost
+API_PORT=5000
+API_RELOAD=false
 
-2. Run the application:
-   ```
-   # Make sure you run this from the project root directory
-   python -m src.main
-   ```
+# ===== Speech Settings =====
+TTS_VOICE=en-US-AriaNeural
+TTS_RATE=1.0
+STT_LANGUAGE=en-US
+STT_TIMEOUT=5
+STT_ENERGY_THRESHOLD=4000
+STT_PAUSE_THRESHOLD=0.8
+VOSK_MODEL_PATH=vosk_models/vosk-model-small-en-us-0.15
 
-3. Once running, press the `*` (asterisk) key to activate Aiden, then speak your command.
+# ===== ESP32 Smart Home =====
+ESP32_ENABLED=true
+ESP32_IP_ADDRESS=192.168.1.150
+ESP32_TIMEOUT=5
+ESP32_RETRY_ATTEMPTS=3
 
-4. Aiden will respond verbally and perform the requested action.
+# ===== Cache Configuration =====
+ENABLE_CACHING=true
+CACHE_TTL_CONTEXT=300
+CACHE_TTL_APP_PATHS=86400
+CACHE_TTL_LLM_RESPONSE=3600
+CACHE_TTL_TTS_AUDIO=3600
 
-### Example Commands
+```
 
-- "Open Chrome"
-- "What's the weather like today?"
-- "Create a new text file on my desktop"
-- "Search the web for AI news"
-- "What time is it?"
-- "Open my documents folder"
+### Get Free API Keys
 
-## Development
+- **Groq AI**: [console.groq.com](https://console.groq.com) - FREE, super fast
+- **Neon DB**: [neon.tech](https://neon.tech) - 500MB free
+- **Redis**: [redis.com/cloud](https://redis.com/try-free) - 30MB free
 
-### Project Structure
+**Note:** The installer automatically downloads the Vosk wake word model (74 MB)
+
+## 🎯 Usage
+
+**Voice Activation:**
+1. Say "Aiden"
+2. Speak your command
+3. Aiden executes
+
+**Hotkey Activation:**
+1. Press Ctrl+Shift+Space
+2. Speak your command
+3. Aiden executes
+
+**Example Commands:**
+```
+"Open Chrome"
+"Close Notepad and open Calculator"
+"Turn on the fan" (ESP32)
+"Kill Python"
+"Lock my computer"
+"What's 25 + 37?"
+```
+
+## 🏗️ Project Structure
 
 ```
 aiden/
-├── config/             # Configuration files
-│   ├── config.json     # Application settings
-│   └── user_profile.json # User preferences and history
-├── logs/               # Log files
-├── src/                # Source code
-│   ├── utils/          # Utility modules
-│   │   ├── config_manager.py      # Configuration handling
-│   │   ├── voice_system.py        # TTS functionality
-│   │   ├── speech_recognition_system.py # STT functionality
-│   │   ├── hotkey_listener.py     # Keyboard activation
-│   │   ├── llm_connector.py       # AI processing
-│   │   └── command_dispatcher.py  # Command routing
-│   └── main.py         # Main application entry point
-├── temp/               # Temporary files
-├── install.py          # Installation helper
-├── requirements.txt    # Dependencies
-└── setup.py            # Installation script
+├── src/
+│   ├── main.py              # Entry point
+│   ├── core/                # Core logic
+│   ├── ai/                  # AI integration
+│   ├── speech/              # Voice I/O
+│   ├── execution/           # Command execution
+│   ├── database/            # Data persistence
+│   ├── api/                 # Web API
+│   └── utils/               # Utilities
+├── config/                  # Configuration
+├── sounds/                  # Audio files
+├── run_aiden.ps1           # Start script
+└── stop_aiden.ps1          # Stop script
 ```
 
-### Main Components
+## 🛠️ Troubleshooting
 
-- **ConfigManager**: Handles configuration and user profiles
-- **VoiceSystem**: Manages text-to-speech capabilities
-- **SpeechRecognitionSystem**: Handles speech-to-text functionality
-- **HotkeyListener**: Detects hotkey presses to activate the agent
-- **LLMConnector**: Connects to language models for command processing
-- **CommandDispatcher**: Routes commands to appropriate handlers
+**Microphone not working?**
+- Check Windows sound settings
+- Grant microphone permissions
+- Adjust `STT_ENERGY_THRESHOLD` in .env
 
-## Troubleshooting
+**Wake word not detecting?**
+- Ensure Vosk model is downloaded correctly
+- Speak clearly and directly to mic
+- Check `vosk_models/` directory
 
-### Common Issues
+**App launch fails?**
+- First launch may be slow (app discovery)
+- Check app name spelling
+- Try full app name
 
-1. **Module Not Found Errors**:
-   - Make sure you're running the application from the project root directory
-   - Ensure the virtual environment is activated
+## 📚 API Documentation
 
-2. **Audio Playback Issues**:
-   - The application uses pygame for audio in Python 3.11+ and falls back to other methods
-   - Make sure your system has working audio output
+Visit http://localhost:5000/docs when Aiden is running
 
-3. **Speech Recognition Problems**:
-   - Ensure your microphone is working and properly configured
-   - Check internet connectivity for the Google Web Speech API
+## 🤝 Contributing
 
-4. **tgpt Not Found**:
-   - Make sure tgpt is installed and available in your system PATH
-   - Test by running `tgpt "hello"` in your terminal
+1. Fork the repository
+2. Create feature branch
+3. Commit changes
+4. Push to branch
+5. Open Pull Request
 
-## Security Considerations
+## 📄 License
 
-Aiden follows these security principles:
+MIT License - see LICENSE file
 
-- Restricted file system access to prevent operations in sensitive directories
-- Confirmation required for potentially destructive operations
-- No arbitrary system command execution
-- User data stored locally, not sent to external services (except for STT and LLM processing)
+## 🙏 Credits
 
-## License
+- Vosk - Offline speech recognition
+- edge-tts - Microsoft Edge TTS
+- Groq - Super fast AI inference
+- Neon - Serverless PostgreSQL
+- FastAPI - Modern web framework
 
-[MIT License](LICENSE)
+---
 
-## Acknowledgements
-
-- [edge-tts](https://github.com/rany2/edge-tts) for natural voice capabilities
-- [tgpt](https://github.com/aandrew-me/tgpt) for LLM interaction
-- [SpeechRecognition](https://github.com/Uberi/speech_recognition) for speech-to-text capabilities
-- [pynput](https://github.com/moses-palmer/pynput) for hotkey detection
+**Made with ❤️ for productivity**

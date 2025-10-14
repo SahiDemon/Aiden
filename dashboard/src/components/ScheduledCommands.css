@@ -1,0 +1,273 @@
+.scheduled-commands-container {
+    background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
+    border-radius: 12px;
+    padding: 24px;
+    margin: 16px 0;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    border: 1px solid #3a3a3a;
+}
+
+.scheduled-commands-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid #4a5568;
+}
+
+.scheduled-commands-header h3 {
+    color: #ffffff;
+    margin: 0;
+    font-size: 1.25rem;
+    font-weight: 600;
+}
+
+.schedule-count {
+    background: rgba(76, 130, 247, 0.2);
+    color: #4c82f7;
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    border: 1px solid #4c82f7;
+}
+
+.schedules-list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.schedule-item {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    padding: 16px;
+    border-left: 4px solid;
+    transition: all 0.2s ease;
+    position: relative;
+    border: 1px solid #4a5568;
+}
+
+.schedule-item.normal {
+    border-left-color: #3b82f6;
+}
+
+.schedule-item.warning {
+    border-left-color: #f59e0b;
+    background: rgba(245, 158, 11, 0.1);
+}
+
+.schedule-item.urgent {
+    border-left-color: #ef4444;
+    background: rgba(239, 68, 68, 0.1);
+    animation: subtlePulse 2s infinite;
+}
+
+@keyframes subtlePulse {
+    0%, 100% { 
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+    50% { 
+        box-shadow: 0 4px 12px rgba(239, 68, 68, 0.15);
+    }
+}
+
+.schedule-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.operation-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.operation-icon {
+    font-size: 1.25rem;
+    color: #6b7280;
+}
+
+.operation-name {
+    color: #ffffff;
+    font-weight: 600;
+    font-size: 1rem;
+}
+
+.countdown-display {
+    display: flex;
+    align-items: center;
+}
+
+.countdown-time {
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
+    font-size: 1.125rem;
+    font-weight: 600;
+    padding: 8px 12px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid #4a5568;
+    min-width: 70px;
+    text-align: center;
+}
+
+.countdown-time.normal {
+    color: #3b82f6;
+    border-color: #3b82f6;
+}
+
+.countdown-time.warning {
+    color: #f59e0b;
+    border-color: #f59e0b;
+}
+
+.countdown-time.urgent {
+    color: #ef4444;
+    border-color: #ef4444;
+    font-weight: 700;
+}
+
+.schedule-details {
+    margin: 12px 0;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 6px;
+    border: 1px solid #4a5568;
+}
+
+.execution-time {
+    color: #cbd5e0;
+    font-size: 0.875rem;
+    margin-bottom: 4px;
+    font-weight: 500;
+}
+
+.original-query {
+    color: #a0aec0;
+    font-style: italic;
+    font-size: 0.875rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.schedule-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 16px;
+}
+
+.action-btn {
+    flex: 1;
+    padding: 8px 16px;
+    border: 1px solid;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 500;
+    font-size: 0.875rem;
+    transition: all 0.2s ease;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.modify-btn {
+    color: #3b82f6;
+    border-color: #3b82f6;
+}
+
+.modify-btn:hover {
+    background: rgba(59, 130, 246, 0.2);
+    transform: translateY(-1px);
+}
+
+.cancel-btn {
+    color: #ef4444;
+    border-color: #ef4444;
+}
+
+.cancel-btn:hover {
+    background: rgba(239, 68, 68, 0.2);
+    transform: translateY(-1px);
+}
+
+.urgency-banner {
+    position: absolute;
+    top: 0;
+    right: 0;
+    background: #ef4444;
+    color: white;
+    padding: 4px 12px;
+    border-radius: 0 8px 0 8px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.schedules-footer {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid #e5e7eb;
+    text-align: center;
+}
+
+.footer-btn {
+    padding: 10px 20px;
+    border: 1px solid #6b7280;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 500;
+    font-size: 0.875rem;
+    transition: all 0.2s ease;
+    background: #ffffff;
+    color: #6b7280;
+}
+
+.cancel-all-btn:hover {
+    background: #f9fafb;
+    border-color: #374151;
+    color: #374151;
+}
+
+.no-schedules {
+    text-align: center;
+    padding: 40px 20px;
+    color: #a0aec0;
+}
+
+.no-schedules-icon {
+    font-size: 3rem;
+    margin-bottom: 12px;
+    opacity: 0.5;
+}
+
+.no-schedules p {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 500;
+}
+
+@media (max-width: 768px) {
+    .scheduled-commands-container {
+        padding: 16px;
+        margin: 12px 0;
+    }
+    
+    .schedule-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+    
+    .countdown-display {
+        align-self: flex-end;
+    }
+    
+    .schedule-actions {
+        flex-direction: column;
+    }
+    
+    .action-btn {
+        width: 100%;
+    }
+} 
