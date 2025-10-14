@@ -24,7 +24,7 @@ A powerful voice-controlled AI assistant for Windows with context-aware conversa
 
 ```powershell
 # 1. Clone repository
-git clone https://github.com/yourusername/aiden.git
+git clone https://github.com/SahiDemon/Aiden.git
 cd aiden
 
 # 2. Run installer (auto-downloads all models!)
