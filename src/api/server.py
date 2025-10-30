@@ -29,31 +29,25 @@ logger = get_logger(__name__)
 # Global voice activation callback
 _voice_activation_callback: Optional[Callable] = None
 
-
 def set_voice_activation_callback(callback: Callable):
     """Set the voice activation callback function"""
     global _voice_activation_callback
     _voice_activation_callback = callback
-
 
 # Pydantic models for requests/responses
 class MessageRequest(BaseModel):
     message: str
     input_type: str = "text"
 
-
 class CommandRequest(BaseModel):
     command_type: str
     params: Dict[str, Any]
 
-
 class ConfigUpdateRequest(BaseModel):
     settings: Dict[str, Any]
 
-
 class ESP32ControlRequest(BaseModel):
     action: str  # turn_on, turn_off, toggle, change_mode
-
 
 # WebSocket connection manager
 class ConnectionManager:
@@ -155,9 +149,7 @@ class ConnectionManager:
             except Exception:
                 await self.disconnect(client_id)
 
-
 manager = ConnectionManager()
-
 
 # Lifespan context manager for startup/shutdown
 @asynccontextmanager
@@ -207,7 +199,6 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Error closing services: {e}")
 
-
 # Create FastAPI app
 app = FastAPI(
     title="Aiden AI Assistant API",
@@ -225,7 +216,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 # ===== REST API Endpoints =====
 
 @app.get("/api/v1/health")
@@ -237,7 +227,6 @@ async def health_check():
         "version": "2.0.0",
         "timestamp": datetime.now().isoformat()
     }
-
 
 @app.get("/api/v1/health")
 async def health_check():
@@ -282,7 +271,6 @@ async def health_check():
         "timestamp": datetime.now().isoformat()
     }
 
-
 @app.post("/api/v1/conversation/message")
 async def send_message(request: MessageRequest):
     """
@@ -301,7 +289,6 @@ async def send_message(request: MessageRequest):
     except Exception as e:
         logger.error(f"Error processing message: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.get("/api/v1/conversation/history")
 async def get_conversation_history(limit: int = 50):
@@ -323,7 +310,6 @@ async def get_conversation_history(limit: int = 50):
             "messages": [],
             "count": 0
         }
-
 
 @app.get("/api/v1/system/status")
 async def get_system_status():
@@ -358,7 +344,6 @@ async def get_system_status():
         logger.error(f"Error getting system status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.get("/api/v1/config")
 async def get_config():
     """Get current configuration"""
@@ -392,7 +377,6 @@ async def get_config():
         logger.error(f"Error getting config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.put("/api/v1/config")
 async def update_config(request: ConfigUpdateRequest):
     """Update configuration"""
@@ -406,7 +390,6 @@ async def update_config(request: ConfigUpdateRequest):
     except Exception as e:
         logger.error(f"Error updating config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.get("/api/v1/esp32/status")
 async def get_esp32_status():
@@ -432,7 +415,6 @@ async def get_esp32_status():
     except Exception as e:
         logger.error(f"Error getting ESP32 status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.post("/api/v1/esp32/control")
 async def control_esp32(request: ESP32ControlRequest):
@@ -481,7 +463,6 @@ async def control_esp32(request: ESP32ControlRequest):
         logger.error(f"Error controlling ESP32: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.get("/api/v1/command/history")
 async def get_command_history(limit: int = 100):
     """Get command execution history"""
@@ -497,7 +478,6 @@ async def get_command_history(limit: int = 100):
     except Exception as e:
         logger.error(f"Error getting command history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 # ===== NEW Dashboard API Endpoints =====
 
@@ -542,7 +522,6 @@ async def get_settings_endpoint():
         logger.error(f"Error getting settings: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.put("/api/v1/settings/speech")
 async def update_speech_settings(settings_update: Dict[str, Any]):
     """Update speech settings"""
@@ -557,7 +536,6 @@ async def update_speech_settings(settings_update: Dict[str, Any]):
         logger.error(f"Error updating speech settings: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.put("/api/v1/settings/ai")
 async def update_ai_settings(settings_update: Dict[str, Any]):
     """Update AI settings"""
@@ -570,7 +548,6 @@ async def update_ai_settings(settings_update: Dict[str, Any]):
         logger.error(f"Error updating AI settings: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.put("/api/v1/settings/system")
 async def update_system_settings(settings_update: Dict[str, Any]):
     """Update system settings"""
@@ -582,7 +559,6 @@ async def update_system_settings(settings_update: Dict[str, Any]):
     except Exception as e:
         logger.error(f"Error updating system settings: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.get("/api/v1/conversations")
 async def get_conversations():
@@ -598,7 +574,6 @@ async def get_conversations():
     except Exception as e:
         logger.error(f"Error getting conversations: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.get("/api/v1/conversations/{conversation_id}")
 async def get_conversation(conversation_id: str):
@@ -620,7 +595,6 @@ async def get_conversation(conversation_id: str):
         logger.error(f"Error getting conversation: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.delete("/api/v1/conversations/{conversation_id}")
 async def delete_conversation(conversation_id: str):
     """Delete a conversation"""
@@ -635,7 +609,6 @@ async def delete_conversation(conversation_id: str):
     except Exception as e:
         logger.error(f"Error deleting conversation: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.post("/api/v1/voice/activate")
 async def activate_voice():
@@ -666,7 +639,6 @@ async def activate_voice():
         logger.error(f"Error activating voice: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.get("/api/v1/stats/dashboard")
 async def get_dashboard_stats():
     """Get dashboard statistics"""
@@ -690,7 +662,6 @@ async def get_dashboard_stats():
     except Exception as e:
         logger.error(f"Error getting dashboard stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.get("/api/v1/esp32/devices")
 async def get_esp32_devices():
@@ -718,7 +689,6 @@ async def get_esp32_devices():
     except Exception as e:
         logger.error(f"Error getting ESP32 devices: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 # ===== WebSocket Endpoint =====
 
@@ -777,7 +747,6 @@ async def websocket_endpoint(websocket: WebSocket):
         await manager.disconnect(client_id)
         logger.info(f"WebSocket client {client_id} cleanup complete.")
 
-
 # ===== Static Files (Dashboard) =====
 
 # Serve React dashboard (if built)
@@ -811,7 +780,6 @@ except:
             "note": "Dashboard not built. Run 'npm run build' in dashboard folder."
         }
 
-
 # Global function to broadcast updates (can be called from other modules)
 async def broadcast_update(update_type: str, data: Dict[str, Any]):
     """
@@ -827,38 +795,38 @@ async def broadcast_update(update_type: str, data: Dict[str, Any]):
     logger.debug(f"Broadcast data: {data}")
     await manager.broadcast(message)
 
-
 # ===== Server Lifecycle Functions =====
 
-# Global server instance
+# Global server instance and configuration
 _server = None
-
+_server_config = None
 
 async def start_api_server():
     """Start the FastAPI server in background"""
+    global _server, _server_config
     import uvicorn
     import threading
     
     settings = get_settings()
+    _server_config = uvicorn.Config(
+        app,
+        host=settings.api.host,
+        port=settings.api.port,
+        log_level="info",
+        access_log=False,
+        loop="asyncio"
+    )
     
     def run_server():
         """Run uvicorn server in a thread with correct event loop policy"""
+        global _server
         # Import the event loop policy in this thread
         from src.utils.event_loop import ensure_selector_event_loop
         ensure_selector_event_loop()
         
-        # Get settings properly
-        settings = get_settings()
-        
-        # Create and run the server with the correct event loop
-        uvicorn.run(
-            app,
-            host=settings.api.host,
-            port=settings.api.port,
-            log_level="info",
-            access_log=False,
-            loop="asyncio"  # Force asyncio loop
-        )
+        # Create server instance that we can control
+        _server = uvicorn.Server(_server_config)
+        _server.run()
     
     # Start server in a daemon thread
     server_thread = threading.Thread(target=run_server, daemon=True)
@@ -869,17 +837,19 @@ async def start_api_server():
     # Give server time to start
     await asyncio.sleep(2)
 
-
 async def stop_api_server():
-    """Stop the API server"""
+    """Stop the API server gracefully"""
     global _server
     
     if _server:
         logger.info("Stopping API server...")
         _server.should_exit = True
+        # Give it time to shutdown gracefully
+        await asyncio.sleep(1)
         _server = None
-
+        logger.info("API server stopped")
+    else:
+        logger.warning("No server instance to stop")
 
 # Export for use in other modules
 __all__ = ["app", "broadcast_update", "manager", "start_api_server", "stop_api_server"]
-

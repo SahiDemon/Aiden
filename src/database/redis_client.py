@@ -368,11 +368,29 @@ async def get_redis_client() -> RedisClient:
             return _redis_clients[loop_id]
     
     except Exception as e:
-        logger.error(f"Error getting Redis client: {e}")
-        # Fallback: create temporary client
-        client = RedisClient()
-        await client.connect()
-        return client
+        logger.error(f"Error getting Redis client: {e}", exc_info=True)
+        
+        # Fallback: create and store temporary client for this event loop
+        # This prevents creating multiple unmanaged clients on repeated errors
+        try:
+            loop = asyncio.get_running_loop()
+            loop_id = id(loop)
+            
+            with _client_lock:
+                # Check again if another call already created it
+                if loop_id in _redis_clients:
+                    return _redis_clients[loop_id]
+                
+                # Create fallback client and store it
+                logger.warning(f"Creating fallback Redis client for event loop {loop_id}")
+                client = RedisClient()
+                await client.connect()
+                _redis_clients[loop_id] = client
+                return client
+        except Exception as fallback_error:
+            logger.critical(f"Failed to create fallback Redis client: {fallback_error}", exc_info=True)
+            # Re-raise to make the issue visible rather than silently failing
+            raise RuntimeError(f"Redis client unavailable: {fallback_error}") from fallback_error
 
 
 async def close_redis_client():
@@ -401,4 +419,3 @@ async def close_all_redis_clients():
             except Exception as e:
                 logger.debug(f"Error closing client {loop_id}: {e}")
         _redis_clients.clear()
-
