@@ -2,6 +2,7 @@
 Context Manager
 Manages conversation context using Redis for intelligent follow-up detection
 """
+import asyncio
 import uuid
 import logging
 import hashlib
@@ -28,6 +29,7 @@ class ContextManager:
     async def start_conversation(self, user_id: str = "default", mode: str = "voice") -> str:
         """
         Start new conversation and return conversation ID
+        OPTIMIZED: Creates ID immediately, saves to DB in background
         
         Args:
             user_id: User identifier
@@ -37,18 +39,11 @@ class ContextManager:
             Conversation ID
         """
         try:
-            # Create conversation in database
-            db = await get_db_client()
-            conversation = await db.create_conversation(user_id=user_id, mode=mode)
+            # Generate ID immediately (no database delay)
+            conversation_id = str(uuid.uuid4())
+            self.current_conversation_id = conversation_id
             
-            # Handle case where database is unavailable
-            if conversation:
-                conversation_id = str(conversation.id)
-            else:
-                conversation_id = str(uuid.uuid4())
-                logger.warning("Database unavailable, using generated conversation ID")
-            
-            # Initialize context in Redis
+            # Initialize context in Redis (fast, in-memory)
             redis = await get_redis_client()
             initial_context = {
                 "conversation_id": conversation_id,
@@ -64,15 +59,52 @@ class ContextManager:
             
             await redis.save_context(conversation_id, initial_context)
             
-            self.current_conversation_id = conversation_id
-            logger.info(f"Started new conversation: {conversation_id}")
+            # Save to database in background (non-blocking)
+            asyncio.create_task(self._save_conversation_to_db(conversation_id, user_id, mode))
             
             return conversation_id
             
         except Exception as e:
             logger.error(f"Error starting conversation: {e}")
             # Return fallback ID
-            return str(uuid.uuid4())
+            fallback_id = str(uuid.uuid4())
+            self.current_conversation_id = fallback_id
+            return fallback_id
+    
+    async def _save_conversation_to_db(self, conversation_id: str, user_id: str, mode: str):
+        """Save conversation to database in background (non-blocking)"""
+        try:
+            db = await get_db_client()
+            await db.create_conversation(user_id=user_id, mode=mode)
+        except Exception as e:
+            logger.debug(f"Background DB save failed (non-critical): {e}")
+    
+    async def _save_messages_to_db(self, conversation_id: str, user_message: str, ai_response: Dict[str, Any]):
+        """Save messages to database in background (non-blocking)"""
+        try:
+            db = await get_db_client()
+            await db.add_message(
+                conversation_id=conversation_id,
+                role="user",
+                content=user_message,
+                metadata={"intent": ai_response.get("intent")}
+            )
+            await db.add_message(
+                conversation_id=conversation_id,
+                role="assistant",
+                content=ai_response.get("response", ""),
+                metadata={"commands": ai_response.get("commands", [])}
+            )
+        except Exception as e:
+            logger.debug(f"Background message save failed (non-critical): {e}")
+    
+    async def _end_conversation_in_db(self, conversation_id: str):
+        """End conversation in database (background, non-blocking)"""
+        try:
+            db = await get_db_client()
+            await db.end_conversation(conversation_id)
+        except Exception as e:
+            logger.debug(f"Background conversation end failed (non-critical): {e}")
     
     async def get_context(self, conversation_id: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -132,6 +164,8 @@ class ContextManager:
             context["history"].append({"role": "assistant", "content": ai_response.get("response", "")})
             context["history"] = context["history"][-10:]  # Keep last 10 messages
             
+            logger.info(f"[CONTEXT] Updated history: now has {len(context['history'])} messages")
+            
             # Update context fields from AI response
             context["last_intent"] = ai_response.get("intent")
             context["expecting_followup"] = ai_response.get("expecting_followup", False)
@@ -152,24 +186,16 @@ class ContextManager:
             if ai_response.get("commands"):
                 context["last_action"] = ai_response["commands"][0].get("type")
             
-            # Save updated context
+            # Save updated context to Redis (fast, blocking)
             redis = await get_redis_client()
             await redis.save_context(conversation_id, context)
             
-            # Also save to database
-            db = await get_db_client()
-            await db.add_message(
-                conversation_id=conversation_id,
-                role="user",
-                content=user_message,
-                metadata={"intent": ai_response.get("intent")}
-            )
-            await db.add_message(
-                conversation_id=conversation_id,
-                role="assistant",
-                content=ai_response.get("response", ""),
-                metadata={"commands": ai_response.get("commands", [])}
-            )
+            # Save to database in background (non-blocking)
+            asyncio.create_task(self._save_messages_to_db(
+                conversation_id, 
+                user_message, 
+                ai_response
+            ))
             
             logger.debug(f"Updated context for conversation {conversation_id}")
             
@@ -189,9 +215,8 @@ class ContextManager:
             return
         
         try:
-            # Mark as ended in database
-            db = await get_db_client()
-            await db.end_conversation(conversation_id)
+            # Mark as ended in database (background, non-blocking)
+            asyncio.create_task(self._end_conversation_in_db(conversation_id))
             
             # Keep context in Redis (will expire based on TTL)
             # This allows us to resume if needed
@@ -302,13 +327,14 @@ class ContextManager:
         
         return False
     
-    async def build_messages(self, user_text: str, context: Dict[str, Any]) -> List[Dict[str, str]]:
+    async def build_messages(self, user_text: str, context: Dict[str, Any], needs_context: List[str] = None) -> List[Dict[str, str]]:
         """
         Build messages list for AI including context
         
         Args:
             user_text: User's message
             context: Conversation context
+            needs_context: List of context types needed (e.g., ["installed_apps", "running_processes"])
             
         Returns:
             List of message dictionaries for AI
@@ -331,22 +357,57 @@ class ContextManager:
             logger.error(f"Error loading prompts.yaml: {e}")
             system_prompt = "You are Aiden, an intelligent Windows assistant."
         
-        # Add system message from prompts.yaml
+        # Get system context ONLY if AI requested it via needs_context
+        system_context_str = ""
+        
+        if needs_context:
+            logger.info(f"[CONTEXT] AI requested context: {needs_context}")
+            try:
+                from src.utils.system_context import get_system_context
+                sys_ctx = get_system_context()
+                ai_context = await sys_ctx.get_ai_context()
+                
+                system_context_str = "\n\n## AVAILABLE SYSTEM RESOURCES\n"
+                
+                if "installed_apps" in needs_context and ai_context.get("installed_apps"):
+                    apps_list = ai_context["installed_apps"]
+                    system_context_str += f"Installed Apps ({ai_context['total_apps']} total): "
+                    system_context_str += ", ".join([app.split(" (")[0] for app in apps_list[:20]])
+                    system_context_str += "\n"
+                
+                if "running_processes" in needs_context and ai_context.get("running_processes"):
+                    procs_list = ai_context["running_processes"]
+                    system_context_str += f"Running Processes ({ai_context['total_processes']} total): "
+                    system_context_str += ", ".join(procs_list[:40])
+                
+                logger.debug(f"System context provided: {needs_context}")
+            
+            except Exception as e:
+                logger.debug(f"Could not fetch system context: {e}")
+        else:
+            logger.debug(f"No system context requested for: {user_text[:50]}...")
+        
+        # Add system message from prompts.yaml + optional system context
         system_message = {
             "role": "system",
-            "content": system_prompt
+            "content": system_prompt + system_context_str
         }
         messages.append(system_message)
         
         # Add conversation history if available
         history = context.get("history", [])
+        logger.info(f"[CONTEXT] History has {len(history)} messages")
         if history:
-            # Add last 5 messages for context
-            messages.extend(history[-5:])
+            # Add last 10 messages for context (5 exchanges)
+            messages.extend(history[-10:])
+            logger.info(f"[CONTEXT] Added {len(history[-10:])} history messages to AI context")
+        else:
+            logger.warning(f"[CONTEXT] No conversation history found for conversation {context.get('conversation_id')}")
         
         # Add current user message
         messages.append({"role": "user", "content": user_text})
         
+        logger.info(f"[CONTEXT] Total messages being sent to AI: {len(messages)}")
         return messages
 
 

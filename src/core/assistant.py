@@ -7,6 +7,7 @@ import logging
 from typing import Optional
 
 from src.ai.groq_client import get_groq_client
+from src.ai.gemini_client import get_gemini_client
 from src.core.context_manager import get_context_manager
 from src.execution.command_executor import get_command_executor
 from src.speech.stt import get_stt_engine
@@ -34,18 +35,23 @@ class AidenAssistant:
         self.tts = get_tts_engine()
         
         # Async components (initialized lazily)
-        self.groq = None
+        self.llm_client = None
         
         # State
         self.is_processing = False
         
-        logger.info("Aiden Assistant initialized")
+        logger.info(f"Aiden Assistant initialized with {self.settings.app.llm_provider.upper()} LLM")
     
-    async def _ensure_groq(self):
-        """Lazy initialize Groq client"""
-        if self.groq is None:
-            self.groq = await get_groq_client()
-        return self.groq
+    async def _ensure_llm_client(self):
+        """Lazy initialize LLM client based on provider setting"""
+        if self.llm_client is None:
+            if self.settings.app.llm_provider == "gemini":
+                logger.info("Initializing Google Gemini client...")
+                self.llm_client = await get_gemini_client()
+            else:  # groq
+                logger.info("Initializing Groq client...")
+                self.llm_client = await get_groq_client()
+        return self.llm_client
     
     async def _auto_listen_for_followup(self):
         """
@@ -55,13 +61,11 @@ class AidenAssistant:
         try:
             import asyncio
             
-            logger.info("⏳ Waiting 1 second before auto-listening...")
-            await asyncio.sleep(1.0)  # Give user a moment after TTS finishes
+            # Wait briefly before auto-listen
+            await asyncio.sleep(0.3)
             
-            logger.info("🎤 Auto-listening for follow-up response...")
-            
-            # Listen for user response
-            success, user_text, error = await self.stt.transcribe()
+            # Listen for user response (activation sound plays automatically)
+            success, user_text, error = await self.stt.transcribe(play_activation_sound=True)
             
             if not success:
                 if error == "timeout":
@@ -77,11 +81,37 @@ class AidenAssistant:
             
             logger.info(f"📝 USER FOLLOW-UP: {user_text}")
             
+            # Broadcast follow-up user message to dashboard
+            try:
+                from src.utils.websocket_broadcast import broadcast_message
+                await broadcast_message("message", {
+                    "role": "user",
+                    "content": user_text,
+                    "timestamp": __import__('datetime').datetime.now().isoformat()
+                })
+            except Exception:
+                pass  # Non-critical
+            
             # Process the follow-up message
             await self._process_user_message(user_text)
             
         except Exception as e:
             logger.error(f"Error during auto-listen: {e}", exc_info=True)
+    
+    async def _speak_async(self, text: str, wait: bool = False):
+        """
+        Wrapper to speak asynchronously without blocking
+        
+        Args:
+            text: Text to speak
+            wait: If True, waits for TTS to complete (needed for follow-ups)
+        
+        Catches errors to prevent TTS from blocking execution
+        """
+        try:
+            await self.tts.speak(text)
+        except Exception as e:
+            logger.error(f"Background TTS error (non-critical): {e}")
     
     async def _enhance_response_with_feedback(
         self, 
@@ -101,7 +131,7 @@ class AidenAssistant:
             Enhanced response or None if enhancement fails
         """
         try:
-            groq = await self._ensure_groq()
+            llm = await self._ensure_llm_client()
             
             # Load enhancement prompt from prompts.yaml
             from pathlib import Path
@@ -175,10 +205,13 @@ class AidenAssistant:
             logger.error(f"Error enhancing response: {e}")
             return None
     
-    async def handle_voice_activation(self):
+    async def handle_voice_activation(self, from_hotkey: bool = False):
         """
         Handle voice activation (wake word or hotkey)
         Complete flow: Listen -> Understand -> Execute -> Respond
+        
+        Args:
+            from_hotkey: True if activated via hotkey (plays activation sound)
         """
         if self.is_processing:
             logger.warning("Already processing a request")
@@ -187,27 +220,21 @@ class AidenAssistant:
         self.is_processing = True
         
         try:
-            logger.info("=" * 60)
-            logger.info("VOICE ACTIVATION - Starting interaction")
-            logger.info("=" * 60)
+            # Broadcast listening status
+            from src.utils.websocket_broadcast import broadcast_voice_status
+            await broadcast_voice_status("listening", speaking=False)
             
-            # Start or continue conversation
+            # Step 1: Listen IMMEDIATELY (activation sound plays inside transcribe)
+            # Don't wait for anything - just start listening!
+            success, user_text, error = await self.stt.transcribe(play_activation_sound=True)
+            
+            # Start conversation in background while user was speaking
             if not self.context_manager.current_conversation_id:
                 conversation_id = await self.context_manager.start_conversation(mode="voice")
-                logger.info(f"Started new conversation: {conversation_id}")
-            else:
-                logger.info(f"Continuing conversation: {self.context_manager.current_conversation_id}")
-            
-            # CRITICAL: Give wake word detector time to release microphone
-            import asyncio
-            await asyncio.sleep(0.3)
-            
-            # Step 1: Listen for user input
-            logger.info("About to call STT transcribe...")
-            success, user_text, error = await self.stt.transcribe()
-            logger.info(f"STT returned: success={success}, text={user_text}, error={error}")
             
             if not success:
+                # Broadcast idle status
+                await broadcast_voice_status("idle", speaking=False)
                 if error == "timeout":
                     logger.info("No speech detected - timeout")
                 else:
@@ -217,9 +244,25 @@ class AidenAssistant:
             
             if not user_text:
                 logger.warning("Empty transcription")
+                # Broadcast idle status
+                await broadcast_voice_status("idle", speaking=False)
                 return
             
             logger.info(f"USER: {user_text}")
+            
+            # Broadcast user message to dashboard
+            try:
+                from src.utils.websocket_broadcast import broadcast_message
+                await broadcast_message("message", {
+                    "role": "user",
+                    "content": user_text,
+                    "timestamp": __import__('datetime').datetime.now().isoformat()
+                })
+            except Exception:
+                pass  # Non-critical
+            
+            # Broadcast processing status
+            await broadcast_voice_status("processing", speaking=False)
             
             # Step 2: Process with AI
             await self._process_user_message(user_text)
@@ -227,8 +270,12 @@ class AidenAssistant:
         except Exception as e:
             logger.error(f"Error handling voice activation: {e}", exc_info=True)
             await self.tts.speak("Sorry, something went wrong.")
+            # Broadcast idle status on error
+            await broadcast_voice_status("idle", speaking=False)
         finally:
             self.is_processing = False
+            # Broadcast idle status when conversation ends
+            await broadcast_voice_status("idle", speaking=False)
             logger.info("=" * 60)
     
     async def handle_text_message(self, text: str) -> str:
@@ -255,7 +302,9 @@ class AidenAssistant:
     
     async def _process_user_message(self, user_text: str) -> str:
         """
-        Core message processing logic
+        Core message processing logic with 2-pass AI system:
+        Pass 1: AI decides what context it needs
+        Pass 2: AI gets the context and responds
         
         Args:
             user_text: User's message
@@ -267,19 +316,36 @@ class AidenAssistant:
             # Get conversation context
             context = await self.context_manager.get_context()
             
-            # Build messages for AI
-            messages = await self.context_manager.build_messages(user_text, context)
+            # PASS 1: Ask AI what context it needs (lightweight, no system context)
+            logger.info("🧠 Pass 1: AI analyzing request...")
+            messages_pass1 = await self.context_manager.build_messages(user_text, context, needs_context=None)
             
-            # Call Groq AI
-            logger.info("Calling Groq AI...")
-            groq = await self._ensure_groq()
-            ai_response = await groq.chat(messages)
+            llm = await self._ensure_llm_client()
+            ai_response_pass1 = await llm.chat(messages_pass1)
             
-            if not ai_response:
-                logger.error("Empty response from Groq AI")
+            if not ai_response_pass1:
+                logger.error(f"Empty response from {self.settings.app.llm_provider.upper()} AI (Pass 1)")
                 response_text = "Sorry, I couldn't process that."
                 await self.tts.speak(response_text)
                 return response_text
+            
+            # Check if AI needs additional context
+            needs_context = ai_response_pass1.get("needs_context", [])
+            
+            if needs_context:
+                # PASS 2: Provide requested context and get final response
+                logger.info(f"🧠 Pass 2: Fetching {needs_context} and re-processing...")
+                messages_pass2 = await self.context_manager.build_messages(user_text, context, needs_context=needs_context)
+                ai_response = await llm.chat(messages_pass2)
+                
+                if not ai_response:
+                    # Fallback to Pass 1 response
+                    logger.warning("Pass 2 failed, using Pass 1 response")
+                    ai_response = ai_response_pass1
+            else:
+                # No additional context needed, use Pass 1 response
+                logger.info("✅ No additional context needed")
+                ai_response = ai_response_pass1
             
             # Parse AI response
             intent = ai_response.get("intent", "unknown")
@@ -291,14 +357,32 @@ class AidenAssistant:
             logger.info(f"AI COMMANDS: {len(commands)}")
             logger.info(f"AI RESPONSE: {response_text}")
             
+            # Broadcast assistant response to dashboard
+            try:
+                from src.utils.websocket_broadcast import broadcast_message
+                await broadcast_message("message", {
+                    "role": "assistant",
+                    "content": response_text,
+                    "timestamp": __import__('datetime').datetime.now().isoformat()
+                })
+            except Exception:
+                pass  # Non-critical
+            
+            # Trust the AI's decision on whether to expect follow-up
+            expecting_followup = ai_response.get("expecting_followup", False)
+            
             # Execute commands concurrently if any
             if commands:
-                # Execute commands first to get ESP32/system responses
+                # Start TTS in background immediately (fire and forget)
+                # But store task if we need to wait for follow-up
+                tts_task = asyncio.create_task(self._speak_async(response_text))
+                
+                # Execute commands FIRST for instant action
                 execution_results = await self.executor.execute_multiple(commands)
                 
                 # Check for ESP32 responses and enhance AI response
                 esp32_responses = [r.get("response_data") for r in execution_results if r.get("response_data")]
-                if esp32_responses:
+                if esp32_responses and self.settings.app.enable_enhanced_responses:
                     esp32_feedback = esp32_responses[0]
                     logger.info(f"📡 ESP32 Response: {esp32_feedback}")
                     
@@ -309,6 +393,10 @@ class AidenAssistant:
                         esp32_feedback
                     )
                     response_text = enhanced_response if enhanced_response else response_text
+                elif esp32_responses and not self.settings.app.enable_enhanced_responses:
+                    # Log original ESP32 feedback but skip enhancement
+                    esp32_feedback = esp32_responses[0]
+                    logger.info(f"📡 ESP32 Response: {esp32_feedback}")
                 
                 # Check for failures and update response
                 failed = [r for r in execution_results if not r.get("success", False)]
@@ -319,11 +407,16 @@ class AidenAssistant:
                     if any("Connection failed" in str(e) or "Timeout" in str(e) for e in errors):
                         response_text = "I couldn't reach the ESP32. Please check if it's powered on and connected to the network."
                 
-                # Speak the (possibly enhanced) response
-                await self.tts.speak(response_text)
+                # Wait for TTS to finish if we're auto-listening (prevent mic from hearing itself)
+                if expecting_followup:
+                    await tts_task
             else:
                 # No commands, just respond
-                await self.tts.speak(response_text)
+                # Wait for TTS if we're expecting follow-up, otherwise background
+                if expecting_followup:
+                    await self._speak_async(response_text)  # Wait for TTS
+                else:
+                    asyncio.create_task(self._speak_async(response_text))  # Background
             
             # Update context if needed
             if update_context:
@@ -332,27 +425,13 @@ class AidenAssistant:
                     ai_response=ai_response
                 )
             
-            # Keep conversation alive if expecting followup
-            expecting_followup = ai_response.get("expecting_followup", False)
-            response_text_lower = response_text.lower()
-            
-            # Smart detection: only auto-listen if response actually asks a question
-            has_question = any(phrase in response_text_lower for phrase in [
-                "would you like", "do you want", "should i", "can i help",
-                "which one", "what would you prefer", "need anything else",
-                "how can i help"
-            ])
-            
-            if expecting_followup and has_question:
-                logger.info("🔄 Expecting followup (question detected) - will auto-listen for response")
+            # Let AI decide if we should continue listening
+            if expecting_followup:
+                logger.info("🔄 AI expects follow-up - will auto-listen for response")
                 # AUTO-LISTEN for follow-up without requiring wake word!
                 await self._auto_listen_for_followup()
             else:
-                # Conversation complete - no auto-listen
-                if expecting_followup and not has_question:
-                    logger.info("⚠️ AI set expecting_followup=true but no question asked - skipping auto-listen")
-                else:
-                    logger.info("✅ Conversation complete - no follow-up expected")
+                logger.info("✅ Conversation complete - no follow-up expected")
                 # Conversation stays active for 5 minutes (Redis TTL handles cleanup)
             
             return response_text

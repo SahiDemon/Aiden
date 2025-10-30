@@ -68,7 +68,7 @@ class HotkeyListener:
             elif part == 'esc' or part == 'escape':
                 result['key'] = keyboard.Key.esc
             elif len(part) == 1:
-                # Single character key
+                # Single character key (including * asterisk)
                 try:
                     result['key'] = keyboard.KeyCode.from_char(part)
                 except Exception as e:
@@ -112,6 +112,7 @@ class HotkeyListener:
             required_mods = self.hotkey_combo['modifiers']
             required_key = self.hotkey_combo['key']
             
+            # Check both modifiers and key
             if required_mods == self.pressed_modifiers and key == required_key:
                 logger.info("Hotkey activated!")
                 self._trigger_activation()

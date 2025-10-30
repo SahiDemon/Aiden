@@ -38,27 +38,51 @@ class STTEngine:
         
         logger.info(f"STT Engine initialized: energy={self.energy_threshold}, pause={self.pause_threshold}")
     
-    async def transcribe(self) -> Tuple[bool, Optional[str], Optional[str]]:
+    async def transcribe(self, play_activation_sound: bool = True) -> Tuple[bool, Optional[str], Optional[str]]:
         """
         Listen and transcribe speech to text
+        
+        Args:
+            play_activation_sound: Whether to play activation sound when mic starts
         
         Returns:
             Tuple of (success, text, error_message)
         """
         try:
-            logger.info("STT: Starting to listen...")
+            # Broadcast listening status
+            try:
+                from src.utils.websocket_broadcast import broadcast_voice_status
+                await broadcast_voice_status("listening", speaking=False)
+            except Exception:
+                pass  # Non-critical
+            
+            # Play activation sound RIGHT when mic is about to listen
+            if play_activation_sound:
+                from src.speech.tts import get_tts_engine
+                tts = get_tts_engine()
+                await tts.play_sound("activation")
             
             # Run blocking listen operation in thread pool
             loop = asyncio.get_event_loop()
-            logger.debug(f"STT: Using event loop: {loop}")
-            logger.info("STT: Submitting _listen_sync to executor...")
             result = await loop.run_in_executor(None, self._listen_sync)
-            logger.info(f"STT: Executor returned: {result}")
+            
+            # Broadcast idle status after listening completes
+            try:
+                from src.utils.websocket_broadcast import broadcast_voice_status
+                await broadcast_voice_status("idle", speaking=False)
+            except Exception:
+                pass
             
             return result
             
         except Exception as e:
             logger.error(f"STT error: {e}")
+            # Broadcast idle on error
+            try:
+                from src.utils.websocket_broadcast import broadcast_voice_status
+                await broadcast_voice_status("idle", speaking=False)
+            except Exception:
+                pass
             return False, None, str(e)
     
     def _listen_sync(self) -> Tuple[bool, Optional[str], Optional[str]]:

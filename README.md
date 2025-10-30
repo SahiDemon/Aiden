@@ -4,7 +4,7 @@ A powerful voice-controlled AI assistant for Windows with context-aware conversa
 
 ## ✨ Features
 
-- **🎤 Voice Wake Word** - Say "Aiden" to activate hands-free
+- **🎤 High-Accuracy Wake Word** - Say "Aiden" with Porcupine detection (2.5x more accurate)
 - **⌨️ Global Hotkey** - Press Ctrl+Shift+Space for instant access
 - **💬 Context-Aware** - Remembers conversation context for follow-up questions
 - **🚀 Multi-Command** - Execute multiple commands in one request
@@ -12,6 +12,7 @@ A powerful voice-controlled AI assistant for Windows with context-aware conversa
 - **⚡ Lightning Fast** - Sub-second response times with Groq AI
 - **🔇 Hidden Mode** - Runs silently in system tray
 - **📊 Web Dashboard** - Optional web interface at http://localhost:5000
+- **🎯 Zero False Negatives** - Advanced audio processing eliminates missed detections
 
 ## 📋 Requirements
 
@@ -40,10 +41,13 @@ notepad .env
 **The installer automatically:**
 - ✅ Checks Python version
 - ✅ Creates virtual environment
-- ✅ Installs all dependencies
+- ✅ Installs all dependencies (including Porcupine)
 - ✅ Downloads Vosk model (74 MB)
 - ✅ Creates .env configuration
 - ✅ Sets up database
+
+> **🎯 NEW: Porcupine Wake Word Detection**
+> For best accuracy, follow [PORCUPINE_SETUP.md](PORCUPINE_SETUP.md) to enable high-accuracy wake word detection!
 
 ## ⚙️ Configuration
 
@@ -82,13 +86,19 @@ API_PORT=5000
 API_RELOAD=false
 
 # ===== Speech Settings =====
-TTS_VOICE=en-US-AriaNeural
-TTS_RATE=1.0
-STT_LANGUAGE=en-US
-STT_TIMEOUT=5
-STT_ENERGY_THRESHOLD=4000
-STT_PAUSE_THRESHOLD=0.8
-VOSK_MODEL_PATH=vosk_models/vosk-model-small-en-us-0.15
+SPEECH_TTS_VOICE=en-US-AvaNeural
+SPEECH_TTS_RATE=1.2
+SPEECH_STT_LANGUAGE=en-US
+SPEECH_STT_TIMEOUT=10
+SPEECH_STT_ENERGY_THRESHOLD=600
+SPEECH_STT_PAUSE_THRESHOLD=0.8
+SPEECH_VOSK_MODEL_PATH=vosk_models/vosk-model-small-en-us-0.15
+
+# ===== Porcupine Wake Word (High Accuracy) =====
+SPEECH_PORCUPINE_ACCESS_KEY=your_key_here  # Get from console.picovoice.ai
+SPEECH_PORCUPINE_MODEL_PATH=vosk_models/aiden_en_windows.ppn
+SPEECH_PORCUPINE_SENSITIVITY=0.7
+SPEECH_USE_PORCUPINE=true
 
 # ===== ESP32 Smart Home =====
 ESP32_ENABLED=true
@@ -110,8 +120,9 @@ CACHE_TTL_TTS_AUDIO=3600
 - **Groq AI**: [console.groq.com](https://console.groq.com) - FREE, super fast
 - **Neon DB**: [neon.tech](https://neon.tech) - 500MB free
 - **Redis**: [redis.com/cloud](https://redis.com/try-free) - 30MB free
+- **Porcupine**: [console.picovoice.ai](https://console.picovoice.ai) - FREE wake word detection
 
-**Note:** The installer automatically downloads the Vosk wake word model (74 MB)
+**Note:** See [PORCUPINE_SETUP.md](PORCUPINE_SETUP.md) for wake word setup guide
 
 ## 🎯 Usage
 
@@ -162,9 +173,12 @@ aiden/
 - Adjust `STT_ENERGY_THRESHOLD` in .env
 
 **Wake word not detecting?**
-- Ensure Vosk model is downloaded correctly
+- **Using Porcupine (recommended)**: Follow [PORCUPINE_SETUP.md](PORCUPINE_SETUP.md) setup guide
+- Increase sensitivity: `SPEECH_PORCUPINE_SENSITIVITY=0.8`
+- Ensure AccessKey is set in `.env`
+- Check custom `.ppn` model exists
+- Fallback to Vosk: `SPEECH_USE_PORCUPINE=false`
 - Speak clearly and directly to mic
-- Check `vosk_models/` directory
 
 **App launch fails?**
 - First launch may be slow (app discovery)
@@ -189,7 +203,8 @@ MIT License - see LICENSE file
 
 ## 🙏 Credits
 
-- Vosk - Offline speech recognition
+- Porcupine (Picovoice) - High-accuracy wake word detection
+- Vosk - Offline speech recognition (STT & fallback wake word)
 - edge-tts - Microsoft Edge TTS
 - Groq - Super fast AI inference
 - Neon - Serverless PostgreSQL

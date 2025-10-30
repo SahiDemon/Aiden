@@ -2,6 +2,7 @@
 Neon DB Client
 Async PostgreSQL database client using SQLAlchemy
 """
+import asyncio
 import logging
 from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
@@ -9,6 +10,8 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.future import select
 from sqlalchemy import text
 
+# CRITICAL: Import event loop policy FIRST
+from src.utils.event_loop import ensure_selector_event_loop
 from src.database.models import Base, Conversation, Message, CommandHistory, UserPreferences
 from src.utils.config import get_settings
 from src.utils.logger import get_logger
@@ -27,28 +30,44 @@ class NeonDBClient:
     async def connect(self):
         """Initialize database connection"""
         try:
-            # Convert postgresql:// to postgresql+psycopg://
+            # Convert postgresql:// to postgresql+asyncpg://
             db_url = self.settings.database.database_url
             if db_url.startswith("postgresql://"):
-                db_url = db_url.replace("postgresql://", "postgresql+psycopg://", 1)
+                db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
             
-            # Psycopg 3 connection arguments
-            # Psycopg handles SSL automatically based on connection string (sslmode parameter)
+            # Remove incompatible SSL parameters from URL for asyncpg
+            # asyncpg uses 'ssl' parameter instead of 'sslmode'
+            if "?" in db_url:
+                base_url, params = db_url.split("?", 1)
+                # Filter out incompatible parameters
+                filtered_params = []
+                for param in params.split("&"):
+                    if not param.startswith(("sslmode=", "channel_binding=")):
+                        filtered_params.append(param)
+                # Add asyncpg-compatible SSL
+                filtered_params.append("ssl=require")
+                db_url = f"{base_url}?{'&'.join(filtered_params)}"
+            else:
+                # Add SSL requirement
+                db_url = f"{db_url}?ssl=require"
+            
+            # asyncpg connection arguments (pure async driver, works on Windows)
             connect_args = {
-                "prepare_threshold": None,  # Disable prepared statements for better compatibility
-                "connect_timeout": 10  # 10 second connection timeout
+                "timeout": 10,  # 10 second connection timeout
+                "command_timeout": 10,
+                "ssl": "require"  # Force SSL
             }
             
-            logger.info("Creating Neon DB engine...")
-            # Create async engine with psycopg
+            logger.info("Creating Neon DB engine with asyncpg (native async)...")
+            # Create async engine with asyncpg (true async driver)
+            # Use NullPool to avoid cross-thread connection issues
+            from sqlalchemy.pool import NullPool
+            
             self.engine = create_async_engine(
                 db_url,
-                pool_size=self.settings.database.pool_size,
-                max_overflow=self.settings.database.max_overflow,
-                pool_timeout=self.settings.database.pool_timeout,
+                poolclass=NullPool,  # No connection pooling - creates new connection each time
                 echo=self.settings.app.debug,
-                connect_args=connect_args,
-                pool_pre_ping=True  # Verify connections before using
+                connect_args=connect_args
             )
             
             # Create session maker
@@ -60,10 +79,13 @@ class NeonDBClient:
             
             logger.info("Testing Neon DB connection...")
             # Test connection with timeout
-            import asyncio
-            async with asyncio.timeout(15):  # 15 second total timeout
-                async with self.engine.begin() as conn:
-                    await conn.execute(text("SELECT 1"))
+            try:
+                async with self.engine.connect() as conn:
+                    result = await conn.execute(text("SELECT 1"))
+                    result.close()
+            except Exception as test_error:
+                logger.error(f"Connection test failed: {test_error}")
+                raise
             
             logger.info("Connected to Neon DB successfully!")
             

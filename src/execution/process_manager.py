@@ -48,36 +48,50 @@ class ProcessManager:
         """
         process_name = process_name.lower().strip()
         
-        # Map common names to actual process names
-        actual_name = self.process_name_mappings.get(process_name, process_name)
-        
-        # Ensure .exe extension
-        if not actual_name.endswith('.exe'):
-            actual_name = f"{actual_name}.exe"
-        
         try:
-            # First, check if process is running
-            if not await self._is_process_running(actual_name):
-                logger.info(f"Process {actual_name} is not running")
-                return False
+            # Use system context to find running processes
+            from src.utils.system_context import get_system_context
+            sys_ctx = get_system_context()
+            matching_processes = await sys_ctx.find_process(process_name)
             
-            # Use taskkill command
-            command = f"taskkill /F /IM {actual_name}"
-            logger.info(f"Executing: {command}")
+            if not matching_processes:
+                # Fallback to legacy mapping
+                actual_name = self.process_name_mappings.get(process_name, process_name)
+                if not actual_name.endswith('.exe'):
+                    actual_name = f"{actual_name}.exe"
+                
+                if not await self._is_process_running(actual_name):
+                    logger.info(f"Process {process_name} is not running")
+                    return False
+                
+                matching_processes = [{"name": actual_name}]
             
-            result = subprocess.run(
-                command,
-                shell=True,
-                capture_output=True,
-                text=True
-            )
+            # Kill all matching processes
+            killed_any = False
+            for proc in matching_processes:
+                proc_name = proc.get("name", "")
+                
+                if not proc_name:
+                    continue
+                
+                # Use taskkill command
+                command = f"taskkill /F /IM {proc_name}"
+                logger.info(f"Executing: {command}")
+                
+                result = subprocess.run(
+                    command,
+                    shell=True,
+                    capture_output=True,
+                    text=True
+                )
+                
+                if result.returncode == 0:
+                    logger.info(f"Successfully killed process: {proc_name}")
+                    killed_any = True
+                else:
+                    logger.warning(f"Failed to kill {proc_name}: {result.stderr}")
             
-            if result.returncode == 0:
-                logger.info(f"Successfully killed process: {actual_name}")
-                return True
-            else:
-                logger.warning(f"Failed to kill {actual_name}: {result.stderr}")
-                return False
+            return killed_any
                 
         except Exception as e:
             logger.error(f"Error killing process {process_name}: {e}")
@@ -129,6 +143,13 @@ def get_process_manager() -> ProcessManager:
     if _process_manager is None:
         _process_manager = ProcessManager()
     return _process_manager
+
+
+
+
+
+
+
 
 
 

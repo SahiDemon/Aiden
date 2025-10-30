@@ -124,18 +124,49 @@ class ESP32Client:
     
     async def get_status(self) -> Dict[str, Any]:
         """
-        Get current fan status
-        Note: Only works if your ESP32 has /status endpoint
+        Get current fan status from ESP32
+        Parses the response to extract state and speed
         """
         result = await self._request("/status")
-        return result
+        
+        if not result.get("success"):
+            return {"state": "unknown"}
+        
+        # Parse the status response
+        response_text = result.get("data", "").lower()
+        
+        # Determine fan state from response
+        if "off" in response_text or "stopped" in response_text:
+            state = "off"
+            speed = 0
+        elif "speed 3" in response_text or "high" in response_text:
+            state = "on"
+            speed = 3
+        elif "speed 2" in response_text or "medium" in response_text:
+            state = "on"
+            speed = 2
+        elif "speed 1" in response_text or "low" in response_text:
+            state = "on"
+            speed = 1
+        elif "on" in response_text:
+            state = "on"
+            speed = None  # Unknown speed
+        else:
+            state = "unknown"
+            speed = None
+        
+        return {
+            "state": state,
+            "speed": speed,
+            "raw_response": result.get("data", "")
+        }
     
     async def check_connection(self) -> bool:
         """
         Check if ESP32 is reachable
-        Uses /on endpoint with minimal retries to test connection
+        Uses /status endpoint to test connection (non-invasive)
         """
-        result = await self._request("/on", retries=1)
+        result = await self._request("/status", retries=1)
         return result.get("success", False)
     
     async def close(self):

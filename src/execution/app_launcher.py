@@ -78,7 +78,29 @@ class AppLauncher:
                     logger.info(f"Launching {app_name} from direct path: {path}")
                     return self._launch_exe(path)
             
-            # 2. Check Redis cache
+            # 2. Use system context to find app (comprehensive registry + start menu scan)
+            from src.utils.system_context import get_system_context
+            sys_ctx = get_system_context()
+            app_info = await sys_ctx.find_app(app_name_lower)
+            
+            if app_info:
+                # Try exe_path first
+                if app_info.get("exe_path") and os.path.exists(app_info["exe_path"]):
+                    logger.info(f"Launching {app_name} from system context: {app_info['exe_path']}")
+                    return self._launch_exe(app_info["exe_path"])
+                
+                # Try finding exe in install_path
+                if app_info.get("install_path") and os.path.exists(app_info["install_path"]):
+                    found_exe = self._find_exe_in_directory(app_info["install_path"])
+                    if found_exe:
+                        logger.info(f"Found exe in install path: {found_exe}")
+                        return self._launch_exe(found_exe)
+            
+            # 3. Try system PATH
+            if self._try_launch_from_path(app_name_lower):
+                return True
+            
+            # 4. Check Redis cache (legacy)
             redis = await get_redis_client()
             cached_path = await redis.get_app_path(app_name_lower)
             
@@ -86,20 +108,7 @@ class AppLauncher:
                 logger.info(f"Launching {app_name} from cache: {cached_path}")
                 return self._launch_exe(cached_path)
             
-            # 3. Try system PATH
-            if self._try_launch_from_path(app_name_lower):
-                return True
-            
-            # 4. Search for executable
-            app_path = await self._find_app_path(app_name_lower)
-            
-            if app_path:
-                # Cache for future use
-                await redis.cache_app_path(app_name_lower, app_path)
-                logger.info(f"Found and launching {app_name}: {app_path}")
-                return self._launch_exe(app_path)
-            
-            # 4. Try Windows Start Menu shortcuts
+            # 5. Try Windows Start Menu shortcuts (fallback)
             if await self._launch_from_start_menu(app_name_lower):
                 return True
             
@@ -109,6 +118,23 @@ class AppLauncher:
         except Exception as e:
             logger.error(f"Error launching {app_name}: {e}")
             return False
+    
+    def _find_exe_in_directory(self, directory: str, max_depth: int = 2) -> Optional[str]:
+        """Find first .exe file in directory (limited depth for performance)"""
+        try:
+            for root, dirs, files in os.walk(directory):
+                # Limit depth
+                depth = root[len(directory):].count(os.sep)
+                if depth > max_depth:
+                    continue
+                
+                for file in files:
+                    if file.lower().endswith('.exe'):
+                        return os.path.join(root, file)
+        except Exception as e:
+            logger.debug(f"Error searching directory {directory}: {e}")
+        
+        return None
     
     def _try_launch_from_path(self, app_name: str) -> bool:
         """Try launching app from system PATH"""
