@@ -25,11 +25,16 @@ class CommandExecutor:
         self.app_launcher = get_app_launcher()
         self.process_manager = get_process_manager()
         self.system_controller = get_system_controller()
-        self.esp32_client = None  # Will be set later
+        self.esp32_client = None
+        self.wake_word_manager = None
     
     def set_esp32_client(self, esp32_client):
         """Set ESP32 client for smart home control"""
         self.esp32_client = esp32_client
+    
+    def set_wake_word_manager(self, wake_word_manager):
+        """Set wake word manager for voice control"""
+        self.wake_word_manager = wake_word_manager
     
     async def execute(
         self,
@@ -69,6 +74,9 @@ class CommandExecutor:
                 
                 case "fan_control":
                     success, response_data = await self._handle_fan_control(params)
+                
+                case "wake_word_control":
+                    success = await self._handle_wake_word_control(params)
                 
                 case "shell_command":
                     success, error_message = await self._handle_shell_command(params)
@@ -152,12 +160,31 @@ class CommandExecutor:
         return await self.app_launcher.launch(app_name)
     
     async def _handle_kill_process(self, params: Dict[str, Any]) -> bool:
-        """Handle process kill command"""
+        """
+        Handle process kill command with validation
+        Checks if process is running before attempting to kill
+        """
         process_name = params.get("name", "")
         if not process_name:
             logger.error("No process name provided")
             return False
         
+        # Check if process is running before attempting to kill
+        from src.utils.system_context import get_system_context
+        sys_ctx = get_system_context()
+        running_processes = await sys_ctx.get_running_processes(simplified=True)
+        
+        # Normalize process name for comparison
+        process_name_lower = process_name.lower()
+        
+        # running_processes is a list of dicts: [{"name": "chrome.exe", "pid": 1234, "status": "running"}, ...]
+        is_running = any(proc.get("name", "").lower() == process_name_lower for proc in running_processes)
+        
+        if not is_running:
+            logger.warning(f"Process {process_name} is not running - skipping kill command")
+            return True  # Return True to avoid error message (process already not running = success)
+        
+        logger.info(f"Process {process_name} is running - proceeding to kill")
         return await self.process_manager.kill_process(process_name)
     
     async def _handle_system_command(self, params: Dict[str, Any]) -> bool:
@@ -204,6 +231,28 @@ class CommandExecutor:
             case _:
                 logger.error(f"Unknown fan operation: {operation}")
                 return False, None
+    
+    async def _handle_wake_word_control(self, params: Dict[str, Any]) -> bool:
+        """Handle wake word control command (enable/disable/toggle)"""
+        if not self.wake_word_manager:
+            logger.warning("Wake word manager not configured")
+            return False
+        
+        action = params.get("action", "").lower()
+        
+        match action:
+            case "enable":
+                await self.wake_word_manager.enable()
+                return True
+            case "disable":
+                await self.wake_word_manager.disable()
+                return True
+            case "toggle":
+                await self.wake_word_manager.toggle()
+                return True
+            case _:
+                logger.error(f"Unknown wake word control action: {action}")
+                return False
     
     async def _handle_shell_command(self, params: Dict[str, Any]) -> tuple[bool, Optional[str]]:
         """Handle arbitrary shell command"""

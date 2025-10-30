@@ -24,6 +24,7 @@ wheels/
 venv/
 env/
 ENV/
+.venv/Scripts/
 
 # IDE
 .idea/
@@ -63,8 +64,7 @@ coverage/
 *.tmp
 *.temp
 .cache/
-.venv/
-.venv
-
-
 vosk_models/
+.venv/Scripts/
+app_cache.json
+system_context_cache.json

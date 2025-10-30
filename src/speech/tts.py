@@ -54,9 +54,14 @@ class TTSEngine:
         try:
             logger.info(f"TTS: Speaking: '{text[:50]}...'")
             
-            # Check cache first
-            redis = await get_redis_client()
-            cached_audio = await redis.get_tts_audio(text)
+            # Broadcast speaking status
+            from src.utils.websocket_broadcast import broadcast_voice_status, broadcast_message
+            await broadcast_voice_status("speaking", speaking=True)
+            # Also broadcast the text being spoken
+            await broadcast_message("assistant_speaking", {"text": text})
+            
+            # Try cache with proper error handling
+            cached_audio = await self._get_cached_audio(text)
             
             if cached_audio:
                 logger.debug("TTS: Using cached audio")
@@ -65,15 +70,39 @@ class TTSEngine:
                 logger.debug("TTS: Generating new audio")
                 audio_data = await self._generate_speech(text)
                 
-                # Cache for future use
-                await redis.cache_tts_audio(text, audio_data)
+                # Cache in background (non-blocking)
+                asyncio.create_task(self._cache_audio(text, audio_data))
                 
                 # Play the audio
                 await self._play_audio_data(audio_data)
+            
+            # Broadcast idle status after speaking
+            await broadcast_voice_status("idle", speaking=False)
                 
         except Exception as e:
             logger.error(f"TTS error: {e}")
             print(f"[TTS ERROR]: {text}")
+            # Broadcast idle on error
+            from src.utils.websocket_broadcast import broadcast_voice_status
+            await broadcast_voice_status("idle", speaking=False)
+    
+    async def _get_cached_audio(self, text: str) -> Optional[bytes]:
+        """Get cached audio with proper error handling"""
+        try:
+            redis = await get_redis_client()
+            return await redis.get_tts_audio(text)
+        except Exception as e:
+            logger.debug(f"Cache read failed (non-critical): {e}")
+            return None
+    
+    async def _cache_audio(self, text: str, audio_data: bytes):
+        """Cache audio in background with error handling"""
+        try:
+            redis = await get_redis_client()
+            await redis.cache_tts_audio(text, audio_data)
+            logger.debug(f"TTS: Cached audio for: '{text[:30]}...'")
+        except Exception as e:
+            logger.debug(f"Cache write failed (non-critical): {e}")
     
     async def _generate_speech(self, text: str) -> bytes:
         """Generate speech audio using edge-tts"""
@@ -138,7 +167,10 @@ class TTSEngine:
     async def play_sound(self, sound_name: str):
         """Play a sound effect"""
         try:
+            # Try both .mp3 and .MP3 extensions
             sound_path = os.path.join("sounds", f"{sound_name}.mp3")
+            if not os.path.exists(sound_path):
+                sound_path = os.path.join("sounds", f"{sound_name}.MP3")
             
             if os.path.exists(sound_path) and PYGAME_AVAILABLE:
                 sound = pygame.mixer.Sound(sound_path)
@@ -146,7 +178,7 @@ class TTSEngine:
                 sound.play()
                 logger.debug(f"TTS: Played sound: {sound_name}")
             else:
-                logger.warning(f"TTS: Sound not found: {sound_path}")
+                logger.warning(f"TTS: Sound not found: {sound_name}")
                 
         except Exception as e:
             logger.error(f"TTS: Error playing sound: {e}")
@@ -162,6 +194,10 @@ def get_tts_engine() -> TTSEngine:
     if _tts_engine is None:
         _tts_engine = TTSEngine()
     return _tts_engine
+
+
+
+
 
 
 

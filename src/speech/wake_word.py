@@ -223,12 +223,16 @@ class WakeWordDetector:
             logger.error(f"Error handling wake word: {e}")
     
     async def _play_activation_sound(self):
-        """Play activation sound effect"""
+        """Play wake word acknowledgment sound"""
         try:
+            import random
             tts = get_tts_engine()
-            await tts.play_sound("activation")
+            # Play random mmm sound for wake word acknowledgment only
+            sound_name = random.choice(["mmm1", "mmm2"])
+            await tts.play_sound(sound_name)
+            logger.debug(f"Played wake word acknowledgment sound: {sound_name}")
         except Exception as e:
-            logger.error(f"Error playing activation sound: {e}")
+            logger.error(f"Error playing wake word acknowledgment: {e}")
 
 
 # Global instance
