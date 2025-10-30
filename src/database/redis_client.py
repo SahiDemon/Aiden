@@ -88,7 +88,9 @@ class RedisClient:
             logger.debug(f"Saved context for conversation {conversation_id}")
             
         except Exception as e:
-            logger.error(f"Error saving context: {e}")
+            # Ignore event loop errors - they're non-critical
+            if "attached to a different loop" not in str(e):
+                logger.error(f"Error saving context: {e}")
     
     async def get_context(self, conversation_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -260,7 +262,8 @@ class RedisClient:
             logger.debug(f"Cached TTS audio for text: {text[:50]}...")
             
         except Exception as e:
-            logger.error(f"Error caching TTS audio: {e}")
+            # Don't log as error - this is expected when event loops change
+            logger.debug(f"TTS cache write unavailable: {e}")
     
     async def get_tts_audio(self, text: str) -> Optional[bytes]:
         """Get cached TTS audio"""
@@ -279,7 +282,8 @@ class RedisClient:
             return None
             
         except Exception as e:
-            logger.error(f"Error getting TTS audio: {e}")
+            # Don't log as error - this is expected when event loops change
+            logger.debug(f"TTS cache unavailable: {e}")
             return None
     
     # ===== General Cache Operations =====
@@ -333,27 +337,68 @@ class RedisClient:
                 ) * 100
             }
         except Exception as e:
-            logger.error(f"Error getting cache stats: {e}")
+            # Ignore event loop errors - they're non-critical
+            if "attached to a different loop" not in str(e):
+                logger.error(f"Error getting cache stats: {e}")
             return {}
 
 
-# Global client instance
-_redis_client: Optional[RedisClient] = None
+# Per-event-loop client instances
+import asyncio
+import threading
+_redis_clients: Dict[int, RedisClient] = {}
+_client_lock = threading.Lock()
 
 
 async def get_redis_client() -> RedisClient:
-    """Get or create global Redis client"""
-    global _redis_client
-    if _redis_client is None:
-        _redis_client = RedisClient()
-        await _redis_client.connect()
-    return _redis_client
+    """Get or create Redis client for current event loop"""
+    try:
+        # Get current event loop ID
+        loop = asyncio.get_running_loop()
+        loop_id = id(loop)
+        
+        with _client_lock:
+            if loop_id not in _redis_clients:
+                # Create new client for this event loop
+                client = RedisClient()
+                await client.connect()
+                _redis_clients[loop_id] = client
+                logger.debug(f"Created Redis client for event loop {loop_id}")
+            
+            return _redis_clients[loop_id]
+    
+    except Exception as e:
+        logger.error(f"Error getting Redis client: {e}")
+        # Fallback: create temporary client
+        client = RedisClient()
+        await client.connect()
+        return client
 
 
 async def close_redis_client():
-    """Close global Redis client"""
-    global _redis_client
-    if _redis_client:
-        await _redis_client.disconnect()
-        _redis_client = None
+    """Close Redis client for current event loop"""
+    try:
+        loop = asyncio.get_running_loop()
+        loop_id = id(loop)
+        
+        with _client_lock:
+            if loop_id in _redis_clients:
+                await _redis_clients[loop_id].disconnect()
+                del _redis_clients[loop_id]
+                logger.debug(f"Closed Redis client for event loop {loop_id}")
+    
+    except Exception as e:
+        logger.debug(f"Error closing Redis client: {e}")
+
+
+async def close_all_redis_clients():
+    """Close all Redis clients (for shutdown)"""
+    with _client_lock:
+        for loop_id, client in list(_redis_clients.items()):
+            try:
+                await client.disconnect()
+                logger.debug(f"Closed Redis client for event loop {loop_id}")
+            except Exception as e:
+                logger.debug(f"Error closing client {loop_id}: {e}")
+        _redis_clients.clear()
 

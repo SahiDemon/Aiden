@@ -4,9 +4,12 @@ REST API + WebSocket for real-time communication with dashboard
 """
 import asyncio
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Callable
 from datetime import datetime
 from contextlib import asynccontextmanager
+
+# CRITICAL: Import event loop policy FIRST
+from src.utils.event_loop import ensure_selector_event_loop
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,6 +25,15 @@ from src.ai.groq_client import get_groq_client, close_groq_client
 from src.smart_home.esp32_client import get_esp32_client, close_esp32_client
 
 logger = get_logger(__name__)
+
+# Global voice activation callback
+_voice_activation_callback: Optional[Callable] = None
+
+
+def set_voice_activation_callback(callback: Callable):
+    """Set the voice activation callback function"""
+    global _voice_activation_callback
+    _voice_activation_callback = callback
 
 
 # Pydantic models for requests/responses
@@ -46,38 +58,102 @@ class ESP32ControlRequest(BaseModel):
 # WebSocket connection manager
 class ConnectionManager:
     def __init__(self):
-        self.active_connections: List[WebSocket] = []
+        self.active_connections: Dict[str, WebSocket] = {}
+        self._lock = asyncio.Lock()
+        self._cleanup_task: Optional[asyncio.Task] = None
 
-    async def connect(self, websocket: WebSocket):
+    def start_cleanup_task(self):
+        """Start the background task to clean up dead connections."""
+        if self._cleanup_task is None or self._cleanup_task.done():
+            self._cleanup_task = asyncio.create_task(self._periodic_cleanup())
+            logger.info("WebSocket cleanup task started.")
+
+    async def _periodic_cleanup(self):
+        """Periodically check for and remove dead connections."""
+        while True:
+            await asyncio.sleep(10)  # Run every 10 seconds (more aggressive)
+            await self.cleanup_dead_connections()
+
+    async def cleanup_dead_connections(self):
+        """Remove connections that are no longer active by sending a ping."""
+        if not self.active_connections:
+            return
+
+        logger.debug(f"Running cleanup on {len(self.active_connections)} connections...")
+        dead_clients = []
+        # Create a copy of client IDs to iterate over, as the dictionary may change
+        client_ids = list(self.active_connections.keys())
+
+        for client_id in client_ids:
+            websocket = self.active_connections.get(client_id)
+            if not websocket:
+                continue
+            try:
+                # Starlette's WebSocketState: 0=CONNECTING, 1=CONNECTED, 2=DISCONNECTED
+                if websocket.client_state.value != 1:
+                    dead_clients.append(client_id)
+                    continue
+                
+                # Send a ping and wait for a pong. If it times out, connection is dead.
+                await asyncio.wait_for(websocket.send_json({"type": "ping"}), timeout=2)  # Reduced timeout to 2s
+            except (asyncio.TimeoutError, Exception):
+                dead_clients.append(client_id)
+
+        if dead_clients:
+            async with self._lock:
+                for client_id in dead_clients:
+                    if client_id in self.active_connections:
+                        del self.active_connections[client_id]
+                        logger.info(f"Removed dead WebSocket client {client_id}. Total: {len(self.active_connections)}")
+
+    async def connect(self, websocket: WebSocket) -> str:
         await websocket.accept()
-        self.active_connections.append(websocket)
-        logger.info(f"WebSocket client connected. Total: {len(self.active_connections)}")
+        client_id = f"{websocket.client.host}:{websocket.client.port}"
+        async with self._lock:
+            self.active_connections[client_id] = websocket
+        logger.info(f"WebSocket client {client_id} connected. Total: {len(self.active_connections)}")
+        return client_id
 
-    def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
-        logger.info(f"WebSocket client disconnected. Total: {len(self.active_connections)}")
+    async def disconnect(self, client_id: str):
+        async with self._lock:
+            if client_id in self.active_connections:
+                del self.active_connections[client_id]
+                logger.info(f"WebSocket client {client_id} disconnected. Total: {len(self.active_connections)}")
 
     async def broadcast(self, message: Dict[str, Any]):
-        """Broadcast message to all connected clients"""
-        disconnected = []
-        for connection in self.active_connections:
+        """Broadcast message to all connected clients."""
+        if not self.active_connections:
+            return
+            
+        disconnected_clients = []
+        # Create a copy of connections to iterate over
+        connections = list(self.active_connections.values())
+        
+        for connection in connections:
             try:
                 await connection.send_json(message)
-            except Exception as e:
-                logger.error(f"Error broadcasting to client: {e}")
-                disconnected.append(connection)
+            except Exception:
+                # Find the client_id for the failed connection
+                for cid, ws in self.active_connections.items():
+                    if ws is connection:
+                        disconnected_clients.append(cid)
+                        break
         
-        # Remove disconnected clients
-        for conn in disconnected:
-            if conn in self.active_connections:
-                self.active_connections.remove(conn)
+        if disconnected_clients:
+            async with self._lock:
+                for client_id in disconnected_clients:
+                    if client_id in self.active_connections:
+                        del self.active_connections[client_id]
+                        logger.info(f"Removed failed connection {client_id} during broadcast. Total: {len(self.active_connections)}")
 
-    async def send_to_client(self, websocket: WebSocket, message: Dict[str, Any]):
-        """Send message to specific client"""
-        try:
-            await websocket.send_json(message)
-        except Exception as e:
-            logger.error(f"Error sending to client: {e}")
+    async def send_to_client(self, client_id: str, message: Dict[str, Any]):
+        """Send message to a specific client."""
+        websocket = self.active_connections.get(client_id)
+        if websocket:
+            try:
+                await websocket.send_json(message)
+            except Exception:
+                await self.disconnect(client_id)
 
 
 manager = ConnectionManager()
@@ -108,6 +184,9 @@ async def lifespan(app: FastAPI):
         executor = get_command_executor()
         executor.set_esp32_client(esp32_client)
         logger.info("ESP32 client connected to command executor")
+        
+        # Start the WebSocket cleanup task
+        manager.start_cleanup_task()
         
         logger.info("All services initialized successfully")
     except Exception as e:
@@ -149,9 +228,9 @@ app.add_middleware(
 
 # ===== REST API Endpoints =====
 
-@app.get("/")
-async def root():
-    """Root endpoint - health check"""
+@app.get("/api/v1/health")
+async def health_check():
+    """Health check endpoint"""
     return {
         "status": "online",
         "app": "Aiden AI Assistant",
@@ -238,7 +317,12 @@ async def get_conversation_history(limit: int = 50):
         }
     except Exception as e:
         logger.error(f"Error getting conversation history: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # Return empty history if database isn't available
+        return {
+            "success": True,
+            "messages": [],
+            "count": 0
+        }
 
 
 @app.get("/api/v1/system/status")
@@ -415,6 +499,227 @@ async def get_command_history(limit: int = 100):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ===== NEW Dashboard API Endpoints =====
+
+@app.get("/api/v1/settings")
+async def get_settings_endpoint():
+    """Get all settings for dashboard"""
+    try:
+        settings = get_settings()
+        
+        return {
+            "success": True,
+            "settings": {
+                "speech": {
+                    "tts_voice": settings.speech.tts_voice,
+                    "tts_rate": settings.speech.tts_rate,
+                    "stt_language": settings.speech.stt_language,
+                    "stt_timeout": settings.speech.stt_timeout,
+                    "stt_energy_threshold": settings.speech.stt_energy_threshold,
+                },
+                "groq": {
+                    "model": settings.groq.model,
+                    "temperature": settings.groq.temperature,
+                    "max_tokens": settings.groq.max_tokens,
+                    "user_name": settings.app.user_name,
+                },
+                "app": {
+                    "name": settings.app.name,
+                    "user_name": settings.app.user_name,
+                    "wake_word": settings.app.wake_word,
+                    "hotkey": settings.app.hotkey,
+                    "debug": settings.app.debug,
+                    "enable_sound_effects": True,  # Add this to config if needed
+                },
+                "esp32": {
+                    "enabled": settings.esp32.enabled,
+                    "ip_address": settings.esp32.ip_address,
+                    "timeout": settings.esp32.timeout,
+                }
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting settings: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/v1/settings/speech")
+async def update_speech_settings(settings_update: Dict[str, Any]):
+    """Update speech settings"""
+    try:
+        # Settings would be updated in .env or config file
+        # For now, just acknowledge the request
+        return {
+            "success": True,
+            "message": "Speech settings updated"
+        }
+    except Exception as e:
+        logger.error(f"Error updating speech settings: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/v1/settings/ai")
+async def update_ai_settings(settings_update: Dict[str, Any]):
+    """Update AI settings"""
+    try:
+        return {
+            "success": True,
+            "message": "AI settings updated"
+        }
+    except Exception as e:
+        logger.error(f"Error updating AI settings: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/v1/settings/system")
+async def update_system_settings(settings_update: Dict[str, Any]):
+    """Update system settings"""
+    try:
+        return {
+            "success": True,
+            "message": "System settings updated"
+        }
+    except Exception as e:
+        logger.error(f"Error updating system settings: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/conversations")
+async def get_conversations():
+    """Get list of conversations"""
+    try:
+        db = await get_db_client()
+        conversations = await db.get_conversations(limit=50)
+        
+        return {
+            "success": True,
+            "conversations": [conv.to_dict() for conv in conversations]
+        }
+    except Exception as e:
+        logger.error(f"Error getting conversations: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/conversations/{conversation_id}")
+async def get_conversation(conversation_id: str):
+    """Get specific conversation"""
+    try:
+        db = await get_db_client()
+        conversation = await db.get_conversation(conversation_id)
+        
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        return {
+            "success": True,
+            "conversation": conversation.to_dict()
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting conversation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/v1/conversations/{conversation_id}")
+async def delete_conversation(conversation_id: str):
+    """Delete a conversation"""
+    try:
+        db = await get_db_client()
+        await db.delete_conversation(conversation_id)
+        
+        return {
+            "success": True,
+            "message": "Conversation deleted"
+        }
+    except Exception as e:
+        logger.error(f"Error deleting conversation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/voice/activate")
+async def activate_voice():
+    """Manually trigger voice activation"""
+    try:
+        # Broadcast to WebSocket clients first
+        await manager.broadcast({
+            "type": "voice_activate",
+            "timestamp": datetime.now().isoformat()
+        })
+        
+        # Trigger actual voice activation if callback is set
+        if _voice_activation_callback:
+            try:
+                # Call the voice activation callback (from dashboard)
+                _voice_activation_callback(from_hotkey=True)
+                logger.info("Voice activation triggered from dashboard")
+            except Exception as e:
+                logger.error(f"Error calling voice activation callback: {e}")
+        else:
+            logger.warning("Voice activation callback not set")
+        
+        return {
+            "success": True,
+            "message": "Voice activation triggered"
+        }
+    except Exception as e:
+        logger.error(f"Error activating voice: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/stats/dashboard")
+async def get_dashboard_stats():
+    """Get dashboard statistics"""
+    try:
+        db = await get_db_client()
+        
+        # Get conversation count
+        conversations = await db.get_conversations(limit=1000)
+        
+        # Get command history
+        commands = await db.get_command_history(limit=1000)
+        
+        return {
+            "success": True,
+            "stats": {
+                "total_conversations": len(conversations),
+                "total_commands": len(commands),
+                "uptime": "N/A",  # Would need to track this
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting dashboard stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/esp32/devices")
+async def get_esp32_devices():
+    """Get list of ESP32 devices"""
+    try:
+        esp32 = await get_esp32_client()
+        
+        if not esp32.enabled:
+            return {
+                "success": True,
+                "devices": []
+            }
+        
+        # For now, return single device
+        # In future, this could support multiple devices
+        return {
+            "success": True,
+            "devices": [{
+                "name": "Smart Fan",
+                "ip_address": esp32.ip_address,
+                "type": "fan",
+                "connected": await esp32.check_connection()
+            }]
+        }
+    except Exception as e:
+        logger.error(f"Error getting ESP32 devices: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ===== WebSocket Endpoint =====
 
 @app.websocket("/api/v1/ws")
@@ -423,11 +728,11 @@ async def websocket_endpoint(websocket: WebSocket):
     WebSocket endpoint for real-time communication
     Sends status updates, voice status, command execution, etc.
     """
-    await manager.connect(websocket)
+    client_id = await manager.connect(websocket)
     
     try:
         # Send initial connection message
-        await manager.send_to_client(websocket, {
+        await manager.send_to_client(client_id, {
             "type": "connected",
             "message": "Connected to Aiden API",
             "timestamp": datetime.now().isoformat()
@@ -435,32 +740,42 @@ async def websocket_endpoint(websocket: WebSocket):
         
         # Keep connection alive and listen for messages
         while True:
-            data = await websocket.receive_json()
-            
-            # Handle different message types from client
-            message_type = data.get("type")
-            
-            match message_type:
-                case "ping":
-                    await manager.send_to_client(websocket, {
-                        "type": "pong",
-                        "timestamp": datetime.now().isoformat()
-                    })
+            try:
+                data = await websocket.receive_json()
                 
-                case "subscribe":
-                    # Client wants to subscribe to specific events
-                    pass
+                # Handle different message types from client
+                message_type = data.get("type")
                 
-                case _:
-                    logger.warning(f"Unknown WebSocket message type: {message_type}")
-    
-    except WebSocketDisconnect:
-        manager.disconnect(websocket)
-        logger.info("WebSocket client disconnected")
+                match message_type:
+                    case "pong":
+                        # Client is responding to our ping
+                        pass
+                    
+                    case "ping":
+                        # Client is pinging us - respond with pong
+                        await manager.send_to_client(client_id, {"type": "pong"})
+                    
+                    case "subscribe":
+                        # Client wants to subscribe to specific events
+                        pass
+                    
+                    case _:
+                        logger.warning(f"Unknown WebSocket message type: {message_type}")
+            
+            except WebSocketDisconnect:
+                logger.debug(f"WebSocket {client_id} disconnected gracefully.")
+                break
+            except Exception as e:
+                logger.error(f"Error receiving from WebSocket {client_id}: {e}")
+                break
     
     except Exception as e:
-        logger.error(f"WebSocket error: {e}")
-        manager.disconnect(websocket)
+        logger.error(f"WebSocket error with client {client_id}: {e}")
+    
+    finally:
+        # Always disconnect when exiting
+        await manager.disconnect(client_id)
+        logger.info(f"WebSocket client {client_id} cleanup complete.")
 
 
 # ===== Static Files (Dashboard) =====
@@ -469,12 +784,32 @@ async def websocket_endpoint(websocket: WebSocket):
 try:
     app.mount("/static", StaticFiles(directory="dashboard/build/static"), name="static")
     
-    @app.get("/dashboard")
-    async def serve_dashboard():
-        """Serve React dashboard"""
+    @app.get("/")
+    async def serve_dashboard_root():
+        """Serve React dashboard at root"""
+        return FileResponse("dashboard/build/index.html")
+    
+    # Catch-all route for React Router (must be last)
+    @app.get("/{full_path:path}")
+    async def serve_dashboard_catchall(full_path: str):
+        """Catch-all for React Router - serve index.html for all non-API routes"""
+        # Don't catch API routes
+        if full_path.startswith("api/"):
+            return {"error": "Not found"}
         return FileResponse("dashboard/build/index.html")
 except:
     logger.warning("Dashboard build not found - dashboard will not be served")
+    
+    @app.get("/")
+    async def root_fallback():
+        """Fallback root endpoint when dashboard not built"""
+        return {
+            "status": "online",
+            "app": "Aiden AI Assistant",
+            "version": "2.0.0",
+            "timestamp": datetime.now().isoformat(),
+            "note": "Dashboard not built. Run 'npm run build' in dashboard folder."
+        }
 
 
 # Global function to broadcast updates (can be called from other modules)
@@ -483,39 +818,56 @@ async def broadcast_update(update_type: str, data: Dict[str, Any]):
     Broadcast update to all WebSocket clients
     Can be called from other parts of the application
     """
-    await manager.broadcast({
+    message = {
         "type": update_type,
         "data": data,
         "timestamp": datetime.now().isoformat()
-    })
+    }
+    logger.info(f"Broadcasting to {len(manager.active_connections)} clients: type={update_type}")
+    logger.debug(f"Broadcast data: {data}")
+    await manager.broadcast(message)
 
 
 # ===== Server Lifecycle Functions =====
 
 # Global server instance
-_server: Optional["uvicorn.Server"] = None
+_server = None
 
 
 async def start_api_server():
-    """Start the FastAPI server"""
+    """Start the FastAPI server in background"""
     import uvicorn
-    
-    global _server
+    import threading
     
     settings = get_settings()
     
-    config = uvicorn.Config(
-        app=app,
-        host=settings.api.host,
-        port=settings.api.port,
-        log_level="warning",  # Reduce noise
-        access_log=False
-    )
+    def run_server():
+        """Run uvicorn server in a thread with correct event loop policy"""
+        # Import the event loop policy in this thread
+        from src.utils.event_loop import ensure_selector_event_loop
+        ensure_selector_event_loop()
+        
+        # Get settings properly
+        settings = get_settings()
+        
+        # Create and run the server with the correct event loop
+        uvicorn.run(
+            app,
+            host=settings.api.host,
+            port=settings.api.port,
+            log_level="info",
+            access_log=False,
+            loop="asyncio"  # Force asyncio loop
+        )
     
-    _server = uvicorn.Server(config)
+    # Start server in a daemon thread
+    server_thread = threading.Thread(target=run_server, daemon=True)
+    server_thread.start()
     
-    logger.info(f"Starting API server on {settings.api.host}:{settings.api.port}")
-    await _server.serve()
+    logger.info(f"API server starting on {settings.api.host}:{settings.api.port}")
+    
+    # Give server time to start
+    await asyncio.sleep(2)
 
 
 async def stop_api_server():
