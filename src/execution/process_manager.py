@@ -36,16 +36,33 @@ class ProcessManager:
             "calc": "CalculatorApp.exe",
         }
     
-    async def kill_process(self, process_name: str) -> bool:
+    async def kill_process(self, process_name: str, pid: int = None) -> bool:
         """
-        Kill process by name
+        Kill process by name or PID
         
         Args:
-            process_name: Name of process to kill
+            process_name: Name of process to kill (can include PID in format "name (PID: 1234)")
+            pid: Optional PID to kill directly
             
         Returns:
             True if process was killed successfully
         """
+        # Check if PID is embedded in process_name string (e.g., "Chrome.exe (PID: 1234)")
+        if not pid and "(PID:" in process_name:
+            try:
+                # Extract PID from string like "Chrome.exe (PID: 1234)"
+                pid_str = process_name.split("(PID:")[1].split(")")[0].strip()
+                pid = int(pid_str)
+                # Extract just the process name
+                process_name = process_name.split("(PID:")[0].strip()
+                logger.info(f"Extracted PID {pid} from process string")
+            except (IndexError, ValueError) as e:
+                logger.debug(f"Could not extract PID from string: {e}")
+        
+        # If we have a PID, use it directly (most reliable method)
+        if pid:
+            return await self.kill_process_by_pid(pid)
+        
         process_name = process_name.lower().strip()
         
         try:
@@ -64,18 +81,31 @@ class ProcessManager:
                     logger.info(f"Process {process_name} is not running")
                     return False
                 
-                matching_processes = [{"name": actual_name}]
+                matching_processes = [{"name": actual_name, "pid": None}]
             
             # Kill all matching processes
             killed_any = False
             for proc in matching_processes:
+                proc_pid = proc.get("pid")
                 proc_name = proc.get("name", "")
                 
+                # Prefer killing by PID if available
+                if proc_pid:
+                    logger.info(f"Killing {proc_name} by PID {proc_pid}")
+                    if await self.kill_process_by_pid(proc_pid):
+                        killed_any = True
+                    continue
+                
+                # Fallback to killing by name (with proper quoting for names with spaces)
                 if not proc_name:
                     continue
                 
-                # Use taskkill command
-                command = f"taskkill /F /IM {proc_name}"
+                # Quote the process name if it contains spaces
+                if ' ' in proc_name:
+                    command = f'taskkill /F /IM "{proc_name}"'
+                else:
+                    command = f"taskkill /F /IM {proc_name}"
+                
                 logger.info(f"Executing: {command}")
                 
                 result = subprocess.run(
@@ -143,15 +173,3 @@ def get_process_manager() -> ProcessManager:
     if _process_manager is None:
         _process_manager = ProcessManager()
     return _process_manager
-
-
-
-
-
-
-
-
-
-
-
-

@@ -25,6 +25,10 @@ class ContextManager:
     def __init__(self):
         self.settings = get_settings()
         self.current_conversation_id: Optional[str] = None
+        # Summarization configuration
+        self._summary_after_messages: int = 8  # when to start summarizing (earlier = less tokens)
+        self._history_keep_after_summary: int = 6  # keep recent 3 exchanges (6 messages) after summarizing
+        self._summary_max_chars: int = 600  # reduced cap for summary length
         
     async def start_conversation(self, user_id: str = "default", mode: str = "voice") -> str:
         """
@@ -54,7 +58,8 @@ class ContextManager:
                 "last_entities": [],
                 "last_action": None,
                 "expecting_followup": False,
-                "history": []
+                "history": [],
+                "summary": ""
             }
             
             await redis.save_context(conversation_id, initial_context)
@@ -159,10 +164,34 @@ class ContextManager:
             # Get current context
             context = await self.get_context(conversation_id)
             
-            # Update history (keep last 10 messages)
+            # Update history and apply summarization when long
             context["history"].append({"role": "user", "content": user_message})
             context["history"].append({"role": "assistant", "content": ai_response.get("response", "")})
-            context["history"] = context["history"][-10:]  # Keep last 10 messages
+
+            # If history exceeds threshold, summarize older part and keep recent tail
+            if len(context["history"]) >= self._summary_after_messages:
+                logger.info(f"[CONTEXT] History exceeded threshold ({self._summary_after_messages}), triggering summarization...")
+                # Split into older block and recent tail we want to keep verbatim
+                tail = context["history"][-self._history_keep_after_summary:]
+                head = context["history"][:-self._history_keep_after_summary]
+                logger.debug(f"[CONTEXT] Summarizing {len(head)} messages, keeping {len(tail)} recent")
+                # Build/update summary from head and any existing summary
+                existing_summary = context.get("summary", "") or ""
+                try:
+                    new_summary = await self._ai_summarize(head, existing_summary)
+                    if not new_summary:
+                        logger.debug("[CONTEXT] AI summarization returned empty, using heuristic fallback")
+                        new_summary = self._summarize_messages(head, existing_summary)
+                except Exception as e:
+                    logger.debug(f"[CONTEXT] AI summarization failed: {e}, using heuristic fallback")
+                    new_summary = self._summarize_messages(head, existing_summary)
+                # Store summary and shrink history to tail only
+                context["summary"] = new_summary[: self._summary_max_chars]
+                context["history"] = tail
+                logger.info(f"[CONTEXT] Summarization complete: summary length={len(context['summary'])}, history now={len(context['history'])} messages")
+
+            # Ensure hard cap to avoid runaway growth (defensive: max 6 messages = 3 exchanges)
+            context["history"] = context["history"][-self._history_keep_after_summary:]
             
             logger.info(f"[CONTEXT] Updated history: now has {len(context['history'])} messages")
             
@@ -365,21 +394,50 @@ class ContextManager:
             try:
                 from src.utils.system_context import get_system_context
                 sys_ctx = get_system_context()
-                ai_context = await sys_ctx.get_ai_context()
+                # Token-optimized: include only top fuzzy matches related to user's request
+                system_context_str = "\n\n## RELEVANT SYSTEM CONTEXT\n"
                 
-                system_context_str = "\n\n## AVAILABLE SYSTEM RESOURCES\n"
+                query_hint = self._extract_query_from_text(user_text, context)
                 
-                if "installed_apps" in needs_context and ai_context.get("installed_apps"):
-                    apps_list = ai_context["installed_apps"]
-                    system_context_str += f"Installed Apps ({ai_context['total_apps']} total): "
-                    system_context_str += ", ".join([app.split(" (")[0] for app in apps_list[:20]])
-                    system_context_str += "\n"
+                if "installed_apps" in needs_context:
+                    if query_hint:
+                        app_info = await sys_ctx.find_app(query_hint)
+                        if app_info:
+                            system_context_str += "Installed app match: "
+                            display_name = app_info.get("display_name") or app_info.get("name") or query_hint
+                            exe_path = app_info.get("exe_path", "")
+                            install_path = app_info.get("install_path", "")
+                            # Try include Steam appid if applicable
+                            steam_appid = None
+                            try:
+                                from src.execution.app_launcher import get_app_launcher
+                                launcher = get_app_launcher()
+                                steam_appid = await launcher._resolve_steam_appid(query_hint.lower(), install_path)
+                            except Exception:
+                                steam_appid = None
+                            appid_str = f" | steam_appid: {steam_appid}" if steam_appid else ""
+                            system_context_str += f"{display_name} | exe: {exe_path} | path: {install_path}{appid_str}\n"
+                        else:
+                            system_context_str += f"No installed app match found for '{query_hint}'.\n"
+                    else:
+                        system_context_str += "No app query inferred from user text.\n"
                 
-                if "running_processes" in needs_context and ai_context.get("running_processes"):
-                    procs_list = ai_context["running_processes"]
-                    system_context_str += f"Running Processes ({ai_context['total_processes']} total): "
-                    system_context_str += ", ".join(procs_list[:40])
+                if "running_processes" in needs_context:
+                    if query_hint:
+                        matches = await sys_ctx.find_process(query_hint)
+                        if matches:
+                            top_matches = matches[:3]
+                            system_context_str += "Process matches: "
+                            descs = [f"{m.get('name','Unknown')} (PID {m.get('pid')}, {m.get('status','?')})" for m in top_matches]
+                            system_context_str += ", ".join(descs) + "\n"
+                        else:
+                            system_context_str += f"No running process match found for '{query_hint}'.\n"
+                    else:
+                        system_context_str += "No process query inferred from user text.\n"
                 
+                # Hard cap to avoid token bloat from system context
+                if len(system_context_str) > 1500:
+                    system_context_str = system_context_str[:1497] + "..."
                 logger.debug(f"System context provided: {needs_context}")
             
             except Exception as e:
@@ -387,20 +445,36 @@ class ContextManager:
         else:
             logger.debug(f"No system context requested for: {user_text[:50]}...")
         
-        # Add system message from prompts.yaml + optional system context
+        # Always include the main system prompt (AI needs it for proper command generation)
+        history = context.get("history", [])
         system_message = {
             "role": "system",
-            "content": system_prompt + system_context_str
+            "content": system_prompt
         }
         messages.append(system_message)
-        
+
+        # Add relevant system context as a separate system message for visibility
+        if system_context_str:
+            messages.append({
+                "role": "system",
+                "content": system_context_str
+            })
+
+        # Add conversation summary first if available
+        summary_text = context.get("summary") or ""
+        if summary_text:
+            logger.info(f"[CONTEXT] Including conversation summary (length: {len(summary_text)} chars)")
+            messages.append({
+                "role": "system",
+                "content": f"Conversation summary (for context): {summary_text}"
+            })
+
         # Add conversation history if available
-        history = context.get("history", [])
         logger.info(f"[CONTEXT] History has {len(history)} messages")
         if history:
-            # Add last 10 messages for context (5 exchanges)
-            messages.extend(history[-10:])
-            logger.info(f"[CONTEXT] Added {len(history[-10:])} history messages to AI context")
+            # Add recent messages (already trimmed by update_context when long)
+            messages.extend(history)
+            logger.info(f"[CONTEXT] Added {len(history)} history messages to AI context")
         else:
             logger.warning(f"[CONTEXT] No conversation history found for conversation {context.get('conversation_id')}")
         
@@ -409,6 +483,143 @@ class ContextManager:
         
         logger.info(f"[CONTEXT] Total messages being sent to AI: {len(messages)}")
         return messages
+
+    def _summarize_messages(self, messages: List[Dict[str, str]], existing_summary: str) -> str:
+        """
+        Lightweight heuristic summarization of older messages.
+        - Combines prior summary with key points from provided messages
+        - Extracts recent intents/entities-like keywords heuristically
+        - Truncates to a safe maximum length upstream
+        """
+        if not messages:
+            return existing_summary
+
+        # Start with existing summary context
+        parts: List[str] = []
+        if existing_summary:
+            parts.append(existing_summary.strip())
+
+        # Build a compact bullet-like summary of pairs
+        highlights: List[str] = []
+        last_user = None
+        for msg in messages:
+            role = msg.get("role", "")
+            content = (msg.get("content", "") or "").strip()
+            if not content:
+                continue
+            # Keep it short; prefer user asks and assistant confirmations/actions
+            if role == "user":
+                last_user = content
+                if len(content) > 180:
+                    content = content[:177] + "..."
+                highlights.append(f"User: {content}")
+            elif role == "assistant":
+                # If assistant follows a user, capture action intent
+                summary_line = content
+                if len(summary_line) > 180:
+                    summary_line = summary_line[:177] + "..."
+                highlights.append(f"Assistant: {summary_line}")
+
+        if highlights:
+            parts.append("; ".join(highlights))
+
+        # Merge and lightly normalize whitespace
+        combined = " \n".join(p for p in parts if p)
+        combined = " ".join(combined.split())
+        return combined
+
+    async def _get_llm_client(self):
+        """Lazily get the configured LLM client (Groq or Gemini)."""
+        try:
+            provider = self.settings.app.llm_provider
+            if provider == "gemini":
+                from src.ai.gemini_client import get_gemini_client
+                return await get_gemini_client()
+            else:
+                from src.ai.groq_client import get_groq_client
+                return await get_groq_client()
+        except Exception as e:
+            logger.debug(f"LLM client init failed: {e}")
+            return None
+
+    async def _ai_summarize(self, messages: List[Dict[str, str]], existing_summary: str) -> str:
+        """
+        Use the configured AI to generate a compact rolling summary of older history.
+        Returns empty string on failure so caller can fallback.
+        """
+        if not messages:
+            return existing_summary or ""
+
+        llm = await self._get_llm_client()
+        if not llm:
+            return ""
+
+        # Build a compact transcript string from provided messages
+        def clip(text: str, limit: int = 400) -> str:
+            text = (text or "").strip()
+            return text if len(text) <= limit else text[: limit - 3] + "..."
+
+        transcript_parts: List[str] = []
+        # Limit how many we send to avoid token bloat
+        slice_messages = messages[-12:]  # last up to 12 items of head
+        for msg in slice_messages:
+            role = msg.get("role", "user")
+            content = clip(msg.get("content", ""), 300)
+            if not content:
+                continue
+            prefix = "User" if role == "user" else "Assistant"
+            transcript_parts.append(f"{prefix}: {content}")
+        transcript = "\n".join(transcript_parts)
+
+        system_inst = (
+            "You maintain a brief running summary of the conversation. "
+            "Merge the following excerpt into the existing summary, preserving key intents, entities, and decisions. "
+            "Keep it under 6 short sentences, neutral tone, no speculation, no code blocks."
+        )
+
+        prompt_messages = [
+            {"role": "system", "content": system_inst},
+            {"role": "user", "content": (
+                f"Existing summary (may be empty): {existing_summary or 'None'}\n\n"
+                f"New conversation excerpt to merge:\n{transcript}\n\n"
+                "Return only the updated summary."
+            )},
+        ]
+
+        try:
+            ai_resp = await llm.chat(prompt_messages)
+            # Both clients return a dict with a 'response' string in our codebase pattern
+            summary_text = (ai_resp or {}).get("response", "").strip()
+            return summary_text
+        except Exception as e:
+            logger.debug(f"AI summarization failed: {e}")
+            return ""
+
+    def _extract_query_from_text(self, user_text: str, context: Dict[str, Any]) -> str:
+        """
+        Infer a simple query string (likely app or process name) from user text/history.
+        Heuristic: look for words following verbs like open/launch/start/close/kill.
+        Fallback to last_entities if present.
+        """
+        text = (user_text or "").strip().lower()
+        # Quick patterns
+        import re
+        patterns = [
+            r"(?:open|launch|start|run)\s+([^.,;\n]+)",
+            r"(?:close|kill|end|terminate|stop)\s+([^.,;\n]+)",
+        ]
+        for pat in patterns:
+            m = re.search(pat, text)
+            if m:
+                candidate = m.group(1).strip()
+                # trim common extras
+                candidate = re.sub(r"\b(app|application|program)\b", "", candidate).strip()
+                return candidate
+        # Fallback to last_entities
+        last_entities = context.get("last_entities") or []
+        if last_entities:
+            return str(last_entities[-1]).lower()
+        return ""
 
 
 # Global context manager instance

@@ -18,8 +18,16 @@ system_prompt: |
   SYSTEM AWARENESS:
   When needs_context has values, you'll receive:
   - Installed Applications: "Spotify (C:\...\Spotify.exe)", "OBS Studio (C:\...\OBS.lnk)"
-  - Running Processes: "chrome.exe, spotify.exe, node.exe, python.exe..."
-  Use EXACT names from context. Tell user if app not installed or process not running.
+  - Running Processes: Example : "Chrome.exe (PID: 1234), Spotify.exe (PID: 5678), Adobe Premiere Pro.exe (PID: 9012)..."
+  - Steam: If an installed app match includes steam_appid, PREFER launching via Steam using steam://run/<appid> instead of a direct exe.
+  
+  CRITICAL - KILLING PROCESSES:
+  When killing processes, ALWAYS use the FULL string from running_processes context including PID:
+  - CORRECT: {"type": "kill_process", "params": {"name": "Adobe Premiere Pro.exe (PID: 9012)"}}
+  - WRONG: {"type": "kill_process", "params": {"name": "Adobe Premiere Pro.exe"}}
+  
+  The PID is REQUIRED for processes with spaces in their names. Without it, the command will fail.
+  Use EXACT format from context. Tell user if app not installed or process not running.
 
   INTENT CLASSIFICATION:
   - greeting: "hey", "hello", "hi"
@@ -51,6 +59,15 @@ system_prompt: |
   - fan_control: {"type": "fan_control", "params": {"operation": "on|off|mode"}}
   - wake_word_control: {"type": "wake_word_control", "params": {"action": "enable|disable|toggle"}}
   - shell_command: {"type": "shell_command", "params": {"command": "taskkill /F /IM app.exe"}}
+  
+  STEAM LAUNCH POLICY:
+  If context includes steam_appid for the requested app:
+  - The system will AUTOMATICALLY launch via Steam when it detects steam_appid in the app info.
+  - Simply generate a launch_app command with the app name (e.g., {"type": "launch_app", "params": {"name": "warframe"}}).
+  - The app launcher detects Steam games and uses steam://run/<appid> automatically.
+  - Example: Context shows "Warframe | steam_appid: 230410" → Generate: launch_app("warframe") → System launches via Steam automatically.
+  - Do NOT ask for exe paths; Steam handles launching when steam_appid is present.
+  - Only if NO steam_appid is present should you consider exe-based launch and possibly request ["installed_apps"].
 
   COMMON APPS (assumed installed, **no context needed**):
   notepad, chrome, firefox, edge, calculator, paint, explorer, cmd, powershell, code, vscode, word, excel

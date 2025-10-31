@@ -169,23 +169,45 @@ class CommandExecutor:
             logger.error("No process name provided")
             return False
         
-        # Check if process is running before attempting to kill
+        # Extract PID if present in strings like "Name.exe (PID: 1234)"
+        pid: Optional[int] = None
+        base_name = process_name
+        if "(PID:" in process_name:
+            try:
+                pid_str = process_name.split("(PID:")[1].split(")")[0].strip()
+                pid = int(pid_str)
+                base_name = process_name.split("(PID:")[0].strip()
+            except (IndexError, ValueError):
+                pid = None
+                base_name = process_name
+        
+        # Check if process is running before attempting to kill (use fuzzy match)
         from src.utils.system_context import get_system_context
         sys_ctx = get_system_context()
         running_processes = await sys_ctx.get_running_processes(simplified=True)
         
-        # Normalize process name for comparison
-        process_name_lower = process_name.lower()
+        # Normalize names for comparison
+        target_lower = base_name.lower()
         
-        # running_processes is a list of dicts: [{"name": "chrome.exe", "pid": 1234, "status": "running"}, ...]
-        is_running = any(proc.get("name", "").lower() == process_name_lower for proc in running_processes)
+        # Exact match first
+        is_running = any(proc.get("name", "").lower() == target_lower for proc in running_processes)
+        
+        # If no exact match, try fuzzy contains match without .exe
+        if not is_running:
+            target_core = target_lower[:-4] if target_lower.endswith('.exe') else target_lower
+            for proc in running_processes:
+                name_lower = proc.get("name", "").lower()
+                name_core = name_lower[:-4] if name_lower.endswith('.exe') else name_lower
+                if target_core in name_core:
+                    is_running = True
+                    break
         
         if not is_running:
             logger.warning(f"Process {process_name} is not running - skipping kill command")
             return True  # Return True to avoid error message (process already not running = success)
         
         logger.info(f"Process {process_name} is running - proceeding to kill")
-        return await self.process_manager.kill_process(process_name)
+        return await self.process_manager.kill_process(base_name, pid=pid)
     
     async def _handle_system_command(self, params: Dict[str, Any]) -> bool:
         """Handle system command (lock, shutdown, restart, sleep)"""
