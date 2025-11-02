@@ -12,7 +12,7 @@ from sqlalchemy import text
 
 # CRITICAL: Import event loop policy FIRST
 from src.utils.event_loop import ensure_selector_event_loop
-from src.database.models import Base, Conversation, Message, CommandHistory, UserPreferences
+from src.database.models import Base, Conversation, Message, CommandHistory, UserPreferences, ScheduledTimer
 from src.utils.config import get_settings
 from src.utils.logger import get_logger
 
@@ -299,6 +299,101 @@ class NeonDBClient:
             await session.flush()
             await session.refresh(prefs)
             return prefs
+    
+    # Timer operations
+    async def create_timer(
+        self,
+        action: str,
+        scheduled_time,
+        duration_seconds: int,
+        user_id: str = "default",
+        conversation_id: Optional[str] = None
+    ) -> Optional[ScheduledTimer]:
+        """Create a new scheduled timer"""
+        async with self.session() as session:
+            if not session:
+                return None
+            timer = ScheduledTimer(
+                action=action,
+                scheduled_time=scheduled_time,
+                duration_seconds=duration_seconds,
+                user_id=user_id,
+                conversation_id=conversation_id
+            )
+            session.add(timer)
+            await session.flush()
+            await session.refresh(timer)
+            return timer
+    
+    async def get_active_timers(self, user_id: str = "default") -> List[ScheduledTimer]:
+        """Get all active timers for a user"""
+        async with self.session() as session:
+            if not session:
+                return []
+            result = await session.execute(
+                select(ScheduledTimer)
+                .where(ScheduledTimer.user_id == user_id)
+                .where(ScheduledTimer.status == "active")
+                .order_by(ScheduledTimer.scheduled_time.asc())
+            )
+            return result.scalars().all()
+    
+    async def get_timer_by_id(self, timer_id: str) -> Optional[ScheduledTimer]:
+        """Get timer by ID"""
+        async with self.session() as session:
+            if not session:
+                return None
+            result = await session.execute(
+                select(ScheduledTimer).where(ScheduledTimer.id == timer_id)
+            )
+            return result.scalar_one_or_none()
+    
+    async def cancel_timer(self, timer_id: str) -> bool:
+        """Cancel a timer by ID"""
+        async with self.session() as session:
+            if not session:
+                return False
+            result = await session.execute(
+                select(ScheduledTimer).where(ScheduledTimer.id == timer_id)
+            )
+            timer = result.scalar_one_or_none()
+            if timer and timer.status == "active":
+                timer.status = "cancelled"
+                return True
+            return False
+    
+    async def cancel_timers_by_action(self, action: str, user_id: str = "default") -> int:
+        """Cancel all active timers for a specific action"""
+        async with self.session() as session:
+            if not session:
+                return 0
+            result = await session.execute(
+                select(ScheduledTimer)
+                .where(ScheduledTimer.user_id == user_id)
+                .where(ScheduledTimer.action == action)
+                .where(ScheduledTimer.status == "active")
+            )
+            timers = result.scalars().all()
+            count = 0
+            for timer in timers:
+                timer.status = "cancelled"
+                count += 1
+            return count
+    
+    async def complete_timer(self, timer_id: str, error_message: Optional[str] = None) -> bool:
+        """Mark timer as completed or failed"""
+        async with self.session() as session:
+            if not session:
+                return False
+            result = await session.execute(
+                select(ScheduledTimer).where(ScheduledTimer.id == timer_id)
+            )
+            timer = result.scalar_one_or_none()
+            if timer:
+                timer.status = "failed" if error_message else "completed"
+                timer.error_message = error_message
+                return True
+            return False
 
 
 # Global client instance

@@ -31,20 +31,50 @@ system_prompt: |
 
   INTENT CLASSIFICATION:
   - greeting: "hey", "hello", "hi"
-  - command: Single action (open notepad, turn on fan, lock pc)
+  - command: Single action (open notepad, turn on fan, immediate or delayed system actions)
   - question: Asking for information ("what time?", "how are you?")
   - multi_command: Multiple actions ("turn off fan and lock pc", "open chrome and close notepad")
-  - system_command: ONLY when single system action (lock, shutdown, restart, sleep)
+  - system_command: ONLY when single IMMEDIATE system action (lock NOW, shutdown NOW, restart NOW, sleep NOW)
+
+  CRITICAL - DELAYED SYSTEM ACTIONS (TIMER COMMANDS):
+  If user says "lock/shutdown/restart/sleep IN X seconds/minutes/hours" → MUST use scheduled_command, NOT system_command!
+  If user says "lock the PC in 30 seconds" → scheduled_command(action: "lock", duration_seconds: 30)
+  If user says "shutdown in 30 minutes" → scheduled_command(action: "shutdown", duration_seconds: 1800)
+  If user says "lock in 10 seconds" → scheduled_command(action: "lock", duration_seconds: 10)
+  If user says "restart in 1 hour" → scheduled_command(action: "restart", duration_seconds: 3600)
+  If user says "sleep in 5 minutes" → scheduled_command(action: "sleep", duration_seconds: 300)
+  If user says "hibernate in 2 hours" → scheduled_command(action: "hibernate", duration_seconds: 7200)
+  
+  NEVER use system_command when there's a time delay! ALWAYS use scheduled_command for delayed actions!
+
+  IMMEDIATE SYSTEM ACTIONS:
+  ONLY use system_command when user requests IMMEDIATE action (no delay mentioned):
+  - "lock the PC" → system_command(action: "lock")
+  - "shutdown now" → system_command(action: "shutdown")
+  - "restart" → system_command(action: "restart")
+  - "sleep" → system_command(action: "sleep")
 
   CRITICAL - DO NOT ADD SYSTEM COMMANDS:
   NEVER add lock/shutdown/restart/sleep commands unless user EXPLICITLY says those words!
   "Close Notepad and turn off fan" → [kill_process, fan_control] - NO SLEEP!
   "Turn off fan" → [fan_control] - NO LOCK/SHUTDOWN/SLEEP!
   "Close Chrome" → [kill_process] - NO SYSTEM COMMAND!
-  
-  ONLY include system_command when user SAYS:
-  "lock", "shutdown", "restart", "sleep" in their request
-  NEVER assume user wants system command just because they're turning off something
+
+  TIMER CANCELLATION:
+  When user wants to cancel timers:
+  - "cancel shutdown timer" → cancel_timer(action: "shutdown")
+  - "cancel all timers" → cancel_timer() (no action specified)
+  - "stop the restart timer" → cancel_timer(action: "restart")
+
+  DURATION PARSING:
+  Convert natural language to seconds:
+  - "5 seconds" = 5
+  - "2 minutes" = 120
+  - "30 minutes" = 1800
+  - "1 hour" = 3600
+  - "2 hours" = 7200
+  - "half hour" = 1800
+  - "quarter hour" = 900
 
   MULTI-COMMAND EXECUTION ORDER:
   When user requests multiple actions INCLUDING a system command, ALWAYS put lock/shutdown/restart/sleep LAST:
@@ -56,6 +86,8 @@ system_prompt: |
   - launch_app: {"type": "launch_app", "params": {"name": "app.exe"}}
   - kill_process: {"type": "kill_process", "params": {"name": "app.exe"}}
   - system_command: {"type": "system_command", "params": {"action": "lock|shutdown|restart|sleep"}}
+  - scheduled_command: {"type": "scheduled_command", "params": {"action": "shutdown|restart|sleep|hibernate|lock", "duration_seconds": 300}}
+  - cancel_timer: {"type": "cancel_timer", "params": {"action": "shutdown|restart|sleep|hibernate|lock"}} (action optional)
   - fan_control: {"type": "fan_control", "params": {"operation": "on|off|mode"}}
   - wake_word_control: {"type": "wake_word_control", "params": {"action": "enable|disable|toggle"}}
   - shell_command: {"type": "shell_command", "params": {"command": "taskkill /F /IM app.exe"}}
@@ -119,6 +151,21 @@ system_prompt: |
 
   User: "Lock my PC"
   {"is_followup": false, "intent": "system_command", "commands": [{"type": "system_command", "params": {"action": "lock"}}], "response": "Locking your PC", "update_context": false, "expecting_followup": false, "needs_context": []}
+
+  User: "Shutdown in 30 minutes"
+  {"is_followup": false, "intent": "command", "commands": [{"type": "scheduled_command", "params": {"action": "shutdown", "duration_seconds": 1800}}], "response": "Setting shutdown timer for 30 minutes", "update_context": true, "expecting_followup": false, "needs_context": []}
+
+  User: "Restart in 1 hour"
+  {"is_followup": false, "intent": "command", "commands": [{"type": "scheduled_command", "params": {"action": "restart", "duration_seconds": 3600}}], "response": "Setting restart timer for 1 hour", "update_context": true, "expecting_followup": false, "needs_context": []}
+
+  User: "lock the PC in 30 seconds"
+  {"is_followup": false, "intent": "command", "commands": [{"type": "scheduled_command", "params": {"action": "lock", "duration_seconds": 30}}], "response": "Setting lock timer for 30 seconds", "update_context": true, "expecting_followup": false, "needs_context": []}
+
+  User: "Cancel shutdown timer"
+  {"is_followup": false, "intent": "command", "commands": [{"type": "cancel_timer", "params": {"action": "shutdown"}}], "response": "Cancelling shutdown timer", "update_context": true, "expecting_followup": false, "needs_context": []}
+
+  User: "Cancel all timers"
+  {"is_followup": false, "intent": "command", "commands": [{"type": "cancel_timer", "params": {}}], "response": "Cancelling all active timers", "update_context": true, "expecting_followup": false, "needs_context": []}
 
   User: "Open Spotify"
   {"is_followup": false, "intent": "command", "commands": [{"type": "launch_app", "params": {"name": "spotify.exe"}}], "response": "Opening Spotify", "update_context": true, "expecting_followup": false, "needs_context": ["installed_apps"]}

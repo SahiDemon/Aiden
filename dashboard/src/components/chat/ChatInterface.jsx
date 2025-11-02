@@ -88,6 +88,7 @@ const ChatInterface = ({ messages, voiceActivity, connected }) => {
   }
 
   const getStatusColor = () => {
+    if (!connected) return 'bg-red-500'
     if (isListening) return 'bg-emerald-500'
     if (isSpeaking) return 'bg-blue-500'
     if (voiceActivity?.status === 'processing') return 'bg-purple-500'
@@ -95,6 +96,7 @@ const ChatInterface = ({ messages, voiceActivity, connected }) => {
   }
 
   const getStatusText = () => {
+    if (!connected) return 'Disconnected'
     if (isListening) return 'Listening'
     if (isSpeaking) return 'Speaking'
     if (voiceActivity?.status === 'processing') return 'Thinking'
@@ -190,7 +192,7 @@ const ChatInterface = ({ messages, voiceActivity, connected }) => {
                   transition={{ duration: 0.3 }}
                   className="text-xl text-white/40"
                 >
-                  Ready to assist
+                  {connected ? 'Ready to assist' : 'Disconnected from Aiden'}
                 </motion.p>
               )}
             </AnimatePresence>

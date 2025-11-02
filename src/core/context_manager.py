@@ -587,7 +587,15 @@ class ContextManager:
         ]
 
         try:
-            ai_resp = await llm.chat(prompt_messages)
+            # For summarization, we don't need JSON format - just plain text
+            # Check if the LLM client supports use_json_format parameter
+            import inspect
+            sig = inspect.signature(llm.chat)
+            if "use_json_format" in sig.parameters:
+                ai_resp = await llm.chat(prompt_messages, use_json_format=False)
+            else:
+                ai_resp = await llm.chat(prompt_messages)
+            
             # Both clients return a dict with a 'response' string in our codebase pattern
             summary_text = (ai_resp or {}).get("response", "").strip()
             return summary_text

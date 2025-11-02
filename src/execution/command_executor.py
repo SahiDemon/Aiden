@@ -10,6 +10,7 @@ from typing import Dict, Any, List, Optional
 from src.execution.app_launcher import get_app_launcher
 from src.execution.process_manager import get_process_manager
 from src.execution.system_controller import get_system_controller
+from src.execution.timer_scheduler import get_timer_scheduler
 from src.database.neon_client import get_db_client
 from src.utils.logger import get_logger
 
@@ -25,8 +26,14 @@ class CommandExecutor:
         self.app_launcher = get_app_launcher()
         self.process_manager = get_process_manager()
         self.system_controller = get_system_controller()
+        self.timer_scheduler = None
         self.esp32_client = None
         self.wake_word_manager = None
+    
+    async def initialize_timer_scheduler(self):
+        """Initialize timer scheduler (async)"""
+        if not self.timer_scheduler:
+            self.timer_scheduler = await get_timer_scheduler()
     
     def set_esp32_client(self, esp32_client):
         """Set ESP32 client for smart home control"""
@@ -71,6 +78,12 @@ class CommandExecutor:
                 
                 case "system_command":
                     success = await self._handle_system_command(params)
+                
+                case "scheduled_command":
+                    success, response_data = await self._handle_scheduled_command(params)
+                
+                case "cancel_timer":
+                    success = await self._handle_cancel_timer(params)
                 
                 case "fan_control":
                     success, response_data = await self._handle_fan_control(params)
@@ -284,6 +297,77 @@ class CommandExecutor:
             return False, "No command provided"
         
         return await self.system_controller.execute_shell_command(command)
+    
+    async def _handle_scheduled_command(self, params: Dict[str, Any]) -> tuple[bool, Optional[str]]:
+        """Handle scheduled command (timer) creation"""
+        if not self.timer_scheduler:
+            await self.initialize_timer_scheduler()
+        
+        action = params.get("action", "").lower()
+        duration_seconds = params.get("duration_seconds", 0)
+        user_id = params.get("user_id", "default")
+        conversation_id = params.get("conversation_id")
+        
+        if not action:
+            logger.error("No action provided for scheduled command")
+            return False, "No action specified"
+        
+        if duration_seconds <= 0:
+            logger.error(f"Invalid duration: {duration_seconds}")
+            return False, "Invalid duration"
+        
+        # Validate action
+        valid_actions = ["shutdown", "restart", "sleep", "hibernate", "lock"]
+        if action not in valid_actions:
+            logger.error(f"Invalid action: {action}. Valid actions: {valid_actions}")
+            return False, f"Invalid action. Valid actions: {', '.join(valid_actions)}"
+        
+        try:
+            timer = await self.timer_scheduler.create_timer(
+                action=action,
+                duration_seconds=duration_seconds,
+                user_id=user_id,
+                conversation_id=conversation_id
+            )
+            
+            if timer:
+                logger.info(f"Created timer: {action} in {duration_seconds}s (ID: {timer.id})")
+                return True, f"Timer created: {action} in {duration_seconds} seconds"
+            else:
+                return False, "Failed to create timer"
+                
+        except Exception as e:
+            logger.error(f"Error creating timer: {e}")
+            return False, f"Error creating timer: {str(e)}"
+    
+    async def _handle_cancel_timer(self, params: Dict[str, Any]) -> bool:
+        """Handle timer cancellation"""
+        if not self.timer_scheduler:
+            await self.initialize_timer_scheduler()
+        
+        timer_id = params.get("timer_id")
+        action = params.get("action")
+        user_id = params.get("user_id", "default")
+        
+        try:
+            if timer_id:
+                # Cancel specific timer by ID
+                success = await self.timer_scheduler.cancel_timer(timer_id)
+                if success:
+                    logger.info(f"Cancelled timer: {timer_id}")
+                return success
+            elif action:
+                # Cancel all timers for specific action
+                count = await self.timer_scheduler.cancel_timers_by_action(action, user_id)
+                logger.info(f"Cancelled {count} {action} timers")
+                return count > 0
+            else:
+                logger.error("No timer ID or action provided for cancellation")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error cancelling timer: {e}")
+            return False
 
 
 # Global instance
