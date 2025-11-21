@@ -139,6 +139,22 @@ class CacheConfig(BaseSettings):
     ttl_tts_audio: int = Field(default=604800, description="TTS audio cache TTL (7 days)")
 
 
+class SpotifyConfig(BaseSettings):
+    """Spotify Web API configuration"""
+    model_config = SettingsConfigDict(
+        env_prefix="SPOTIFY_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore"
+    )
+    
+    enabled: bool = Field(default=False, description="Enable Spotify integration")
+    client_id: str = Field(default="", description="Spotify application client ID")
+    client_secret: str = Field(default="", description="Spotify application client secret")
+    refresh_token: str = Field(default="", description="Spotify refresh token")
+    default_device_name: Optional[str] = Field(default=None, description="Preferred Spotify device name")
+
+
 class Settings(BaseSettings):
     """Main Application Settings"""
     model_config = SettingsConfigDict(
@@ -158,6 +174,7 @@ class Settings(BaseSettings):
     esp32: ESP32Config = Field(default_factory=ESP32Config)
     speech: SpeechConfig = Field(default_factory=SpeechConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)
+    spotify: SpotifyConfig = Field(default_factory=SpotifyConfig)
     
     def model_post_init(self, __context) -> None:
         """Validate that required env vars are set"""
@@ -202,4 +219,3 @@ def reload_settings() -> Settings:
     global settings
     settings = Settings()
     return settings
-

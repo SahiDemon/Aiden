@@ -61,12 +61,12 @@ class GeminiClient:
         """
         try:
             # Extract system prompt and user messages
-            system_prompt = ""
+            system_prompts = []
             conversation = []
             
             for msg in messages:
                 if msg["role"] == "system":
-                    system_prompt = msg["content"]
+                    system_prompts.append(msg["content"])
                 elif msg["role"] == "user":
                     conversation.append({"role": "user", "parts": [msg["content"]]})
                 elif msg["role"] == "assistant":
@@ -83,10 +83,14 @@ class GeminiClient:
             
             # Generate response - use appropriate model based on format
             model = self.model_json if use_json_format else self.model_text
+            
+            # Combine all system prompts
+            full_system_prompt = "\n\n".join(system_prompts)
+            
             if use_json_format:
-                full_prompt = f"{system_prompt}\n\nUser: {user_message}\n\nRespond with valid JSON only."
+                full_prompt = f"{full_system_prompt}\n\nUser: {user_message}\n\nRespond with valid JSON only."
             else:
-                full_prompt = f"{system_prompt}\n\nUser: {user_message}"
+                full_prompt = f"{full_system_prompt}\n\nUser: {user_message}"
             
             response = model.generate_content(full_prompt)
             

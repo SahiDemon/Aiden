@@ -6,7 +6,11 @@ import logging
 import sys
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
-from colorlog import ColoredFormatter
+
+try:
+    from colorlog import ColoredFormatter
+except ImportError:  # pragma: no cover - used in lightweight test envs
+    ColoredFormatter = None
 
 
 def setup_logger(
@@ -60,17 +64,23 @@ def setup_logger(
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
     
     console_handler = logging.StreamHandler(sys.stdout)
-    console_formatter = ColoredFormatter(
-        "%(log_color)s%(levelname)-8s%(reset)s | %(cyan)s%(name)s%(reset)s | %(message)s",
-        datefmt="%H:%M:%S",
-        log_colors={
-            "DEBUG": "cyan",
-            "INFO": "green",
-            "WARNING": "yellow",
-            "ERROR": "red",
-            "CRITICAL": "red,bg_white",
-        }
-    )
+    if ColoredFormatter:
+        console_formatter = ColoredFormatter(
+            "%(log_color)s%(levelname)-8s%(reset)s | %(cyan)s%(name)s%(reset)s | %(message)s",
+            datefmt="%H:%M:%S",
+            log_colors={
+                "DEBUG": "cyan",
+                "INFO": "green",
+                "WARNING": "yellow",
+                "ERROR": "red",
+                "CRITICAL": "red,bg_white",
+            }
+        )
+    else:  # pragma: no cover - fallback path
+        console_formatter = logging.Formatter(
+            "%(levelname)-8s | %(name)s | %(message)s",
+            datefmt="%H:%M:%S"
+        )
     console_handler.setFormatter(console_formatter)
     console_handler.setLevel(level)
     
@@ -90,4 +100,3 @@ def get_logger(name: str = "aiden") -> logging.Logger:
     if not logger.handlers:
         return setup_logger(name)
     return logger
-

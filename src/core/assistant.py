@@ -4,7 +4,7 @@ Coordinates all components for intelligent voice interaction
 """
 import asyncio
 import logging
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
 from src.ai.groq_client import get_groq_client
 from src.ai.gemini_client import get_gemini_client
@@ -205,6 +205,27 @@ class AidenAssistant:
             logger.error(f"Error enhancing response: {e}")
             return None
     
+    def _merge_command_responses(
+        self,
+        base_text: str,
+        execution_results: List[Dict[str, Any]]
+    ) -> str:
+        """Append dynamic status messages from command execution to the spoken response."""
+        status_messages: List[str] = []
+        enriching_types = {"battery_status", "cpu_status", "gpu_status", "browser_media", "spotify", "media", "self_termination"}
+        for result in execution_results:
+            data = result.get("response_data")
+            if not isinstance(data, dict):
+                continue
+            if data.get("type") in enriching_types:
+                message = data.get("message")
+                if message:
+                    status_messages.append(message)
+        if not status_messages:
+            return base_text
+        addition = " ".join(status_messages)
+        return f"{base_text.strip()} {addition}".strip() if base_text else addition
+    
     async def handle_voice_activation(self, from_hotkey: bool = False):
         """
         Handle voice activation (wake word or hotkey)
@@ -373,43 +394,70 @@ class AidenAssistant:
             
             # Execute commands concurrently if any
             if commands:
-                # Start TTS in background immediately (fire and forget)
-                # But store task if we need to wait for follow-up
-                tts_task = asyncio.create_task(self._speak_async(response_text))
+                has_system_control = any(cmd.get("type") == "system_control" for cmd in commands)
+                has_self_termination = any(cmd.get("type") == "self_termination" for cmd in commands)
+                should_delay_response = has_system_control or has_self_termination or any(
+                    self.executor.command_requires_post_response(cmd)
+                    for cmd in commands
+                )
                 
-                # Execute commands FIRST for instant action
-                execution_results = await self.executor.execute_multiple(commands)
+                tts_task = None
+                if should_delay_response:
+                    execution_results = await self.executor.execute_multiple(commands)
+                else:
+                    tts_task = asyncio.create_task(self._speak_async(response_text))
+                    execution_results = await self.executor.execute_multiple(commands)
+                
+                # Merge dynamic command responses (battery/cpu/gpu stats) into spoken text
+                response_text = self._merge_command_responses(response_text, execution_results)
                 
                 # Check for ESP32 responses and enhance AI response
-                esp32_responses = [r.get("response_data") for r in execution_results if r.get("response_data")]
-                if esp32_responses and self.settings.app.enable_enhanced_responses:
-                    esp32_feedback = esp32_responses[0]
+                esp32_payloads = [
+                    r.get("response_data")
+                    for r in execution_results
+                    if r.get("command") == "fan_control" and r.get("response_data")
+                ]
+                if esp32_payloads and self.settings.app.enable_enhanced_responses:
+                    esp32_feedback = esp32_payloads[0]
+                    if isinstance(esp32_feedback, dict):
+                        esp32_feedback = esp32_feedback.get("message", "")
                     logger.info(f"📡 ESP32 Response: {esp32_feedback}")
                     
-                    # Ask AI to generate a better response based on ESP32 feedback
                     enhanced_response = await self._enhance_response_with_feedback(
                         user_text, 
                         response_text, 
-                        esp32_feedback
+                        esp32_feedback or ""
                     )
                     response_text = enhanced_response if enhanced_response else response_text
-                elif esp32_responses and not self.settings.app.enable_enhanced_responses:
-                    # Log original ESP32 feedback but skip enhancement
-                    esp32_feedback = esp32_responses[0]
+                elif esp32_payloads and not self.settings.app.enable_enhanced_responses:
+                    esp32_feedback = esp32_payloads[0]
+                    if isinstance(esp32_feedback, dict):
+                        esp32_feedback = esp32_feedback.get("message", "")
                     logger.info(f"📡 ESP32 Response: {esp32_feedback}")
                 
                 # Check for failures and update response
                 failed = [r for r in execution_results if not r.get("success", False)]
-                if failed:
+                failure_messages = [
+                    (r.get("response_data") or {}).get("message")
+                    for r in failed
+                    if isinstance(r.get("response_data"), dict) and r.get("response_data", {}).get("message")
+                ]
+                if failure_messages:
+                    response_text = " ".join(failure_messages)
+                elif failed:
                     logger.warning(f"Command execution failures: {failed}")
-                    # Check if it's a connection error
                     errors = [r.get("error") for r in failed if r.get("error")]
                     if any("Connection failed" in str(e) or "Timeout" in str(e) for e in errors):
                         response_text = "I couldn't reach the ESP32. Please check if it's powered on and connected to the network."
                 
-                # Wait for TTS to finish if we're auto-listening (prevent mic from hearing itself)
-                if expecting_followup:
-                    await tts_task
+                if should_delay_response:
+                    if expecting_followup:
+                        await self._speak_async(response_text)
+                    else:
+                        asyncio.create_task(self._speak_async(response_text))
+                else:
+                    if expecting_followup and tts_task:
+                        await tts_task
             else:
                 # No commands, just respond
                 # Wait for TTS if we're expecting follow-up, otherwise background
@@ -468,4 +516,3 @@ async def get_assistant() -> AidenAssistant:
     if _assistant is None:
         _assistant = AidenAssistant()
     return _assistant
-

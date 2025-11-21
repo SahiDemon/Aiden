@@ -20,6 +20,9 @@ A powerful voice-controlled AI assistant for Windows with context-aware conversa
 - Python 3.10+
 - Microphone
 - Internet connection
+- Optional tooling for advanced controls (place in `C:\Tools\...` **or** drop the executables into this repo’s `tools/` folder and Aiden will auto-detect them):
+  - [ClickMonitorDDC](https://clickmonitorddc.bplaced.net/) for external monitor brightness
+  - [NirCmd](https://www.nirsoft.net/utils/nircmd.html) for volume and display automation
 
 ## 🔧 Quick Start
 
@@ -113,7 +116,16 @@ CACHE_TTL_APP_PATHS=86400
 CACHE_TTL_LLM_RESPONSE=3600
 CACHE_TTL_TTS_AUDIO=3600
 
+# ===== Spotify (optional) =====
+SPOTIFY_ENABLED=false
+SPOTIFY_CLIENT_ID=
+SPOTIFY_CLIENT_SECRET=
+SPOTIFY_REFRESH_TOKEN=
+SPOTIFY_DEFAULT_DEVICE_NAME=
+
 ```
+
+To generate the `SPOTIFY_REFRESH_TOKEN`, run `python tools/spotify_refresh_token_helper.py` and follow the on-screen instructions (requires your Spotify app’s client ID/secret and the redirect URI `http://127.0.0.1:8888/callback`).
 
 ### Get Free API Keys
 
@@ -144,6 +156,19 @@ CACHE_TTL_TTS_AUDIO=3600
 "Kill Python"
 "Lock my computer"
 "What's 25 + 37?"
+"Turn off Wi-Fi"
+"Disconnect from the current network"
+"Enable airplane mode"
+"Set brightness to 40 percent"
+"Mute the system volume"
+"What's my battery level?"
+"How busy is the CPU?"
+"Show GPU status"
+"Pause YouTube"
+"Next song on YouTube Music"
+"Play my focus playlist on Spotify"
+"Set Spotify volume to 30 percent"
+"Play Spotify on this PC"
 ```
 
 ## 🏗️ Project Structure

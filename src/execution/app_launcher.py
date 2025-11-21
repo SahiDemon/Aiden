@@ -59,7 +59,7 @@ class AppLauncher:
             "teams": ["Teams.exe", "Microsoft Teams"],
         }
     
-    async def launch(self, app_name: str) -> bool:
+    async def launch_app(self, app_name: str) -> bool:
         """
         Find and launch application
         
