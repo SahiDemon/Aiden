@@ -112,9 +112,15 @@ class SpotifyClient:
             logger.error(f"Spotify API error ({method} {path}): {exc.response.text}")
             raise SpotifyError(f"Spotify API request failed: {exc.response.status_code}") from exc
 
-        if response.status_code == 204:
+        # Handle empty responses (204 No Content or empty body)
+        if response.status_code == 204 or not response.content:
             return None
-        return response.json()
+        
+        try:
+            return response.json()
+        except Exception:
+            # If JSON parsing fails, return None for empty/invalid responses
+            return None
 
     # ---------------------------------------------------------------- Playback
     async def get_current_playback(self) -> Optional[Dict[str, Any]]:

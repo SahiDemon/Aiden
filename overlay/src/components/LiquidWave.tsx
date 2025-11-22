@@ -3,6 +3,7 @@ import { motion, type Variants } from 'framer-motion';
 
 interface LiquidWaveProps {
     state: 'listening' | 'thinking' | 'replying';
+    displayText?: string;
 }
 
 // Configuration for each state
@@ -27,10 +28,29 @@ const waveConfig = {
     }
 };
 
-const LiquidWave: React.FC<LiquidWaveProps> = ({ state }) => {
+const LiquidWave: React.FC<LiquidWaveProps> = ({ state, displayText }) => {
     const gradientId = 'aidenGradient';
     const config = waveConfig[state];
     const viewBoxWidth = 1200;
+
+    // Determine what text to show
+    const getDisplayText = () => {
+        if (displayText) return displayText;
+
+        // Fallback to state labels
+        switch (state) {
+            case 'listening':
+                return 'Listening...';
+            case 'thinking':
+                return 'Thinking...';
+            case 'replying':
+                return 'Here is the answer...';
+            default:
+                return '';
+        }
+    };
+
+    const textToDisplay = getDisplayText();
 
     // Listening: Gentle, organic ripple - CENTERED
     const listeningPath = [
@@ -197,9 +217,7 @@ const LiquidWave: React.FC<LiquidWaveProps> = ({ state }) => {
                         animation: 'shimmer 2.5s ease-in-out infinite',
                         filter: 'drop-shadow(0 0 5px rgba(76, 130, 247, 0.4))'
                     }}>
-                        {state === 'listening' && "Listening..."}
-                        {state === 'thinking' && "Thinking..."}
-                        {state === 'replying' && "Here is the answer..."}
+                        {textToDisplay}
                     </div>
                 </motion.div>
             </div>

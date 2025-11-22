@@ -11,12 +11,14 @@ let win;
 // 🚧 Use ['ENV_NAME'] avoid vite:define plugin - Vite@2.x
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL'];
 function createWindow() {
-    const { width } = electron_1.screen.getPrimaryDisplay().workAreaSize;
+    const { width: screenWidth } = electron_1.screen.getPrimaryDisplay().workAreaSize;
+    const notchWidth = 1920;
+    const notchHeight = 200;
     win = new electron_1.BrowserWindow({
-        width: 800, // Notch width
-        height: 200, // Notch height
-        x: (width - 800) / 2,
-        y: 0,
+        width: notchWidth,
+        height: notchHeight,
+        x: (screenWidth - notchWidth) / 2, // center horizontally
+        y: 0, // top
         icon: path_1.default.join(process.env.VITE_PUBLIC, 'electron-vite.svg'),
         transparent: true,
         frame: false,
@@ -31,6 +33,7 @@ function createWindow() {
         },
     });
     // Test active push message to Renderer-process.
+    win.setIgnoreMouseEvents(true, { forward: true });
     win.webContents.on('did-finish-load', () => {
         win?.webContents.send('main-process-message', (new Date).toLocaleString());
     });

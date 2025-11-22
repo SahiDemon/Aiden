@@ -557,14 +557,26 @@ class CommandExecutor:
     def command_requires_post_response(self, command: Dict[str, Any]) -> bool:
         """Determine if a command needs to wait for executable feedback before speaking."""
         command_type = command.get("type")
-        if command_type != "system_control":
-            return False
-        action = (command.get("params") or {}).get("action", "").lower()
-        return action in {
-            "system.battery_status",
-            "system.cpu_usage",
-            "system.gpu_status",
-        }
+        
+        # System control commands that return data
+        if command_type == "system_control":
+            action = (command.get("params") or {}).get("action", "").lower()
+            return action in {
+                "system.battery_status",
+                "system.cpu_usage",
+                "system.gpu_status",
+            }
+        
+        # Media control commands that return data
+        if command_type == "media_control":
+            action = (command.get("params") or {}).get("action", "").lower()
+            return action in {
+                "get_current_track",
+                "identify",
+                "what_song",
+            }
+        
+        return False
 
 
 # Global instance

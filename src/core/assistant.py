@@ -409,7 +409,20 @@ class AidenAssistant:
                     execution_results = await self.executor.execute_multiple(commands)
                 
                 # Merge dynamic command responses (battery/cpu/gpu stats) into spoken text
+                original_response = response_text
                 response_text = self._merge_command_responses(response_text, execution_results)
+                
+                # If response was enriched with command data, broadcast the updated message
+                if response_text != original_response:
+                    try:
+                        from src.utils.websocket_broadcast import broadcast_message
+                        await broadcast_message("message", {
+                            "role": "assistant",
+                            "content": response_text,
+                            "timestamp": __import__('datetime').datetime.now().isoformat()
+                        })
+                    except Exception:
+                        pass  # Non-critical
                 
                 # Check for ESP32 responses and enhance AI response
                 esp32_payloads = [

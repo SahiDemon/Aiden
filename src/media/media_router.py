@@ -132,6 +132,35 @@ class MediaRouter:
                 await self.spotify_client.play(context_uri="spotify:collection:tracks", device_id=device_id)
                 return True, {"type": "spotify", "message": "Playing your Liked Songs on Spotify."}
 
+            logger.info(f"Checking action '{action}' for get_current_track")
+            if action in ("get_current_track", "identify", "what_song"):
+                logger.info(f"Action matched! Getting current playback...")
+                playback = await self.spotify_client.get_current_playback()
+                logger.info(f"Playback data: {playback is not None}")
+                if not playback or not playback.get("item"):
+                    return False, {"type": "spotify", "message": "No track is currently playing on Spotify."}
+                
+                track = playback["item"]
+                track_name = track.get("name", "Unknown")
+                artists = ", ".join(artist.get("name", "") for artist in track.get("artists", []))
+                album = track.get("album", {}).get("name", "Unknown Album")
+                
+                message = f"Currently playing: '{track_name}' by {artists}"
+                if album:
+                    message += f" from the album '{album}'"
+                
+                logger.info(f"Returning track info: {message}")
+                return True, {
+                    "type": "spotify",
+                    "message": message,
+                    "track_info": {
+                        "name": track_name,
+                        "artists": artists,
+                        "album": album,
+                        "uri": track.get("uri"),
+                    }
+                }
+
             logger.error(f"Unsupported Spotify action: {action}")
             return False, {"type": "spotify", "message": "Unsupported Spotify action."}
         except SpotifyNotConfiguredError:
