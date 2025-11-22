@@ -12,19 +12,23 @@ let win;
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL'];
 function createWindow() {
     const { width: screenWidth } = electron_1.screen.getPrimaryDisplay().workAreaSize;
-    const notchWidth = 1920;
+    const maxNotchWidth = 1920;
     const notchHeight = 200;
+    // Ensure window width never exceeds screen width
+    const windowWidth = Math.min(maxNotchWidth, screenWidth);
+    // Center horizontally, but clamp to 0 to prevent negative x-position
+    const xPosition = Math.max(0, (screenWidth - windowWidth) / 2);
     win = new electron_1.BrowserWindow({
-        width: notchWidth,
+        width: windowWidth,
         height: notchHeight,
-        x: (screenWidth - notchWidth) / 2, // center horizontally
-        y: 0, // top
+        x: xPosition,
+        y: 0,
         title: 'Aiden Overlay',
         icon: path_1.default.join(process.env.VITE_PUBLIC, 'icon.ico'),
         transparent: true,
         frame: false,
         alwaysOnTop: true,
-        skipTaskbar: false, // Show in task manager with proper name
+        skipTaskbar: true,
         resizable: false,
         hasShadow: false,
         webPreferences: {

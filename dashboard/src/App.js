@@ -50,12 +50,16 @@ function App() {
   useEffect(() => {
     if (!timerUpdates) return
 
+    console.log('[App] Timer update received:', timerUpdates)
+    
     // Real-time timer updates via WebSocket
     const loadTimers = async () => {
       try {
         const response = await api.getActiveTimers()
+        console.log('[App] Loaded timers after WebSocket update:', response)
         if (response.success) {
           setActiveTimers(response.timers || [])
+          console.log('[App] Active timers set to:', response.timers || [])
         }
       } catch (error) {
         console.error('Error loading timers after WebSocket update:', error)

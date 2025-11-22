@@ -547,8 +547,10 @@ class CommandExecutor:
                 logger.info(f"Cancelled {count} {action} timers")
                 return count > 0
             else:
-                logger.error("No timer ID or action provided for cancellation")
-                return False
+                # Cancel ALL active timers (no action specified)
+                count = await self.timer_scheduler.cancel_all_timers(user_id)
+                logger.info(f"Cancelled all {count} active timers for user {user_id}")
+                return count > 0
                 
         except Exception as e:
             logger.error(f"Error cancelling timer: {e}")

@@ -158,6 +158,23 @@ class TimerScheduler:
         
         return count
     
+    async def cancel_all_timers(self, user_id: str = "default") -> int:
+        """Cancel all active timers for a user"""
+        db_client = await get_db_client()
+        timers = await db_client.get_active_timers(user_id)
+        count = 0
+        
+        for timer in timers:
+            success = await self.cancel_timer(str(timer.id))
+            if success:
+                count += 1
+        
+        logger.info(f"Cancelled all {count} active timers for user {user_id}")
+        if count > 0:
+            await self._broadcast_timer_update()
+        
+        return count
+    
     async def get_active_timers(self, user_id: str = "default") -> List[Dict]:
         """Get all active timers for a user with remaining time"""
         db_client = await get_db_client()

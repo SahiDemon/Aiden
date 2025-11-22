@@ -21,14 +21,12 @@ function createWindow() {
     win = new BrowserWindow({
         width: windowWidth,
         height: notchHeight,
-        x: xPosition, // center horizontally, clamped to screen bounds
-        y: 0, // top
-        title: 'Aiden Overlay',
-        icon: path.join(process.env.VITE_PUBLIC as string, 'icon.ico'),
+        x: xPosition, 
+        y: 0, 
         transparent: true,
         frame: false,
         alwaysOnTop: true,
-        skipTaskbar: false, // Show in task manager with proper name
+        skipTaskbar: true, 
         resizable: false,
         hasShadow: false,
         webPreferences: {

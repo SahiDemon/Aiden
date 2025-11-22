@@ -146,7 +146,15 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocke
                             }
                             break;
 
+                        case 'timer_update':
+                        case 'system_metric':
+                        case 'device_update':
+                        case 'esp32_update':
+                            // Ignore these messages in overlay (only relevant for dashboard)
+                            break;
+
                         default:
+                            console.log('[Overlay WebSocket] Unknown message type:', data.type, data);
                             break;
                     }
                 } catch (error) {

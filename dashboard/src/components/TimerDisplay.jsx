@@ -279,7 +279,7 @@ const TimerDisplay = ({ timers = [], onTimerUpdate }) => {
             <style jsx>{`
                 .timer-display-container {
                     position: fixed;
-                    top: 14rem;
+                    top: 6rem;
                     right: 1.5rem;
                     z-index: 999;
                     min-width: 320px;

@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
+import psutil
 
 from src.utils.logger import get_logger
 
@@ -45,6 +46,30 @@ class OverlayLauncher:
         
         return False
     
+    def _kill_existing_overlays(self):
+        """Kill any existing overlay processes"""
+        try:
+            killed_count = 0
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                try:
+                    # Check if it's an electron process running the overlay
+                    cmdline = proc.info.get('cmdline', [])
+                    if cmdline and 'electron' in proc.info['name'].lower():
+                        # Check if it's our overlay (contains 'overlay' or 'Aiden Overlay' in cmdline)
+                        cmdline_str = ' '.join(cmdline).lower()
+                        if 'overlay' in cmdline_str or str(self.overlay_dir).lower() in cmdline_str:
+                            logger.info(f"Killing existing overlay process (PID: {proc.info['pid']})")
+                            proc.kill()
+                            proc.wait(timeout=3)
+                            killed_count += 1
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.TimeoutExpired):
+                    pass
+            
+            if killed_count > 0:
+                logger.info(f"Killed {killed_count} existing overlay process(es)")
+        except Exception as e:
+            logger.warning(f"Error while killing existing overlays: {e}")
+    
     def start(self) -> bool:
         """Start the overlay application"""
         if not self.overlay_dir:
@@ -54,6 +79,9 @@ class OverlayLauncher:
         if not self.is_overlay_built():
             logger.error("Cannot start overlay: overlay not built. Run 'npm run build' in overlay directory")
             return False
+        
+        # Kill any existing overlay processes first
+        self._kill_existing_overlays()
         
         try:
             # Use electron to run the built app
@@ -98,6 +126,7 @@ class OverlayLauncher:
     
     def stop(self):
         """Stop the overlay application"""
+        # First stop our tracked process
         if self.process:
             try:
                 logger.info("Stopping overlay...")
@@ -115,6 +144,9 @@ class OverlayLauncher:
                 logger.error(f"Error stopping overlay: {e}", exc_info=True)
             finally:
                 self.process = None
+        
+        # Also kill any other overlay processes that might be lingering
+        self._kill_existing_overlays()
 
 
 # Global singleton instance
