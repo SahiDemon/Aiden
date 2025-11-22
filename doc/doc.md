@@ -115,6 +115,39 @@
 "Put computer to sleep"
 ```
 
+#### Advanced System Control
+```
+"Turn off Wi-Fi"
+"Disconnect from the current network"
+"Enable airplane mode"
+"Turn Bluetooth back on"
+"Enable power saving mode"
+"Set brightness to 40 percent"
+"Mute the speakers"
+"What's my battery level?"
+"How busy is the CPU?"
+"Show GPU stats"
+```
+
+> **Tooling tip:** Drop `ClickMonitorDDC.exe`, `nircmd.exe`, or `nvidia-smi.exe` into `C:\Tools\...` or the repository’s `tools/` folder—Aiden scans both locations automatically.
+
+#### Browser Media (YouTube / YouTube Music)
+```
+"Pause YouTube"
+"Resume my YouTube Music tab"
+"Next video on YouTube"
+"Mute the YouTube tab"
+```
+
+#### Spotify Control
+```
+"Play on Spotify"
+"Pause Spotify"
+"Play my workout playlist on Spotify"
+"Set Spotify volume to 25 percent"
+"Play Spotify on the living room speaker"
+```
+
 #### Smart Home (ESP32 Fan)
 ```
 "Turn on the fan"

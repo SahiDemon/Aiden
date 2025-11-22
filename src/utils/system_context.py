@@ -293,9 +293,6 @@ class SystemContextProvider:
                 else:
                     app_list.append(name)
             
-            # Get unique process names and prioritize user-relevant ones
-            all_process_names = list(set([p["name"] for p in processes]))
-            
             # Prioritize common user apps that might be killed
             priority_processes = []
             other_processes = []
@@ -310,14 +307,18 @@ class SystemContextProvider:
                 'cursor', 'sublime', 'atom', 'brackets',  # More editors
                 'postman', 'docker', 'git',  # Dev tools
                 'excel', 'word', 'outlook', 'powerpoint',  # Office
+                'premiere', 'photoshop', 'illustrator', 'after effects',  # Adobe
             ]
             
-            for proc_name in all_process_names:
+            for proc in processes:
+                proc_name = proc["name"]
                 proc_lower = proc_name.lower()
+                proc_info = f"{proc_name} (PID: {proc['pid']})"
+                
                 if any(keyword in proc_lower for keyword in priority_keywords):
-                    priority_processes.append(proc_name)
+                    priority_processes.append(proc_info)
                 else:
-                    other_processes.append(proc_name)
+                    other_processes.append(proc_info)
             
             # Combine: priority first, then others (up to 60 total)
             process_list = sorted(priority_processes) + sorted(other_processes)
@@ -400,4 +401,3 @@ def get_system_context() -> SystemContextProvider:
     if _system_context is None:
         _system_context = SystemContextProvider()
     return _system_context
-

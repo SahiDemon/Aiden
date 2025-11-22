@@ -7,6 +7,7 @@ import ChatInterface from './components/chat/ChatInterface'
 import ConversationHistory from './components/chat/ConversationHistory'
 import CollapsibleSidebar from './components/layout/CollapsibleSidebar'
 import SettingsDialog from './components/settings/SettingsDialog'
+import TimerDisplay from './components/TimerDisplay'
 import useWebSocket from './hooks/useWebSocket'
 import api from './lib/api'
 
@@ -15,6 +16,7 @@ function App() {
   const [showHistory, setShowHistory] = useState(false)
   const [conversationMessages, setConversationMessages] = useState([])
   const [isLoading, setIsLoading] = useState(true)
+  const [activeTimers, setActiveTimers] = useState([])
 
   const {
     connected,
@@ -23,7 +25,61 @@ function App() {
     systemMetrics,
     deviceUpdates,
     speakingText,
+    timerUpdates,
   } = useWebSocket()
+
+  // Load active timers on component mount
+  useEffect(() => {
+    const loadTimers = async () => {
+      try {
+        const response = await api.getActiveTimers()
+        if (response.success) {
+          setActiveTimers(response.timers || [])
+        }
+      } catch (error) {
+        console.error('Error loading timers:', error)
+      }
+    }
+
+    if (connected) {
+      loadTimers()
+    }
+  }, [connected])
+
+  // Handle timer updates from WebSocket
+  useEffect(() => {
+    if (!timerUpdates) return
+
+    console.log('[App] Timer update received:', timerUpdates)
+    
+    // Real-time timer updates via WebSocket
+    const loadTimers = async () => {
+      try {
+        const response = await api.getActiveTimers()
+        console.log('[App] Loaded timers after WebSocket update:', response)
+        if (response.success) {
+          setActiveTimers(response.timers || [])
+          console.log('[App] Active timers set to:', response.timers || [])
+        }
+      } catch (error) {
+        console.error('Error loading timers after WebSocket update:', error)
+      }
+    }
+
+    loadTimers()
+  }, [timerUpdates])
+
+  // Handle timer update callback
+  const handleTimerUpdate = async () => {
+    try {
+      const response = await api.getActiveTimers()
+      if (response.success) {
+        setActiveTimers(response.timers || [])
+      }
+    } catch (error) {
+      console.error('Error updating timers:', error)
+    }
+  }
 
   // Fetch initial conversation history
   useEffect(() => {
@@ -114,15 +170,23 @@ function App() {
 
   return (
     <div className="min-h-screen gradient-bg relative overflow-hidden">
-      <Toaster position="top-right" toastOptions={{
-        className: 'liquid-glass-card',
-        style: {
-          background: 'rgba(255, 255, 255, 0.08)',
-          color: '#fff',
-          border: '1px solid rgba(255, 255, 255, 0.15)',
-          borderRadius: '12px',
-        },
-      }} />
+      <Toaster 
+        position="top-right" 
+        containerStyle={{
+          top: '5rem', // Move down to avoid navbar overlap
+          right: '1rem',
+        }}
+        toastOptions={{
+          className: 'liquid-glass-card',
+          style: {
+            background: 'rgba(255, 255, 255, 0.08)',
+            color: '#fff',
+            border: '1px solid rgba(255, 255, 255, 0.15)',
+            borderRadius: '12px',
+            marginTop: '0.5rem', // Additional spacing between toasts
+          },
+        }} 
+      />
 
       {/* Collapsible Sidebar */}
       <CollapsibleSidebar
@@ -203,6 +267,12 @@ function App() {
         isOpen={showHistory}
         onClose={() => setShowHistory(false)}
         onSelectConversation={handleSelectConversation}
+      />
+
+      {/* Timer Display */}
+      <TimerDisplay
+        timers={activeTimers}
+        onTimerUpdate={handleTimerUpdate}
       />
     </div>
   )

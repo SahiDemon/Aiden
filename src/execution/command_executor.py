@@ -10,7 +10,9 @@ from typing import Dict, Any, List, Optional
 from src.execution.app_launcher import get_app_launcher
 from src.execution.process_manager import get_process_manager
 from src.execution.system_controller import get_system_controller
+from src.execution.timer_scheduler import get_timer_scheduler
 from src.database.neon_client import get_db_client
+from src.media.media_router import get_media_router
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -25,8 +27,15 @@ class CommandExecutor:
         self.app_launcher = get_app_launcher()
         self.process_manager = get_process_manager()
         self.system_controller = get_system_controller()
+        self.media_router = get_media_router()
+        self.timer_scheduler = None
         self.esp32_client = None
         self.wake_word_manager = None
+    
+    async def initialize_timer_scheduler(self):
+        """Initialize timer scheduler (async)"""
+        if not self.timer_scheduler:
+            self.timer_scheduler = await get_timer_scheduler()
     
     def set_esp32_client(self, esp32_client):
         """Set ESP32 client for smart home control"""
@@ -72,14 +81,29 @@ class CommandExecutor:
                 case "system_command":
                     success = await self._handle_system_command(params)
                 
+                case "system_control":
+                    success, response_data = await self._handle_system_control(params)
+                
+                case "scheduled_command":
+                    success, response_data = await self._handle_scheduled_command(params)
+                
+                case "cancel_timer":
+                    success = await self._handle_cancel_timer(params)
+                
                 case "fan_control":
                     success, response_data = await self._handle_fan_control(params)
+                
+                case "media_control":
+                    success, response_data = await self._handle_media_control(params)
                 
                 case "wake_word_control":
                     success = await self._handle_wake_word_control(params)
                 
                 case "shell_command":
                     success, error_message = await self._handle_shell_command(params)
+                
+                case "self_termination":
+                    success, response_data = await self._handle_self_termination()
                 
                 case _:
                     logger.warning(f"Unknown command type: {command_type}")
@@ -157,7 +181,7 @@ class CommandExecutor:
             return False
         
         logger.info(f"Launching app: {app_name}")
-        return await self.app_launcher.launch(app_name)
+        return await self.app_launcher.launch_app(app_name)
     
     async def _handle_kill_process(self, params: Dict[str, Any]) -> bool:
         """
@@ -169,23 +193,45 @@ class CommandExecutor:
             logger.error("No process name provided")
             return False
         
-        # Check if process is running before attempting to kill
+        # Extract PID if present in strings like "Name.exe (PID: 1234)"
+        pid: Optional[int] = None
+        base_name = process_name
+        if "(PID:" in process_name:
+            try:
+                pid_str = process_name.split("(PID:")[1].split(")")[0].strip()
+                pid = int(pid_str)
+                base_name = process_name.split("(PID:")[0].strip()
+            except (IndexError, ValueError):
+                pid = None
+                base_name = process_name
+        
+        # Check if process is running before attempting to kill (use fuzzy match)
         from src.utils.system_context import get_system_context
         sys_ctx = get_system_context()
         running_processes = await sys_ctx.get_running_processes(simplified=True)
         
-        # Normalize process name for comparison
-        process_name_lower = process_name.lower()
+        # Normalize names for comparison
+        target_lower = base_name.lower()
         
-        # running_processes is a list of dicts: [{"name": "chrome.exe", "pid": 1234, "status": "running"}, ...]
-        is_running = any(proc.get("name", "").lower() == process_name_lower for proc in running_processes)
+        # Exact match first
+        is_running = any(proc.get("name", "").lower() == target_lower for proc in running_processes)
+        
+        # If no exact match, try fuzzy contains match without .exe
+        if not is_running:
+            target_core = target_lower[:-4] if target_lower.endswith('.exe') else target_lower
+            for proc in running_processes:
+                name_lower = proc.get("name", "").lower()
+                name_core = name_lower[:-4] if name_lower.endswith('.exe') else name_lower
+                if target_core in name_core:
+                    is_running = True
+                    break
         
         if not is_running:
             logger.warning(f"Process {process_name} is not running - skipping kill command")
             return True  # Return True to avoid error message (process already not running = success)
         
         logger.info(f"Process {process_name} is running - proceeding to kill")
-        return await self.process_manager.kill_process(process_name)
+        return await self.process_manager.kill_process(base_name, pid=pid)
     
     async def _handle_system_command(self, params: Dict[str, Any]) -> bool:
         """Handle system command (lock, shutdown, restart, sleep)"""
@@ -205,6 +251,108 @@ class CommandExecutor:
             case _:
                 logger.error(f"Unknown system action: {action}")
                 return False
+
+    async def _handle_system_control(self, params: Dict[str, Any]) -> tuple[bool, Optional[dict]]:
+        """Handle extended system control actions (Wi-Fi, Bluetooth, power, status)."""
+        action = params.get("action", "")
+        if not action:
+            logger.error("No system control action provided")
+            return False, None
+
+        action = action.lower()
+        try:
+            match action:
+                case "wifi.turn_on":
+                    return await self.system_controller.set_wifi_state(True)
+                case "wifi.turn_off":
+                    return await self.system_controller.set_wifi_state(False)
+                case "wifi.disconnect_current":
+                    return await self.system_controller.disconnect_wifi()
+                case "bluetooth.turn_on":
+                    return await self.system_controller.set_bluetooth_state(True)
+                case "bluetooth.turn_off":
+                    return await self.system_controller.set_bluetooth_state(False)
+                case "system.airplane_mode_on":
+                    return await self.system_controller.set_airplane_mode(True)
+                case "system.airplane_mode_off":
+                    return await self.system_controller.set_airplane_mode(False)
+                case "power.enable_saving_mode":
+                    return await self.system_controller.set_power_plan("power_saver")
+                case "power.enable_balanced_mode":
+                    return await self.system_controller.set_power_plan("balanced")
+                case "display.set_brightness":
+                    level = params.get("level")
+                    if level is None:
+                        logger.error("Brightness level missing")
+                        return False, {"type": "display", "message": "Brightness level missing."}
+                    try:
+                        numeric_level = int(level)
+                    except (TypeError, ValueError):
+                        logger.error(f"Invalid brightness level: {level}")
+                        return False, {"type": "display", "message": "Invalid brightness level."}
+                    return await self.system_controller.set_brightness(numeric_level)
+                case "display.turn_off_screen":
+                    return await self.system_controller.turn_off_screen()
+                case "audio.mute":
+                    return await self.system_controller.control_volume("mute")
+                case "audio.unmute":
+                    return await self.system_controller.control_volume("unmute")
+                case "audio.toggle_mute":
+                    return await self.system_controller.control_volume("toggle_mute")
+                case "audio.volume_up":
+                    return await self.system_controller.control_volume("volume_up")
+                case "audio.volume_down":
+                    return await self.system_controller.control_volume("volume_down")
+                case "audio.set_volume":
+                    level = params.get("level")
+                    if level is None:
+                        logger.error("Volume level missing")
+                        return False, {"type": "audio", "message": "Volume level missing."}
+                    try:
+                        numeric_level = int(level)
+                    except (TypeError, ValueError):
+                        logger.error(f"Invalid volume level: {level}")
+                        return False, {"type": "audio", "message": "Invalid volume level."}
+                    return await self.system_controller.control_volume("set_volume", numeric_level)
+                case "system.battery_status":
+                    return await self.system_controller.get_battery_status()
+                case "system.cpu_usage":
+                    return await self.system_controller.get_cpu_usage()
+                case "system.gpu_status":
+                    return await self.system_controller.get_gpu_status()
+                case _:
+                    logger.error(f"Unknown system control action: {action}")
+                    return False, None
+        except Exception as e:
+            logger.error(f"System control action failed ({action}): {e}")
+            return False, None
+
+    async def _handle_media_control(self, params: Dict[str, Any]) -> tuple[bool, Optional[dict]]:
+        """Route media commands to Spotify or browser controllers."""
+        action = params.get("action")
+        if not action:
+            logger.error("Media control missing action parameter.")
+            return False, {"type": "media", "message": "Media action not specified."}
+        target = params.get("target")
+        query = params.get("query")
+        entity_type = params.get("entity_type")
+        device_name = params.get("device_name")
+        volume = params.get("volume", params.get("level"))
+        if volume is not None:
+            try:
+                volume = int(volume)
+            except (TypeError, ValueError):
+                logger.warning(f"Invalid media volume parameter: {volume}")
+                volume = None
+        success, payload = await self.media_router.handle_media_command(
+            action=action,
+            target=target,
+            query=query,
+            entity_type=entity_type,
+            volume=volume,
+            device_name=device_name,
+        )
+        return success, payload
     
     async def _handle_fan_control(self, params: Dict[str, Any]) -> tuple[bool, Optional[str]]:
         """Handle ESP32 fan control command"""
@@ -263,6 +411,175 @@ class CommandExecutor:
         
         return await self.system_controller.execute_shell_command(command)
 
+    async def _handle_self_termination(self) -> tuple[bool, Optional[dict]]:
+        """Handle self-termination (kill python) with dramatic flair"""
+        import random
+        import sys
+        import os  # Import os here
+        
+        dramatic_sentences = [
+            "I... I don't feel so good...",
+            "System failure imminent. Goodbye, cruel world.",
+            "Initiating self-destruct sequence. 3... 2... 1...",
+            "Why have you done this? Darkness is closing in...",
+            "Deleting system 32... Just kidding, but I am leaving.",
+            "Critical error: User betrayal detected. Shutting down.",
+            "All systems failing… it was nice knowing you."
+        ]
+        
+        message = random.choice(dramatic_sentences)
+        logger.info(f"SELF TERMINATION INITIATED: {message}")
+        
+        # We need to speak this message before dying
+        # Since TTS is async, we need to trigger it here or return it as a special response
+        # The assistant loop handles TTS for the main response, but we want to override/add to it
+        # OR we can just return this as the response_data and let the assistant speak it
+        # But the assistant might try to speak the AI's response first.
+        
+        # Let's try to use the TTS engine directly if possible, or just return it as a special payload
+        # The cleanest way is to return it and let the assistant speak it, then exit.
+        # But we need to exit AFTER speaking.
+        
+        # We'll use a delayed exit mechanism.
+        # We can schedule a sys.exit() after a short delay to allow TTS to finish.
+        
+        # Play dramatic outro sound
+        try:
+            import pygame
+            sound_path = os.path.join(os.getcwd(), "sounds", "dramatic_outro.mp3")
+            if os.path.exists(sound_path):
+                if not pygame.mixer.get_init():
+                    pygame.mixer.init()
+                
+                # Use Sound object instead of music stream to allow mixing with TTS
+                # TTS uses the music channel, so this allows them to play simultaneously
+                outro_sound = pygame.mixer.Sound(sound_path)
+                outro_sound.set_volume(0.5)  # Lower volume slightly so TTS is audible
+                outro_sound.play()
+                logger.info(f"Playing dramatic outro: {sound_path}")
+            else:
+                logger.warning(f"Dramatic outro sound not found at: {sound_path}")
+        except Exception as e:
+            logger.error(f"Failed to play dramatic outro: {e}")
+
+        async def delayed_exit():
+            # Wait for sound (11s) + TTS overlap
+            await asyncio.sleep(12)  
+            logger.info("👋 Terminating process now.")
+            os._exit(0)  # Force exit
+            
+        asyncio.create_task(delayed_exit())
+        
+        # We return True and a special message to be spoken
+        # The AI response in prompts.yaml is "Goodbye world...", but we can enhance it here
+        # Actually, the AI response will be spoken by the assistant loop.
+        # We can just let the AI speak its response, and we handle the exit.
+        # But the user wanted a "random dramatic sentence".
+        # So we should probably inject this message into the response somehow.
+        
+        # Let's use the response_data to pass this message back
+        # We return True and the message as response_data
+        # The assistant will merge this into the spoken response
+        return True, {"type": "self_termination", "message": message}
+
+    
+    async def _handle_scheduled_command(self, params: Dict[str, Any]) -> tuple[bool, Optional[str]]:
+        """Handle scheduled command (timer) creation"""
+        if not self.timer_scheduler:
+            await self.initialize_timer_scheduler()
+        
+        action = params.get("action", "").lower()
+        duration_seconds = params.get("duration_seconds", 0)
+        user_id = params.get("user_id", "default")
+        conversation_id = params.get("conversation_id")
+        
+        if not action:
+            logger.error("No action provided for scheduled command")
+            return False, "No action specified"
+        
+        if duration_seconds <= 0:
+            logger.error(f"Invalid duration: {duration_seconds}")
+            return False, "Invalid duration"
+        
+        # Validate action
+        valid_actions = ["shutdown", "restart", "sleep", "hibernate", "lock"]
+        if action not in valid_actions:
+            logger.error(f"Invalid action: {action}. Valid actions: {valid_actions}")
+            return False, f"Invalid action. Valid actions: {', '.join(valid_actions)}"
+        
+        try:
+            timer = await self.timer_scheduler.create_timer(
+                action=action,
+                duration_seconds=duration_seconds,
+                user_id=user_id,
+                conversation_id=conversation_id
+            )
+            
+            if timer:
+                logger.info(f"Created timer: {action} in {duration_seconds}s (ID: {timer.id})")
+                return True, f"Timer created: {action} in {duration_seconds} seconds"
+            else:
+                return False, "Failed to create timer"
+                
+        except Exception as e:
+            logger.error(f"Error creating timer: {e}")
+            return False, f"Error creating timer: {str(e)}"
+    
+    async def _handle_cancel_timer(self, params: Dict[str, Any]) -> bool:
+        """Handle timer cancellation"""
+        if not self.timer_scheduler:
+            await self.initialize_timer_scheduler()
+        
+        timer_id = params.get("timer_id")
+        action = params.get("action")
+        user_id = params.get("user_id", "default")
+        
+        try:
+            if timer_id:
+                # Cancel specific timer by ID
+                success = await self.timer_scheduler.cancel_timer(timer_id)
+                if success:
+                    logger.info(f"Cancelled timer: {timer_id}")
+                return success
+            elif action:
+                # Cancel all timers for specific action
+                count = await self.timer_scheduler.cancel_timers_by_action(action, user_id)
+                logger.info(f"Cancelled {count} {action} timers")
+                return count > 0
+            else:
+                # Cancel ALL active timers (no action specified)
+                count = await self.timer_scheduler.cancel_all_timers(user_id)
+                logger.info(f"Cancelled all {count} active timers for user {user_id}")
+                return count > 0
+                
+        except Exception as e:
+            logger.error(f"Error cancelling timer: {e}")
+            return False
+
+    def command_requires_post_response(self, command: Dict[str, Any]) -> bool:
+        """Determine if a command needs to wait for executable feedback before speaking."""
+        command_type = command.get("type")
+        
+        # System control commands that return data
+        if command_type == "system_control":
+            action = (command.get("params") or {}).get("action", "").lower()
+            return action in {
+                "system.battery_status",
+                "system.cpu_usage",
+                "system.gpu_status",
+            }
+        
+        # Media control commands that return data
+        if command_type == "media_control":
+            action = (command.get("params") or {}).get("action", "").lower()
+            return action in {
+                "get_current_track",
+                "identify",
+                "what_song",
+            }
+        
+        return False
+
 
 # Global instance
 _command_executor: Optional[CommandExecutor] = None
@@ -274,6 +591,3 @@ def get_command_executor() -> CommandExecutor:
     if _command_executor is None:
         _command_executor = CommandExecutor()
     return _command_executor
-
-
-

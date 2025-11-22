@@ -52,7 +52,8 @@ class GroqClient:
     async def chat(
         self,
         messages: List[Dict[str, str]],
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
+        use_json_format: bool = True
     ) -> Dict[str, Any]:
         """
         Send chat request to Qwen API with context awareness
@@ -88,6 +89,9 @@ class GroqClient:
                 }
             }
             
+            # If not using JSON format, don't enforce JSON in the prompt
+            # Qwen will return text format when not explicitly asked for JSON
+            
             # Make API request
             headers = {
                 "Authorization": f"Bearer {self.settings.qwen.api_key}",
@@ -108,6 +112,16 @@ class GroqClient:
             # Extract message from response
             output = result.get("output", {})
             message_content = output.get("choices", [{}])[0].get("message", {}).get("content", "")
+            
+            # If not using JSON format, return plain text wrapped in expected dict format
+            if not use_json_format:
+                return {
+                    "response": message_content.strip(),
+                    "intent": "summary",
+                    "commands": [],
+                    "is_followup": False,
+                    "update_context": False
+                }
             
             # Parse JSON response
             parsed_response = self._parse_response(message_content, user_message)

@@ -25,8 +25,8 @@ class GeminiClient:
         # Configure Gemini
         genai.configure(api_key=self.settings.gemini.api_key)
         
-        # Initialize model
-        self.model = genai.GenerativeModel(
+        # Initialize models - one for JSON, one for plain text
+        self.model_json = genai.GenerativeModel(
             model_name=self.settings.gemini.model,
             generation_config={
                 "temperature": self.settings.gemini.temperature,
@@ -36,10 +36,19 @@ class GeminiClient:
                 "top_k": 40,
             }
         )
+        self.model_text = genai.GenerativeModel(
+            model_name=self.settings.gemini.model,
+            generation_config={
+                "temperature": self.settings.gemini.temperature,
+                "max_output_tokens": self.settings.gemini.max_tokens,
+                "top_p": 0.95,
+                "top_k": 40,
+            }
+        )
         
         logger.info(f"Gemini client initialized with model: {self.settings.gemini.model}")
     
-    async def chat(self, messages: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
+    async def chat(self, messages: List[Dict[str, str]], use_json_format: bool = True) -> Optional[Dict[str, Any]]:
         """
         Send chat request to Gemini API with context awareness
         
@@ -52,12 +61,12 @@ class GeminiClient:
         """
         try:
             # Extract system prompt and user messages
-            system_prompt = ""
+            system_prompts = []
             conversation = []
             
             for msg in messages:
                 if msg["role"] == "system":
-                    system_prompt = msg["content"]
+                    system_prompts.append(msg["content"])
                 elif msg["role"] == "user":
                     conversation.append({"role": "user", "parts": [msg["content"]]})
                 elif msg["role"] == "assistant":
@@ -70,13 +79,30 @@ class GeminiClient:
             
             user_message = conversation[-1]["parts"][0]
             
-            # Build the full prompt with system instructions
-            full_prompt = f"{system_prompt}\n\nUser: {user_message}\n\nRespond with valid JSON only."
-            
             logger.debug(f"Sending request to Gemini API: {user_message[:100]}...")
             
-            # Generate response
-            response = self.model.generate_content(full_prompt)
+            # Generate response - use appropriate model based on format
+            model = self.model_json if use_json_format else self.model_text
+            
+            # Combine all system prompts
+            full_system_prompt = "\n\n".join(system_prompts)
+            
+            if use_json_format:
+                full_prompt = f"{full_system_prompt}\n\nUser: {user_message}\n\nRespond with valid JSON only."
+            else:
+                full_prompt = f"{full_system_prompt}\n\nUser: {user_message}"
+            
+            response = model.generate_content(full_prompt)
+            
+            # If not using JSON format, return plain text wrapped in expected dict format
+            if not use_json_format:
+                return {
+                    "response": response.text.strip(),
+                    "intent": "summary",
+                    "commands": [],
+                    "is_followup": False,
+                    "update_context": False
+                }
             
             # Parse JSON response
             parsed_response = self._parse_json_response(response.text)

@@ -104,3 +104,39 @@ class UserPreferences(Base):
             "updated_at": self.updated_at.isoformat() if self.updated_at else None
         }
 
+
+class ScheduledTimer(Base):
+    """Scheduled system timers for shutdown, hibernate, etc."""
+    __tablename__ = "scheduled_timers"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    action = Column(String(50), nullable=False)  # shutdown, hibernate, restart, etc.
+    scheduled_time = Column(DateTime, nullable=False)  # When to execute
+    duration_seconds = Column(Integer, nullable=False)  # Original duration in seconds
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    status = Column(String(20), nullable=False, default="active")  # active, cancelled, completed, failed
+    user_id = Column(String(50), nullable=False, default="default")
+    conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=True)
+    error_message = Column(Text, nullable=True)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": str(self.id),
+            "action": self.action,
+            "scheduled_time": self.scheduled_time.isoformat() if self.scheduled_time else None,
+            "duration_seconds": self.duration_seconds,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "status": self.status,
+            "user_id": self.user_id,
+            "conversation_id": str(self.conversation_id) if self.conversation_id else None,
+            "error_message": self.error_message
+        }
+    
+    @property
+    def remaining_seconds(self) -> int:
+        """Calculate remaining seconds until execution"""
+        if self.status != "active":
+            return 0
+        remaining = (self.scheduled_time - datetime.utcnow()).total_seconds()
+        return max(0, int(remaining))
+
