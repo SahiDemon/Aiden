@@ -28,11 +28,8 @@ const waveConfig = {
 };
 
 const LiquidWave: React.FC<LiquidWaveProps> = ({ state }) => {
-    // Aiden Blue palette
     const gradientId = 'aidenGradient';
     const config = waveConfig[state];
-
-    // We use a fixed viewBox width to define the paths
     const viewBoxWidth = 1200;
 
     // Listening: Gentle, organic ripple - CENTERED
@@ -127,21 +124,108 @@ const LiquidWave: React.FC<LiquidWaveProps> = ({ state }) => {
 
             <div style={{
                 position: 'absolute',
-                top: 25,
+                top: 20,
                 width: '100%',
                 textAlign: 'center',
-                color: 'white',
-                fontFamily: 'Inter, sans-serif',
-                fontWeight: 500,
-                fontSize: '15px',
-                letterSpacing: '0.5px',
-                textShadow: '0 1px 3px rgba(0,0,0,0.3)',
-                pointerEvents: 'none'
+                pointerEvents: 'none',
+                display: 'flex',
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '10px'
             }}>
-                {state === 'listening' && "Listening..."}
-                {state === 'thinking' && "Thinking..."}
-                {state === 'replying' && "Here is the answer..."}
+                {/* State Indicator Dot - Only for listening */}
+                {state === 'listening' && (
+                    <motion.div
+                        initial={{ scale: 0, opacity: 0 }}
+                        animate={{
+                            scale: 1,
+                            opacity: 1
+                        }}
+                        exit={{ scale: 0, opacity: 0 }}
+                        transition={{ duration: 0.3, ease: "easeOut" }}
+                        style={{
+                            width: '8px',
+                            height: '8px',
+                            borderRadius: '50%',
+                            backgroundColor: '#60a5fa',
+                            boxShadow: '0 0 10px rgba(96, 165, 250, 0.8)'
+                        }}
+                    />
+                )}
+
+                {/* Animated Text with Aiden Dashboard Shimmer */}
+                <motion.div
+                    key={state}
+                    initial={{ opacity: 0, y: -10, scale: 0.9 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 10, scale: 0.9 }}
+                    transition={{ duration: 0.4, ease: "easeOut" }}
+                    style={{
+                        position: 'relative',
+                        overflow: 'visible'
+                    }}
+                >
+                    {/* Background Glow */}
+                    <div style={{
+                        position: 'absolute',
+                        top: '50%',
+                        left: '50%',
+                        transform: 'translate(-50%, -50%)',
+                        width: '90%',
+                        height: '70%',
+                        background: 'radial-gradient(ellipse at center, rgba(76, 130, 247, 0.35) 0%, rgba(135, 206, 250, 0.25) 20%, rgba(59, 130, 246, 0.18) 40%, rgba(76, 130, 247, 0.1) 60%, transparent 80%)',
+                        filter: 'blur(30px)',
+                        zIndex: 0,
+                        opacity: 0.7,
+                        pointerEvents: 'none',
+                        animation: 'pulse-glow 3s ease-in-out infinite'
+                    }} />
+
+                    <div style={{
+                        position: 'relative',
+                        zIndex: 10,
+                        fontFamily: 'Inter, sans-serif',
+                        fontWeight: 700,
+                        fontSize: '15px',
+                        letterSpacing: '0.5px',
+                        background: 'linear-gradient(90deg, rgba(255, 255, 255, 0.6) 0%, rgba(255, 255, 255, 1) 15%, rgba(135, 206, 250, 1) 30%, rgba(76, 130, 247, 1) 45%, rgba(59, 130, 246, 1) 50%, rgba(76, 130, 247, 1) 55%, rgba(135, 206, 250, 1) 70%, rgba(255, 255, 255, 1) 85%, rgba(255, 255, 255, 0.6) 100%)',
+                        backgroundSize: '200% 100%',
+                        backgroundClip: 'text',
+                        WebkitBackgroundClip: 'text',
+                        WebkitTextFillColor: 'transparent',
+                        animation: 'shimmer 2.5s ease-in-out infinite',
+                        filter: 'drop-shadow(0 0 5px rgba(76, 130, 247, 0.4))'
+                    }}>
+                        {state === 'listening' && "Listening..."}
+                        {state === 'thinking' && "Thinking..."}
+                        {state === 'replying' && "Here is the answer..."}
+                    </div>
+                </motion.div>
             </div>
+
+            {/* Shimmer and Pulse Keyframes */}
+            <style>{`
+                @keyframes shimmer {
+                    0% {
+                        background-position: -200% 0;
+                    }
+                    100% {
+                        background-position: 200% 0;
+                    }
+                }
+
+                @keyframes pulse-glow {
+                    0%, 100% {
+                        opacity: 0.65;
+                        filter: blur(30px);
+                    }
+                    50% {
+                        opacity: 0.8;
+                        filter: blur(32px);
+                    }
+                }
+            `}</style>
         </motion.div>
     );
 };
