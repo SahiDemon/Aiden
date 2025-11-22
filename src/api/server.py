@@ -49,6 +49,16 @@ class ConfigUpdateRequest(BaseModel):
 class ESP32ControlRequest(BaseModel):
     action: str  # turn_on, turn_off, toggle, change_mode
 
+class TimerCreateRequest(BaseModel):
+    action: str  # shutdown, hibernate, restart, sleep, lock
+    duration_seconds: int
+    user_id: str = "default"
+
+class TimerCancelRequest(BaseModel):
+    timer_id: Optional[str] = None
+    action: Optional[str] = None
+    user_id: str = "default"
+
 # WebSocket connection manager
 class ConnectionManager:
     def __init__(self):
@@ -220,17 +230,7 @@ app.add_middleware(
 
 @app.get("/api/v1/health")
 async def health_check():
-    """Health check endpoint"""
-    return {
-        "status": "online",
-        "app": "Aiden AI Assistant",
-        "version": "2.0.0",
-        "timestamp": datetime.now().isoformat()
-    }
-
-@app.get("/api/v1/health")
-async def health_check():
-    """Health check endpoint"""
+    """Comprehensive health check endpoint"""
     settings = get_settings()
     
     # Check service health
@@ -265,8 +265,14 @@ async def health_check():
     except:
         pass
     
+    # Determine overall status
+    all_healthy = all(services_health.values())
+    status = "healthy" if all_healthy else "degraded"
+    
     return {
-        "status": "healthy" if all(services_health.values()) else "degraded",
+        "status": status,
+        "app": "Aiden AI Assistant",
+        "version": "2.0.0",
         "services": services_health,
         "timestamp": datetime.now().isoformat()
     }
@@ -688,6 +694,126 @@ async def get_esp32_devices():
         }
     except Exception as e:
         logger.error(f"Error getting ESP32 devices: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ===== Timer Endpoints =====
+
+@app.post("/api/v1/timers")
+async def create_timer(request: TimerCreateRequest):
+    """Create a new system timer"""
+    try:
+        # Import here to avoid circular imports
+        from src.execution.timer_scheduler import get_timer_scheduler
+        
+        timer_scheduler = await get_timer_scheduler()
+        
+        # Validate action
+        valid_actions = ["shutdown", "restart", "sleep", "hibernate", "lock"]
+        if request.action not in valid_actions:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid action. Valid actions: {', '.join(valid_actions)}"
+            )
+        
+        # Validate duration (between 1 second and 24 hours)
+        if request.duration_seconds < 1 or request.duration_seconds > 86400:
+            raise HTTPException(
+                status_code=400,
+                detail="Duration must be between 1 second and 24 hours"
+            )
+        
+        timer = await timer_scheduler.create_timer(
+            action=request.action,
+            duration_seconds=request.duration_seconds,
+            user_id=request.user_id
+        )
+        
+        if timer:
+            return {
+                "success": True,
+                "message": f"Timer created: {request.action} in {request.duration_seconds} seconds",
+                "timer": timer.to_dict()
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to create timer")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating timer: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v1/timers")
+async def get_active_timers(user_id: str = "default"):
+    """Get all active timers for a user"""
+    try:
+        from src.execution.timer_scheduler import get_timer_scheduler
+        
+        timer_scheduler = await get_timer_scheduler()
+        timers = await timer_scheduler.get_active_timers(user_id)
+        
+        return {
+            "success": True,
+            "timers": timers
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting timers: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/v1/timers/{timer_id}")
+async def cancel_timer(timer_id: str):
+    """Cancel a specific timer"""
+    try:
+        from src.execution.timer_scheduler import get_timer_scheduler
+        
+        timer_scheduler = await get_timer_scheduler()
+        success = await timer_scheduler.cancel_timer(timer_id)
+        
+        if success:
+            return {
+                "success": True,
+                "message": "Timer cancelled"
+            }
+        else:
+            raise HTTPException(status_code=404, detail="Timer not found or already completed")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error cancelling timer: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/v1/timers/cancel")
+async def cancel_timers(request: TimerCancelRequest):
+    """Cancel timers by ID or action"""
+    try:
+        from src.execution.timer_scheduler import get_timer_scheduler
+        
+        timer_scheduler = await get_timer_scheduler()
+        
+        if request.timer_id:
+            # Cancel specific timer
+            success = await timer_scheduler.cancel_timer(request.timer_id)
+            return {
+                "success": success,
+                "message": "Timer cancelled" if success else "Timer not found"
+            }
+        elif request.action:
+            # Cancel all timers for action
+            count = await timer_scheduler.cancel_timers_by_action(request.action, request.user_id)
+            return {
+                "success": True,
+                "message": f"Cancelled {count} {request.action} timers",
+                "cancelled_count": count
+            }
+        else:
+            raise HTTPException(status_code=400, detail="Either timer_id or action must be provided")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error cancelling timers: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ===== WebSocket Endpoint =====

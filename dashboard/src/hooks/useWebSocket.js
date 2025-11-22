@@ -7,6 +7,7 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws') => {
   const [systemMetrics, setSystemMetrics] = useState(null)
   const [deviceUpdates, setDeviceUpdates] = useState(null)
   const [speakingText, setSpeakingText] = useState('')
+  const [timerUpdates, setTimerUpdates] = useState(null)
   
   const wsRef = useRef(null)
   const reconnectTimeoutRef = useRef(null)
@@ -132,6 +133,12 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws') => {
               // Aiden is speaking - get the text for display
               setSpeakingText(data.data?.text || '')
               break
+            
+            case 'timer_update':
+              // Timer state changed (created, cancelled, completed)
+              console.log('[WebSocket] Timer update:', data.data)
+              setTimerUpdates(data.data)
+              break
               
             case 'pong':
               // Heartbeat response
@@ -203,6 +210,7 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws') => {
     systemMetrics,
     deviceUpdates,
     speakingText,
+    timerUpdates,
     sendMessage,
   }
 }

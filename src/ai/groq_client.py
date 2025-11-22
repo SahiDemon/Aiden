@@ -52,7 +52,8 @@ class GroqClient:
     async def chat(
         self,
         messages: List[Dict[str, str]],
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
+        use_json_format: bool = True
     ) -> Dict[str, Any]:
         """
         Send chat request to Groq API with context awareness
@@ -81,8 +82,11 @@ class GroqClient:
                 "messages": messages,
                 "temperature": self.settings.groq.temperature,
                 "max_tokens": self.settings.groq.max_tokens,
-                "response_format": {"type": "json_object"}  # Force JSON output
             }
+            
+            # Only use JSON format when explicitly requested (for command parsing)
+            if use_json_format:
+                payload["response_format"] = {"type": "json_object"}
             
             # Make API request
             headers = {
@@ -103,6 +107,16 @@ class GroqClient:
             
             # Extract message from response (OpenAI format)
             message_content = result["choices"][0]["message"]["content"]
+            
+            # If not using JSON format, return plain text wrapped in expected dict format
+            if not use_json_format:
+                return {
+                    "response": message_content.strip(),
+                    "intent": "summary",
+                    "commands": [],
+                    "is_followup": False,
+                    "update_context": False
+                }
             
             # Parse JSON response
             parsed_response = self._parse_response(message_content, user_message)
