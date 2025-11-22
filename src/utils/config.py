@@ -148,7 +148,7 @@ class SpotifyConfig(BaseSettings):
         extra="ignore"
     )
     
-    enabled: bool = Field(default=False, description="Enable Spotify integration")
+    enabled: bool = Field(default=True, description="Enable Spotify integration")
     client_id: str = Field(default="", description="Spotify application client ID")
     client_secret: str = Field(default="", description="Spotify application client secret")
     refresh_token: str = Field(default="", description="Spotify refresh token")
