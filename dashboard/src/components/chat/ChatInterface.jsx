@@ -68,7 +68,7 @@ const ChatInterface = ({ messages, voiceActivity, connected }) => {
       const timeout = setTimeout(() => {
         console.log('[ChatInterface] Idle or other state: Clearing display text')
         setDisplayText('')
-      }, 3000)
+      }, 300)
       return () => clearTimeout(timeout)
     }
   }, [isListening, isSpeaking, userInput, currentText, voiceActivity?.status])

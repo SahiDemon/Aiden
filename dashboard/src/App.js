@@ -25,6 +25,7 @@ function App() {
     systemMetrics,
     deviceUpdates,
     speakingText,
+    timerUpdates,
   } = useWebSocket()
 
   // Load active timers on component mount
@@ -47,24 +48,22 @@ function App() {
 
   // Handle timer updates from WebSocket
   useEffect(() => {
-    // Listen for timer updates in WebSocket messages
-    // This would be handled in the WebSocket hook if timer_update messages are sent
-    // For now, we'll refresh timers periodically
-    const interval = setInterval(async () => {
-      if (connected) {
-        try {
-          const response = await api.getActiveTimers()
-          if (response.success) {
-            setActiveTimers(response.timers || [])
-          }
-        } catch (error) {
-          // Silently handle errors to avoid spamming console
-        }
-      }
-    }, 10000) // Refresh every 10 seconds
+    if (!timerUpdates) return
 
-    return () => clearInterval(interval)
-  }, [connected])
+    // Real-time timer updates via WebSocket
+    const loadTimers = async () => {
+      try {
+        const response = await api.getActiveTimers()
+        if (response.success) {
+          setActiveTimers(response.timers || [])
+        }
+      } catch (error) {
+        console.error('Error loading timers after WebSocket update:', error)
+      }
+    }
+
+    loadTimers()
+  }, [timerUpdates])
 
   // Handle timer update callback
   const handleTimerUpdate = async () => {

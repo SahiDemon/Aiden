@@ -15,8 +15,8 @@ from typing import Optional
 
 import requests
 
-CLIENT_ID = ("dc0fe53cdc7843ca8f3275399eebbed0")
-CLIENT_SECRET = ("36892ab0d83a400a905a0949d86f5402")
+CLIENT_ID = ("")
+CLIENT_SECRET = ("")
 REDIRECT_URI = "http://127.0.0.1:8888/callback"
 SCOPES = "user-read-playback-state user-modify-playback-state user-read-currently-playing"
 

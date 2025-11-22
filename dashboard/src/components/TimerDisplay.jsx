@@ -23,16 +23,15 @@ const TimerDisplay = ({ timers = [], onTimerUpdate }) => {
         const interval = setInterval(() => {
             setCountdowns(prev => {
                 const newCountdowns = {};
-                let hasActiveTimers = false;
                 
                 timers.forEach(timer => {
                     const currentCountdown = prev[timer.id] ?? timer.remaining_seconds;
                     const newValue = Math.max(0, currentCountdown - 1);
                     newCountdowns[timer.id] = newValue;
-                    if (newValue > 0) hasActiveTimers = true;
                 });
                 
-                return hasActiveTimers ? newCountdowns : prev;
+                // Always return updated countdowns to properly display zero values
+                return newCountdowns;
             });
         }, 1000);
 
@@ -280,9 +279,9 @@ const TimerDisplay = ({ timers = [], onTimerUpdate }) => {
             <style jsx>{`
                 .timer-display-container {
                     position: fixed;
-                    top: 5rem;
+                    top: 14rem;
                     right: 1.5rem;
-                    z-index: 1000;
+                    z-index: 999;
                     min-width: 320px;
                     max-width: 400px;
                 }

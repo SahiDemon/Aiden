@@ -10,13 +10,18 @@ const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL'];
 
 function createWindow() {
     const { width: screenWidth } = screen.getPrimaryDisplay().workAreaSize;
-    const notchWidth = 1920;
+    const maxNotchWidth = 1920;
     const notchHeight = 200;
+    
+    // Ensure window width never exceeds screen width
+    const windowWidth = Math.min(maxNotchWidth, screenWidth);
+    // Center horizontally, but clamp to 0 to prevent negative x-position
+    const xPosition = Math.max(0, (screenWidth - windowWidth) / 2);
 
     win = new BrowserWindow({
-        width: notchWidth,
+        width: windowWidth,
         height: notchHeight,
-        x: (screenWidth - notchWidth) / 2, // center horizontally
+        x: xPosition, // center horizontally, clamped to screen bounds
         y: 0, // top
         title: 'Aiden Overlay',
         icon: path.join(process.env.VITE_PUBLIC as string, 'icon.ico'),

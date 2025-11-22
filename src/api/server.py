@@ -230,17 +230,7 @@ app.add_middleware(
 
 @app.get("/api/v1/health")
 async def health_check():
-    """Health check endpoint"""
-    return {
-        "status": "online",
-        "app": "Aiden AI Assistant",
-        "version": "2.0.0",
-        "timestamp": datetime.now().isoformat()
-    }
-
-@app.get("/api/v1/health")
-async def health_check():
-    """Health check endpoint"""
+    """Comprehensive health check endpoint"""
     settings = get_settings()
     
     # Check service health
@@ -275,8 +265,14 @@ async def health_check():
     except:
         pass
     
+    # Determine overall status
+    all_healthy = all(services_health.values())
+    status = "healthy" if all_healthy else "degraded"
+    
     return {
-        "status": "healthy" if all(services_health.values()) else "degraded",
+        "status": status,
+        "app": "Aiden AI Assistant",
+        "version": "2.0.0",
         "services": services_health,
         "timestamp": datetime.now().isoformat()
     }
