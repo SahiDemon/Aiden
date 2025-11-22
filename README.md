@@ -12,6 +12,7 @@ A powerful voice-controlled AI assistant for Windows with context-aware conversa
 - **⚡ Lightning Fast** - Sub-second response times with Groq AI
 - **🔇 Hidden Mode** - Runs silently in system tray
 - **📊 Web Dashboard** - Optional web interface at http://localhost:5000
+- **🌊 Visual Overlay** - Beautiful animated overlay shows Aiden's status at the top of your screen
 - **🎯 Zero False Negatives** - Advanced audio processing eliminates missed detections
 
 ## 📋 Requirements
@@ -51,6 +52,41 @@ notepad .env
 
 > **🎯 NEW: Porcupine Wake Word Detection**
 > For best accuracy, follow [PORCUPINE_SETUP.md](PORCUPINE_SETUP.md) to enable high-accuracy wake word detection!
+
+## 🌊 Visual Overlay (Optional)
+
+Aiden includes a beautiful animated overlay that displays at the top of your screen, showing real-time status with liquid wave animations.
+
+### Setup Overlay
+
+```powershell
+# Navigate to overlay directory
+cd overlay
+
+# Install dependencies
+npm install
+
+# Build the overlay
+npm run build
+
+# Start Aiden (overlay will auto-launch)
+cd ..
+.\run_aiden.ps1
+```
+
+The overlay will automatically:
+- ✅ Launch when Aiden starts
+- ✅ Connect to Aiden's WebSocket for real-time updates
+- ✅ Display listening, thinking, and replying states with animated waves
+- ✅ Close when Aiden shuts down
+
+**Features:**
+- 🌊 Smooth liquid wave animations that respond to Aiden's state
+- ✨ Shimmer text effects with gradient animations
+- 🪟 Transparent, always-on-top window
+- 🔄 Entry/exit animations (wave slides down on appear, slides up on disappear)
+
+See [overlay/README.md](overlay/README.md) for more details.
 
 ## ⚙️ Configuration
 

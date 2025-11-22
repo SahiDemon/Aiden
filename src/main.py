@@ -38,6 +38,7 @@ wake_word_manager: Optional[object] = None
 hotkey_listener: Optional[object] = None
 toggle_hotkey_listener: Optional[object] = None
 api_server_task: Optional[asyncio.Task] = None
+overlay_launcher: Optional[object] = None
 shutdown_event = threading.Event()
 main_loop: Optional[asyncio.AbstractEventLoop] = None
 
@@ -120,7 +121,7 @@ def handle_toggle_wake_word():
 
 async def initialize_services():
     """Initialize all Aiden services"""
-    global assistant, wake_word_detector, wake_word_manager, hotkey_listener, toggle_hotkey_listener, api_server_task, main_loop
+    global assistant, wake_word_detector, wake_word_manager, hotkey_listener, toggle_hotkey_listener, api_server_task, overlay_launcher, main_loop
     
     # Store the main event loop for thread-safe async calls
     main_loop = asyncio.get_event_loop()
@@ -212,7 +213,20 @@ async def initialize_services():
         toggle_hotkey_listener.start()
         logger.info(f"✅ Toggle hotkey: {settings.app.toggle_hotkey}")
         
-        # 5. Greet user
+        # 5. Start overlay (if built)
+        logger.info("Starting overlay...")
+        try:
+            from src.utils.overlay_launcher import get_overlay_launcher
+            overlay_launcher = get_overlay_launcher()
+            if overlay_launcher.is_overlay_built():
+                overlay_launcher.start()
+                logger.info("✅ Overlay started")
+            else:
+                logger.warning("⚠️ Overlay not built - skipping. Run 'npm run build' in overlay directory to enable.")
+        except Exception as e:
+            logger.warning(f"Could not start overlay: {e}")
+        
+        # 6. Greet user
         await assistant.greet_user()
         
         logger.info("=" * 70)
@@ -221,6 +235,7 @@ async def initialize_services():
         logger.info(f"Hotkey: {settings.app.hotkey}")
         logger.info(f"Toggle hotkey: {settings.app.toggle_hotkey}")
         logger.info(f"Dashboard: http://{settings.api.host}:{settings.api.port}")
+        logger.info(f"Overlay: {'Running' if overlay_launcher and overlay_launcher.process else 'Not running'}")
         logger.info("=" * 70)
         
         return True
@@ -232,13 +247,18 @@ async def initialize_services():
 
 async def cleanup():
     """Cleanup all services"""
-    global wake_word_detector, hotkey_listener, toggle_hotkey_listener, api_server_task
+    global wake_word_detector, hotkey_listener, toggle_hotkey_listener, api_server_task, overlay_launcher
     
     logger.info("=" * 70)
     logger.info("SHUTTING DOWN AIDEN")
     logger.info("=" * 70)
     
     try:
+        # Stop overlay
+        if overlay_launcher:
+            logger.info("Stopping overlay...")
+            overlay_launcher.stop()
+        
         # Stop wake word detector
         if wake_word_detector:
             logger.info("Stopping wake word detector...")

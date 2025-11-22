@@ -19,11 +19,12 @@ function createWindow() {
         height: notchHeight,
         x: (screenWidth - notchWidth) / 2, // center horizontally
         y: 0, // top
-        icon: path_1.default.join(process.env.VITE_PUBLIC, 'electron-vite.svg'),
+        title: 'Aiden Overlay',
+        icon: path_1.default.join(process.env.VITE_PUBLIC, 'icon.ico'),
         transparent: true,
         frame: false,
         alwaysOnTop: true,
-        skipTaskbar: true,
+        skipTaskbar: false, // Show in task manager with proper name
         resizable: false,
         hasShadow: false,
         webPreferences: {

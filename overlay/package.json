@@ -1,7 +1,10 @@
 {
-  "name": "overlay",
+  "name": "aiden-overlay",
+  "productName": "Aiden Overlay",
+  "description": "Visual overlay for Aiden AI Assistant",
+  "author": "SahiDeon",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "concurrently -k \"npm run dev:vite\" \"npm run dev:electron\"",
@@ -34,5 +37,20 @@
     "typescript-eslint": "^8.46.4",
     "vite": "^7.2.4",
     "wait-on": "^9.0.3"
+  },
+  "build": {
+    "appId": "com.aiden.overlay",
+    "productName": "Aiden Overlay",
+    "win": {
+      "target": "nsis",
+      "icon": "public/icon.ico"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "directories": {
+      "output": "dist"
+    }
   }
 }

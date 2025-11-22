@@ -4,9 +4,11 @@ Unified tray app that runs hidden in background
 """
 import asyncio
 import logging
+import os
 import sys
 import threading
 import webbrowser
+from pathlib import Path
 from typing import Optional
 import pystray
 from PIL import Image, ImageDraw
@@ -41,8 +43,24 @@ class AidenTrayApp:
         logger.info("Tray app initialized")
     
     def create_icon(self) -> Image.Image:
-        """Create a simple icon for the tray"""
-        # Create a simple icon (you can replace with actual icon file)
+        """Load the Aiden icon for the tray"""
+        # Try to load the icon from overlay/public or dashboard/public
+        project_root = Path(__file__).parent.parent.parent
+        icon_paths = [
+            project_root / "overlay" / "public" / "icon.png",
+            project_root / "dashboard" / "public" / "icon.png"
+        ]
+        
+        for icon_path in icon_paths:
+            if icon_path.exists():
+                try:
+                    logger.info(f"Loading tray icon from: {icon_path}")
+                    return Image.open(icon_path)
+                except Exception as e:
+                    logger.warning(f"Failed to load icon from {icon_path}: {e}")
+        
+        # Fallback: Create a simple icon if file not found
+        logger.warning("Icon file not found, using fallback")
         width = 64
         height = 64
         image = Image.new('RGB', (width, height), color=(52, 152, 219))  # Blue
