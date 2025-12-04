@@ -300,7 +300,7 @@ class AppLauncher:
             # Dedupe libs with case-insensitive keys
             libs = list(dict.fromkeys([os.path.normcase(p) for p in libs]))
 
-            # Parse manifests once
+            # Parse manifests once with pre-computed normalized values for faster matching
             manifests: list[dict] = []
             seen = set()
             for steamapps in libs:
@@ -314,10 +314,17 @@ class AppLauncher:
                             aid, gname, idir = self._parse_acf_quick(entry.path)
                             if not aid:
                                 continue
+                            # Pre-compute normalized values to avoid repeated regex in loops
+                            idir_lower = (idir or "").lower()
+                            gname_lower = (gname or "").lower()
                             manifests.append({
                                 "appid": aid,
                                 "name": gname,
                                 "installdir": idir,
+                                "installdir_lower": idir_lower,
+                                "installdir_norm": re.sub(r"\W+", "", idir_lower),
+                                "name_lower": gname_lower,
+                                "name_norm": re.sub(r"\W+", "", gname_lower),
                                 "_manifest": entry.path,
                                 "_library": steamapps,
                             })
@@ -330,10 +337,9 @@ class AppLauncher:
                     ip = Path(install_path)
                     ip_name = ip.name.lower()
                     ip_norm = re.sub(r"\W+", "", ip_name)
-                    # exact/fuzzy by installdir
+                    # exact/fuzzy by installdir using pre-computed values
                     for info in manifests:
-                        inst = (info.get("installdir") or "").lower()
-                        inst_norm = re.sub(r"\W+", "", inst)
+                        inst_norm = info["installdir_norm"]
                         if inst_norm and (inst_norm == ip_norm or inst_norm in ip_norm or ip_norm in inst_norm):
                             return info["appid"]
                     # check path under steamapps/common
@@ -351,14 +357,12 @@ class AppLauncher:
                 except Exception:
                     pass
 
-            # 2) Fuzzy match by installdir or name
+            # 2) Fuzzy match by installdir or name using pre-computed values
             for info in manifests:
-                inst = (info.get("installdir") or "").lower()
-                name = (info.get("name") or "").lower()
-                if not inst and not name:
+                inst_norm = info["installdir_norm"]
+                name_norm = info["name_norm"]
+                if not inst_norm and not name_norm:
                     continue
-                inst_norm = re.sub(r"\W+", "", inst)
-                name_norm = re.sub(r"\W+", "", name)
                 if q_norm and (q_norm in inst_norm or q_norm in name_norm or inst_norm in q_norm or name_norm in q_norm):
                     return info["appid"]
 
