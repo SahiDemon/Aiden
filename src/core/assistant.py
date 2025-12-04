@@ -6,7 +6,7 @@ import asyncio
 import logging
 from typing import Optional, List, Dict, Any
 
-from src.ai.groq_client import get_groq_client
+from src.ai.groq_client import get_groq_client, _load_prompts_yaml as load_prompts
 from src.ai.gemini_client import get_gemini_client
 from src.core.context_manager import get_context_manager
 from src.execution.command_executor import get_command_executor
@@ -133,25 +133,19 @@ class AidenAssistant:
         try:
             llm = await self._ensure_llm_client()
             
-            # Load enhancement prompt from prompts.yaml
-            from pathlib import Path
-            import yaml
-            
+            # Load enhancement prompt from cached prompts.yaml (avoids repeated file I/O)
+            prompts = load_prompts()
             enhancement_prompt = "You are a voice assistant. Convert device responses to natural speech."
-            try:
-                prompts_file = Path("config/prompts.yaml")
-                if prompts_file.exists():
-                    with open(prompts_file, 'r', encoding='utf-8') as f:
-                        prompts = yaml.safe_load(f)
-                        enhancement_template = prompts.get("enhancement_prompt", "")
-                        if enhancement_template:
-                            # Fill in the template
-                            enhancement_prompt = enhancement_template.format(
-                                user_request=user_text,
-                                device_response=esp32_feedback
-                            )
-            except Exception as e:
-                logger.warning(f"Could not load enhancement_prompt from prompts.yaml: {e}")
+            enhancement_template = prompts.get("enhancement_prompt", "")
+            if enhancement_template:
+                try:
+                    # Fill in the template
+                    enhancement_prompt = enhancement_template.format(
+                        user_request=user_text,
+                        device_response=esp32_feedback
+                    )
+                except Exception as e:
+                    logger.warning(f"Could not format enhancement_prompt: {e}")
             
             # Build messages for AI - use direct API call instead of chat()
             # because chat() forces JSON response format which we don't need here
