@@ -10,27 +10,13 @@ import yaml
 class TestPromptsCaching(unittest.TestCase):
     """Test that prompts.yaml caching works correctly."""
 
-    def test_prompts_cache_returns_same_object(self):
+    def test_prompts_loader_returns_same_object(self):
         """Verify that repeated calls return the same cached object."""
-        # Simulate the caching mechanism used in groq_client and context_manager
-        cache: Optional[Dict[str, Any]] = None
+        # Import the actual prompts_loader module
+        from src.utils.prompts_loader import load_prompts, clear_cache
         
-        def load_prompts() -> Dict[str, Any]:
-            nonlocal cache
-            if cache is not None:
-                return cache
-            
-            try:
-                prompts_file = Path("config/prompts.yaml")
-                if prompts_file.exists():
-                    with open(prompts_file, "r", encoding="utf-8") as f:
-                        cache = yaml.safe_load(f) or {}
-                        return cache
-            except Exception:
-                pass
-            
-            cache = {}
-            return cache
+        # Clear any existing cache
+        clear_cache()
         
         # First call populates cache
         first_result = load_prompts()
@@ -38,12 +24,26 @@ class TestPromptsCaching(unittest.TestCase):
         second_result = load_prompts()
         
         self.assertIs(first_result, second_result, "Cache should return same object")
-        self.assertIsNotNone(cache)
+        
+        # Clean up
+        clear_cache()
 
     def test_prompts_file_exists(self):
         """Verify that the prompts.yaml file exists."""
         prompts_file = Path("config/prompts.yaml")
         self.assertTrue(prompts_file.exists(), "prompts.yaml should exist in config/")
+
+    def test_get_system_prompt(self):
+        """Verify that get_system_prompt returns a non-empty string."""
+        from src.utils.prompts_loader import get_system_prompt, clear_cache
+        
+        clear_cache()
+        prompt = get_system_prompt()
+        
+        self.assertIsInstance(prompt, str)
+        self.assertTrue(len(prompt) > 0, "System prompt should not be empty")
+        
+        clear_cache()
 
 
 class TestPriorityKeywordsOptimization(unittest.TestCase):

@@ -12,31 +12,10 @@ from pathlib import Path
 
 from src.utils.config import get_settings
 from src.utils.logger import get_logger
+from src.utils.prompts_loader import load_prompts, get_system_prompt
 from src.database.redis_client import get_redis_client
 
 logger = get_logger(__name__)
-
-# Module-level cache for prompts to avoid repeated file I/O
-_prompts_cache: Optional[Dict[str, Any]] = None
-
-
-def _load_prompts_yaml() -> Dict[str, Any]:
-    """Load and cache prompts.yaml content. Returns cached value on subsequent calls."""
-    global _prompts_cache
-    if _prompts_cache is not None:
-        return _prompts_cache
-    
-    try:
-        prompts_file = Path("config/prompts.yaml")
-        if prompts_file.exists():
-            with open(prompts_file, 'r', encoding='utf-8') as f:
-                _prompts_cache = yaml.safe_load(f) or {}
-                return _prompts_cache
-    except Exception as e:
-        logger.error(f"Error loading prompts.yaml: {e}")
-    
-    _prompts_cache = {}
-    return _prompts_cache
 
 
 class GroqClient:
@@ -52,9 +31,9 @@ class GroqClient:
         
     def _load_system_prompt(self) -> str:
         """Load system prompt from cached prompts.yaml"""
-        prompts = _load_prompts_yaml()
-        if prompts.get("system_prompt"):
-            return prompts["system_prompt"]
+        prompt = get_system_prompt()
+        if prompt:
+            return prompt
         logger.warning("prompts.yaml not found or empty, using default prompt")
         return self._get_default_prompt()
     

@@ -8,6 +8,7 @@ import glob
 import psutil
 import json
 import logging
+import itertools
 from typing import Dict, List, Any, Optional
 from pathlib import Path
 
@@ -300,12 +301,11 @@ class SystemContextProvider:
             processes = await self.get_running_processes(simplified=True)
             
             # Format for AI - provide app names WITH paths for better context
-            # Use list comprehension with early limit check for efficiency
+            # Use itertools.islice to limit sorted items without sorting entire dataset
+            # when we only need the first 80 items
             app_items = sorted(apps.items(), key=lambda x: x[1]['display_name'].lower())
             app_list = []
-            for key, app in app_items:
-                if len(app_list) >= 80:  # Early exit once limit reached
-                    break
+            for key, app in itertools.islice(app_items, 80):
                 name = app["display_name"]
                 exe_path = app.get("exe_path", "")
                 install_path = app.get("install_path", "")

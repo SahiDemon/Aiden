@@ -6,7 +6,7 @@ import asyncio
 import logging
 from typing import Optional, List, Dict, Any
 
-from src.ai.groq_client import get_groq_client, _load_prompts_yaml as load_prompts
+from src.ai.groq_client import get_groq_client
 from src.ai.gemini_client import get_gemini_client
 from src.core.context_manager import get_context_manager
 from src.execution.command_executor import get_command_executor
@@ -14,6 +14,7 @@ from src.speech.stt import get_stt_engine
 from src.speech.tts import get_tts_engine
 from src.utils.config import get_settings
 from src.utils.logger import get_logger
+from src.utils.prompts_loader import get_enhancement_prompt
 
 logger = get_logger(__name__)
 
@@ -134,9 +135,8 @@ class AidenAssistant:
             llm = await self._ensure_llm_client()
             
             # Load enhancement prompt from cached prompts.yaml (avoids repeated file I/O)
-            prompts = load_prompts()
             enhancement_prompt = "You are a voice assistant. Convert device responses to natural speech."
-            enhancement_template = prompts.get("enhancement_prompt", "")
+            enhancement_template = get_enhancement_prompt()
             if enhancement_template:
                 try:
                     # Fill in the template
