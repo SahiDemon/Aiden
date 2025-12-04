@@ -301,8 +301,7 @@ class SystemContextProvider:
             processes = await self.get_running_processes(simplified=True)
             
             # Format for AI - provide app names WITH paths for better context
-            # Use itertools.islice to limit sorted items without sorting entire dataset
-            # when we only need the first 80 items
+            # Sort by display name and limit to first 80 items using islice
             app_items = sorted(apps.items(), key=lambda x: x[1]['display_name'].lower())
             app_list = []
             for key, app in itertools.islice(app_items, 80):
