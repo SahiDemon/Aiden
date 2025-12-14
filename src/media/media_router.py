@@ -71,12 +71,60 @@ class MediaRouter:
         try:
             # Get available devices
             devices = await self.spotify_client.get_devices()
-            device = next((d for d in devices if d["is_active"]), None)
-            if not device and devices:
-                device = devices[0]
             
-            # We pass 'device' (which might be None) to _activate_device, 
-            # which will handle launching and retrying if needed.
+            # For transfer action, we need to find the TARGET device, not the active one
+            if action == "transfer":
+                # Find device by name if specified
+                if device_name:
+                    from src.media.spotify_utils import find_best_device
+                    device = find_best_device(devices, device_name)
+                    if not device:
+                        # Device not found in initial scan. 
+                        # If user requested a specific device (like "PC"), we should try to launch it.
+                        found_device, error = await self._ensure_spotify_device(device_name)
+                        if found_device:
+                            device = found_device
+                            # Now try transfer again with the newly found device
+                            await self.spotify_client.transfer_playback(device["id"], play=True)
+                            return True, {"type": "spotify", "message": f"Spotify playback moved to {device['name']}."}
+                        else:
+                            return False, error or {"type": "spotify", "message": f"Could not find device matching '{device_name}'."}
+                    
+                    # Device was found, proceed with transfer
+                    await self.spotify_client.transfer_playback(device["id"], play=True)
+                    return True, {"type": "spotify", "message": f"Spotify playback moved to {device['name']}."}
+                else:
+                    return False, {"type": "spotify", "message": "No device name specified for transfer."}
+            
+            # For all OTHER actions, prefer PC/Computer devices (unless user specified device_name)
+            from src.media.spotify_utils import find_best_device
+            
+            device = None
+            
+            # If no specific device_name requested, ALWAYS prefer Computer devices (PC)
+            if not device_name:
+                # Look for Computer-type devices only
+                computer_devices = [d for d in devices if str(d.get("type", "")).lower() == "computer"]
+                
+                if computer_devices:
+                    # Found a computer, use it (prefer active one)
+                    device = next((d for d in computer_devices if d.get("is_active")), computer_devices[0])
+                    logger.info(f"Using computer device: {device['name']}")
+                else:
+                    # No computer found - launch Spotify on PC and wait for Computer device specifically
+                    logger.info("No computer device found - launching Spotify on PC")
+                    device, error = await self._ensure_computer_device()
+                    if not device:
+                        return False, error or {"type": "spotify", "message": "Could not launch Spotify on PC."}
+            else:
+                # User specified a device, find it by name
+                device = find_best_device(devices, device_name)
+                if not device:
+                    # Try to launch/find the requested device
+                    device, error = await self._ensure_spotify_device(device_name)
+                    if not device:
+                        return False, error or {"type": "spotify", "message": f"Could not find device '{device_name}'."}
+            
             device_id = device["id"] if device else None
 
             if action == "resume":
@@ -121,11 +169,8 @@ class MediaRouter:
                 await self._play_playlist_by_query(query, device_id)
                 return True, {"type": "spotify", "message": f"Playing playlist '{query}' on Spotify."}
 
-            if action == "transfer":
-                if not device:
-                    return False, {"type": "spotify", "message": "No Spotify devices available to transfer to."}
-                await self.spotify_client.transfer_playback(device["id"], play=True)
-                return True, {"type": "spotify", "message": f"Spotify playback moved to {device['name']}."}
+            # Transfer action is now handled above, before we get the active device
+            # This section should never be reached for transfer action
 
             if action == "play_liked_songs":
                 device_id = await self._activate_device(device, play=False)
@@ -184,13 +229,51 @@ class MediaRouter:
         uri = playlists[0]["uri"]
         await self.spotify_client.play(context_uri=uri, device_id=device_id)
 
+    async def _ensure_computer_device(self) -> Tuple[Optional[dict], Optional[dict]]:
+        """
+        Ensure a Computer-type device is available, launching Spotify on PC if needed.
+        Only looks for Computer devices, ignoring mobile/tv devices.
+        """
+        devices = await self.spotify_client.get_devices()
+        computer_devices = [d for d in devices if str(d.get("type", "")).lower() == "computer"]
+        
+        if computer_devices:
+            device = next((d for d in computer_devices if d.get("is_active")), computer_devices[0])
+            return device, None
+        
+        # No computer device found - launch Spotify desktop
+        logger.info("No computer device available; attempting to launch Spotify desktop.")
+        if not await self._maybe_launch_spotify_desktop():
+            return None, {
+                "type": "spotify",
+                "message": "Spotify desktop is not running and could not be launched automatically.",
+            }
+        
+        # Wait for Computer device to appear (up to 12 seconds)
+        for attempt in range(6):
+            await asyncio.sleep(2)
+            devices = await self.spotify_client.get_devices()
+            computer_devices = [d for d in devices if str(d.get("type", "")).lower() == "computer"]
+            
+            if computer_devices:
+                device = next((d for d in computer_devices if d.get("is_active")), computer_devices[0])
+                logger.info(f"Computer device '{device['name']}' became available after auto-launch.")
+                return device, None
+        
+        return None, {
+            "type": "spotify",
+            "message": "Spotify started, but PC device not available yet. Please try again.",
+        }
+    
     async def _ensure_spotify_device(self, requested_device: Optional[str]) -> Tuple[Optional[dict], Optional[dict]]:
+        # Prefer requested device, then default from config, then None (which prioritizes Computer)
         preference = requested_device or self.settings.spotify.default_device_name
         devices = await self.spotify_client.get_devices()
         device = find_best_device(devices, preference)
         if device:
             return device, None
 
+        # No devices available - launch Spotify desktop
         logger.info("No Spotify devices available; attempting to launch Spotify desktop.")
         if not await self._maybe_launch_spotify_desktop():
             return None, {
@@ -198,6 +281,7 @@ class MediaRouter:
                 "message": "Spotify desktop is not running and could not be launched automatically.",
             }
 
+        # Wait for Spotify to become available (up to 12 seconds)
         for attempt in range(6):
             await asyncio.sleep(2)
             devices = await self.spotify_client.get_devices()
@@ -213,7 +297,7 @@ class MediaRouter:
 
     async def _maybe_launch_spotify_desktop(self) -> bool:
         try:
-            launched = await self.app_launcher.launch("spotify")
+            launched = await self.app_launcher.launch_app("spotify")
             if launched:
                 logger.info("Spotify desktop launched to satisfy media request.")
             return launched

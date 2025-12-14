@@ -111,6 +111,29 @@ class SystemController:
         """Hibernate Windows"""
         return self._run_simple_command("shutdown /h")
 
+    async def empty_recycle_bin(self) -> bool:
+        """Empty the Windows Recycle Bin"""
+        try:
+            # Use PowerShell to empty recycle bin
+            # Note: Clear-RecycleBin returns exit code 0 even when recycle bin is already empty
+            command = 'powershell -Command "Clear-RecycleBin -Force -ErrorAction SilentlyContinue"'
+            logger.info("Emptying recycle bin...")
+            
+            # Run command - it always succeeds if PowerShell executes
+            success, stdout, stderr = self._run_command(command, shell=True)
+            
+            # PowerShell returns 0 even when recycle bin is empty, so we consider it success
+            # as long as the command executed without PowerShell errors
+            if success or not stderr or stderr.strip() == "":
+                logger.info("Recycle bin emptied successfully")
+                return True
+            else:
+                logger.error(f"Error emptying recycle bin: {stderr}")
+                return False
+        except Exception as e:
+            logger.error(f"Error emptying recycle bin: {e}")
+            return False
+
     async def execute_shell_command(self, command: str) -> tuple[bool, str]:
         """Execute arbitrary shell command."""
         try:

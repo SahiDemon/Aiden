@@ -16,7 +16,10 @@ class GeminiConfig(BaseSettings):
         extra="ignore"
     )
     
-    api_key: str = Field(default="", description="Google Gemini API Key")
+    api_key: str = Field(default="", description="Google Gemini API Key (primary)")
+    api_key_1: str = Field(default="", description="Google Gemini API Key 1")
+    api_key_2: str = Field(default="", description="Google Gemini API Key 2")
+    api_key_3: str = Field(default="", description="Google Gemini API Key 3")
     model: str = Field(default="gemini-2.0-flash-exp", description="Gemini model to use")
     max_tokens: int = Field(default=500, description="Maximum tokens in response")
     temperature: float = Field(default=0.3, description="Response creativity (0-1)")
@@ -119,14 +122,17 @@ class SpeechConfig(BaseSettings):
     tts_rate: float = Field(default=1.2, description="TTS speech rate")
     stt_language: str = Field(default="en-US", description="STT language")
     stt_timeout: int = Field(default=10, description="STT timeout in seconds")
-    stt_energy_threshold: int = Field(default=600, description="Audio energy threshold")
+    stt_energy_threshold: int = Field(default=300, description="Audio energy threshold")
     stt_pause_threshold: float = Field(default=0.8, description="Pause detection threshold")
     vosk_model_path: str = Field(default="vosk_models/vosk-model-small-en-us-0.15", description="Vosk model path")
     
     # Porcupine Wake Word Settings
     porcupine_access_key: str = Field(default="", description="Picovoice AccessKey for Porcupine")
     porcupine_model_path: str = Field(default="vosk_models/aiden_en_windows.ppn", description="Porcupine wake word model path")
-    porcupine_sensitivity: float = Field(default=0.7, description="Wake word sensitivity (0.0-1.0, higher = more sensitive)")
+    porcupine_sensitivity: float = Field(default=0.6, description="Wake word sensitivity (0.0-1.0, higher = more sensitive, lower = fewer false positives)")
+    porcupine_min_energy: float = Field(default=200.0, description="Minimum audio energy threshold to process (reduces false positives from silence)")
+    porcupine_debounce_seconds: float = Field(default=1.5, description="Minimum seconds between wake word detections (prevents rapid re-triggers)")
+    porcupine_confirmation_window: float = Field(default=0.2, description="Time window for detection confirmation (0.3s = single detection, >0.5s = requires 2 detections)")
     use_porcupine: bool = Field(default=True, description="Use Porcupine for wake word detection (fallback to Vosk if false)")
 
 
@@ -180,8 +186,11 @@ class Settings(BaseSettings):
         """Validate that required env vars are set"""
         # Check LLM provider
         if self.app.llm_provider == "gemini":
-            if not self.gemini.api_key:
-                raise ValueError("❌ GEMINI_API_KEY must be set in .env file (or switch to groq)")
+            # Check if at least one API key is set (primary or numbered keys)
+            has_primary = bool(self.gemini.api_key)
+            has_numbered = bool(self.gemini.api_key_1 or self.gemini.api_key_2 or self.gemini.api_key_3)
+            if not (has_primary or has_numbered):
+                raise ValueError("❌ At least one GEMINI_API_KEY (or GEMINI_API_KEY_1/2/3) must be set in .env file (or switch to groq)")
         elif self.app.llm_provider == "groq":
             if not self.groq.api_key:
                 raise ValueError("❌ GROQ_API_KEY must be set in .env file (or switch to gemini)")

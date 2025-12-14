@@ -62,8 +62,8 @@ class WakeWordManager:
             if self.detector:
                 self.detector.pause()
             
-            # Announce via TTS
-            await self.tts.speak("Wake word has been disabled")
+            # Announce via TTS (Disabled to prevent double sound)
+            # await self.tts.speak("Wake word has been disabled")
             
             logger.info("✅ Wake word listening disabled")
             
@@ -80,8 +80,8 @@ class WakeWordManager:
             if self.detector:
                 self.detector.resume()
             
-            # Announce via TTS
-            await self.tts.speak("Wake word has been enabled")
+            # Announce via TTS (Disabled to prevent double sound)
+            # await self.tts.speak("Wake word has been enabled")
             
             logger.info("✅ Wake word listening enabled")
             

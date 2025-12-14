@@ -104,6 +104,9 @@ class CommandExecutor:
                 
                 case "self_termination":
                     success, response_data = await self._handle_self_termination()
+
+                case "restart_application":
+                    success, response_data = await self._handle_restart_application()
                 
                 case _:
                     logger.warning(f"Unknown command type: {command_type}")
@@ -234,7 +237,7 @@ class CommandExecutor:
         return await self.process_manager.kill_process(base_name, pid=pid)
     
     async def _handle_system_command(self, params: Dict[str, Any]) -> bool:
-        """Handle system command (lock, shutdown, restart, sleep)"""
+        """Handle system command (lock, shutdown, restart, sleep, empty_recycle_bin)"""
         action = params.get("action", "").lower()
         
         match action:
@@ -248,6 +251,8 @@ class CommandExecutor:
                 return await self.system_controller.sleep()
             case "hibernate":
                 return await self.system_controller.hibernate()
+            case "empty_recycle_bin" | "clear_recycle_bin":
+                return await self.system_controller.empty_recycle_bin()
             case _:
                 logger.error(f"Unknown system action: {action}")
                 return False
@@ -481,6 +486,42 @@ class CommandExecutor:
         # We return True and the message as response_data
         # The assistant will merge this into the spoken response
         return True, {"type": "self_termination", "message": message}
+
+    async def _handle_restart_application(self) -> tuple[bool, Optional[dict]]:
+        """Handle application restart"""
+        import sys
+        import os
+        import asyncio
+        
+        logger.info("🔄 RESTART INITIATED: Restarting application...")
+        
+        async def delayed_restart():
+            # Wait for TTS to likely finish (3 seconds)
+            await asyncio.sleep(3)
+            logger.info(f"Re-launching: {sys.executable} {sys.argv}")
+            
+            # Attempt to release the single-instance mutex if we can? 
+            # No, we can't easily access the named mutex created in PowerShell from Python 
+            # without ctypes kernel32 calls, and we don't hold the handle anyway (PS does).
+            # The PS script will exit when we die, releasing the mutex.
+            # The NEW python process will start sans-mutex (unless we re-run the PS script, which is hard).
+            # Re-running just the python script is the standard way to "restart" a python app.
+            
+            try:
+                # Re-execute the current process
+                # os.execl(path, arg0, arg1, ...)
+                # path = executable
+                # arg0 = executable (convention)
+                # arg1... = arguments
+                os.execl(sys.executable, sys.executable, *sys.argv)
+            except Exception as e:
+                logger.error(f"Restart failed: {e}")
+                os._exit(1)
+
+        # Schedule the restart
+        asyncio.create_task(delayed_restart())
+        
+        return True, {"type": "restart_application", "message": "Restarting now..."}
 
     
     async def _handle_scheduled_command(self, params: Dict[str, Any]) -> tuple[bool, Optional[str]]:

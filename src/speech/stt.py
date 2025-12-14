@@ -30,13 +30,17 @@ class STTEngine:
         self.pause_threshold = self.settings.speech.stt_pause_threshold
         
         # Apply configuration
-        self.recognizer.energy_threshold = self.energy_threshold
-        self.recognizer.pause_threshold = 0.5  # FASTER: Stop recording after 0.5s of silence
-        self.recognizer.phrase_threshold = 0.2  # FASTER: Minimum 0.2s phrase
-        self.recognizer.dynamic_energy_threshold = False
-        self.recognizer.non_speaking_duration = 0.3  # FASTER: Detect end of speech quickly
+        # Apply configuration
+        # Static thresholding is more reliable for consistent behavior
+        self.recognizer.energy_threshold = self.energy_threshold  # Default 300 (sensitive)
+        self.recognizer.dynamic_energy_threshold = False  # Disable dynamic adjustment to prevent drift
         
-        logger.info(f"STT Engine initialized: energy={self.energy_threshold}, pause={self.pause_threshold}")
+        # Timing settings for faster response
+        self.recognizer.pause_threshold = 0.5  # Wait 0.5s silence before ending 
+        self.recognizer.phrase_threshold = 0.3  # Minimum 0.3s phrase
+        self.recognizer.non_speaking_duration = 0.3  # 0.4s for quicker cutoff 
+        
+        logger.info(f"STT Engine initialized: energy={self.energy_threshold}, dynamic={self.recognizer.dynamic_energy_threshold}")
     
     async def transcribe(self, play_activation_sound: bool = True) -> Tuple[bool, Optional[str], Optional[str]]:
         """

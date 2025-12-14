@@ -54,15 +54,23 @@ class PorcupineWakeWordDetector:
         self.noise_floor = 0
         self.noise_floor_samples = []
         self.max_noise_samples = 100
-        self.agc_target_level = 0.3
+        self.agc_target_level = 0.4
         self.agc_current_gain = 1.0
+        
+        # False positive prevention
+        self.min_audio_energy = self.settings.speech.porcupine_min_energy
+        self.debounce_time = self.settings.speech.porcupine_debounce_seconds
+        self.last_detection_time = 0
+        self.confirmation_window = self.settings.speech.porcupine_confirmation_window
+        self.recent_detections = []
         
         # Control flags
         self.is_running = False
         self.is_paused = False
         self._thread = None
         
-        logger.info(f"Porcupine Wake Word Detector initialized: sensitivity={self.sensitivity}")
+        logger.info(f"Porcupine Wake Word Detector initialized: sensitivity={self.sensitivity}, "
+                   f"min_energy={self.min_audio_energy}, debounce={self.debounce_time}s")
     
     def _initialize_porcupine(self):
         """Initialize Porcupine engine"""
@@ -166,8 +174,71 @@ class PorcupineWakeWordDetector:
             True if audio is above threshold
         """
         rms = np.sqrt(np.mean(audio_data.astype(np.float32) ** 2))
-        threshold = self.noise_floor * 2.0  # 2x noise floor
-        return rms > threshold
+        
+        # Only filter out pure silence (very low threshold)
+        # This prevents false positives from silence while allowing all speech
+        silence_threshold = 50.0  # Very low - just filters digital silence
+        
+        return rms > silence_threshold
+    
+    def _should_process_detection(self) -> bool:
+        """
+        Check if enough time has passed since last detection (debounce)
+        
+        Returns:
+            True if detection should be processed
+        """
+        # If this is the first detection, allow it
+        if self.last_detection_time == 0:
+            return True
+        
+        current_time = time.time()
+        time_since_last = current_time - self.last_detection_time
+        
+        if time_since_last < self.debounce_time:
+            logger.info(f"Debouncing detection (only {time_since_last:.2f}s since last, need {self.debounce_time}s)")
+            return False
+        
+        return True
+    
+    def _add_detection_to_confirmation_window(self, confidence: float = 1.0) -> bool:
+        """
+        Add detection to confirmation window and check if we should trigger
+        Uses a sliding window approach to require multiple detections close together
+        
+        Args:
+            confidence: Detection confidence score (0.0-1.0)
+            
+        Returns:
+            True if detection should trigger wake word
+        """
+        current_time = time.time()
+        
+        # Add current detection
+        self.recent_detections.append({
+            'time': current_time,
+            'confidence': confidence
+        })
+        
+        # Remove old detections outside the confirmation window
+        self.recent_detections = [
+            d for d in self.recent_detections 
+            if current_time - d['time'] <= self.confirmation_window
+        ]
+        
+        # For short confirmation windows (<= 0.3s), trigger immediately (single detection mode)
+        # This is the default behavior for responsive detection
+        if self.confirmation_window <= 0.3:
+            return True
+        
+        # For longer windows (> 0.3s), we want at least 2 detections close together
+        # This helps filter out random noise spikes but is optional
+        if len(self.recent_detections) >= 2:
+            logger.debug(f"Confirmation: {len(self.recent_detections)} detections in {self.confirmation_window}s window")
+            return True
+        
+        logger.debug(f"Waiting for confirmation: {len(self.recent_detections)}/2 detections in window")
+        return False
     
     def start(self):
         """Start wake word detection in background thread"""
@@ -255,6 +326,10 @@ class PorcupineWakeWordDetector:
                     # Update noise floor estimate
                     self._update_noise_floor(audio_frame)
                     
+                    # FALSE POSITIVE PREVENTION: Check if audio has sufficient energy
+                    if not self._is_audio_above_threshold(audio_frame):
+                        continue  # Skip processing if audio is too quiet
+                    
                     # Apply AGC for better detection in varying volumes
                     audio_frame = self._apply_agc(audio_frame)
                     
@@ -262,9 +337,20 @@ class PorcupineWakeWordDetector:
                     keyword_index = self.porcupine.process(audio_frame)
                     
                     if keyword_index >= 0:
-                        # Wake word detected!
-                        logger.info(f"[PORCUPINE DETECTED] Wake word detected (keyword_index={keyword_index})")
-                        self._on_wake_word_detected()
+                        logger.debug(f"[PORCUPINE RAW DETECTION] keyword_index={keyword_index}")
+                        
+                        # FALSE POSITIVE PREVENTION: Apply debounce
+                        if not self._should_process_detection():
+                            logger.debug("Detection debounced")
+                            continue
+                        
+                        # FALSE POSITIVE PREVENTION: Use confirmation window
+                        if self._add_detection_to_confirmation_window():
+                            # Confirmed wake word detection!
+                            logger.info(f"[PORCUPINE CONFIRMED] Wake word detected (keyword_index={keyword_index})")
+                            self.last_detection_time = time.time()
+                            self.recent_detections.clear()  # Clear for next detection
+                            self._on_wake_word_detected()
                     
                 except Exception as e:
                     logger.error(f"Porcupine detection error: {e}")

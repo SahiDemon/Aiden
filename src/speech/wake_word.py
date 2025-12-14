@@ -1,7 +1,7 @@
 """
 Wake Word Detection System
 Migrated from efficient_wake_word.py and vosk_wake_word.py
-Optimized for better performance
+Optimized for better performance with false positive reduction
 """
 import asyncio
 import json
@@ -10,6 +10,7 @@ import os
 import threading
 import time
 from typing import Callable, Optional
+import numpy as np
 import pyaudio
 import vosk
 
@@ -45,6 +46,11 @@ class WakeWordDetector:
         # Audio settings
         self.audio = None
         self.stream = None
+        
+        # False positive prevention
+        self.min_audio_energy = 150.0  # Minimum RMS energy to consider
+        self.debounce_time = 1.5  # Seconds between detections
+        self.last_detection_time = 0
         
         # Control flags
         self.is_running = False
@@ -115,6 +121,43 @@ class WakeWordDetector:
         logger.debug("Wake word detector resumed")
         self.is_paused = False
     
+    def _check_audio_energy(self, audio_data: bytes) -> bool:
+        """
+        Check if audio has sufficient energy to contain speech
+        Helps prevent false positives from silence or very quiet noise
+        
+        Args:
+            audio_data: Raw audio bytes
+            
+        Returns:
+            True if audio energy is above threshold
+        """
+        try:
+            # Convert to numpy array and calculate RMS energy
+            audio_frame = np.frombuffer(audio_data, dtype=np.int16)
+            rms = np.sqrt(np.mean(audio_frame.astype(np.float32) ** 2))
+            
+            return rms > self.min_audio_energy
+        except Exception as e:
+            logger.error(f"Error checking audio energy: {e}")
+            return True  # If error, allow processing
+    
+    def _should_process_detection(self) -> bool:
+        """
+        Check if enough time has passed since last detection (debounce)
+        
+        Returns:
+            True if detection should be processed
+        """
+        current_time = time.time()
+        time_since_last = current_time - self.last_detection_time
+        
+        if time_since_last < self.debounce_time:
+            logger.debug(f"Debouncing detection (only {time_since_last:.2f}s since last)")
+            return False
+        
+        return True
+    
     def _is_wake_word_match(self, text: str) -> bool:
         """
         Check if text matches wake word with fuzzy matching
@@ -130,8 +173,7 @@ class WakeWordDetector:
         # Common variations for "aiden"
         if wake == "aiden":
             variations = [
-                "aidan", "ayden", "aden", "aid in", "aid and",
-                "a den", "hey aiden", "ok aiden", "hey den"
+                "aidan", "ayden", "aden", "hey aiden", "ok aiden"
             ]
             for variation in variations:
                 if variation in text:
@@ -139,15 +181,15 @@ class WakeWordDetector:
                     return True
         
         # Fuzzy match - check if most characters match (stricter threshold)
-        if len(wake) >= 3:
+        if len(wake) >= 4:  # Only for longer wake words
             # Allow 1 character difference for wake words
             from difflib import SequenceMatcher
             words = text.split()
             for word in words:
                 # Only fuzzy match if word is similar length
-                if abs(len(word) - len(wake)) <= 2:
+                if abs(len(word) - len(wake)) <= 1:  # Stricter length check
                     similarity = SequenceMatcher(None, wake, word).ratio()
-                    if similarity >= 0.85:  # 85% similarity threshold (stricter)
+                    if similarity >= 0.90:  # 90% similarity threshold (very strict)
                         logger.debug(f"Fuzzy matched: '{word}' (similarity: {similarity:.2f})")
                         return True
         
@@ -183,6 +225,10 @@ class WakeWordDetector:
                     # Read audio data
                     data = self.stream.read(4000, exception_on_overflow=False)
                     
+                    # FALSE POSITIVE PREVENTION: Check audio energy before processing
+                    if not self._check_audio_energy(data):
+                        continue  # Skip if audio is too quiet
+                    
                     # Process with Vosk - ONLY use final results (not partials)
                     if self.recognizer.AcceptWaveform(data):
                         result = json.loads(self.recognizer.Result())
@@ -193,13 +239,18 @@ class WakeWordDetector:
                             
                             # Check for wake word with fuzzy matching
                             if self._is_wake_word_match(text):
-                                logger.info(f"[DETECTED] Wake word detected: '{text}'")
+                                # FALSE POSITIVE PREVENTION: Apply debounce
+                                if not self._should_process_detection():
+                                    continue
+                                
+                                logger.info(f"[VOSK CONFIRMED] Wake word detected: '{text}'")
+                                self.last_detection_time = time.time()
                                 self._on_wake_word_detected()
                     # Partial results disabled - too many false positives
                     
                 except Exception as e:
                     logger.error(f"Wake word detection error: {e}")
-                    asyncio.sleep(0.5)
+                    time.sleep(0.5)
                     
         except Exception as e:
             logger.error(f"Wake word detection loop failed: {e}")
