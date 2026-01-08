@@ -26,8 +26,14 @@ class GeminiClient:
     def __init__(self):
         self.settings = get_settings()
         
-        # Collect only the 3 numbered API keys 
+        # Collect all available API keys (primary + numbered)
         self.api_keys: List[str] = []
+        
+        # Add primary API key first (if set)
+        if self.settings.gemini.api_key:
+            self.api_keys.append(self.settings.gemini.api_key)
+        
+        # Add numbered API keys (for rotation)
         if self.settings.gemini.api_key_1:
             self.api_keys.append(self.settings.gemini.api_key_1)
         if self.settings.gemini.api_key_2:
@@ -36,7 +42,7 @@ class GeminiClient:
             self.api_keys.append(self.settings.gemini.api_key_3)
         
         if not self.api_keys:
-            raise ValueError("No Gemini API keys configured (GEMINI_API_KEY_1, GEMINI_API_KEY_2, or GEMINI_API_KEY_3)")
+            raise ValueError("No Gemini API keys configured (GEMINI_API_KEY or GEMINI_API_KEY_1/2/3)")
         
         # Track current API key index (will be loaded from Redis if available)
         self.current_key_index = 0
