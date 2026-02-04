@@ -28,19 +28,20 @@ class STTEngine:
         self.timeout = self.settings.speech.stt_timeout
         self.energy_threshold = self.settings.speech.stt_energy_threshold
         self.pause_threshold = self.settings.speech.stt_pause_threshold
+        self.device_index = self.settings.speech.stt_device_index
         
         # Apply configuration
-        # Apply configuration
-        # Static thresholding is more reliable for consistent behavior
-        self.recognizer.energy_threshold = self.energy_threshold  # Default 300 (sensitive)
-        self.recognizer.dynamic_energy_threshold = False  # Disable dynamic adjustment to prevent drift
+        # Dynamic threshold prevents getting stuck open in noisy rooms
+        self.recognizer.energy_threshold = 300  # Lower threshold for normal speech volume
+        self.recognizer.dynamic_energy_threshold = True  # Allow adapting to fans/AC
         
-        # Timing settings for faster response
-        self.recognizer.pause_threshold = 0.5  # Wait 0.5s silence before ending 
-        self.recognizer.phrase_threshold = 0.3  # Minimum 0.3s phrase
-        self.recognizer.non_speaking_duration = 0.3  # 0.4s for quicker cutoff 
+        # Timing settings
+        # 1.2s pause threshold allows natural pauses mid-sentence without cutting off
+        self.recognizer.pause_threshold = 1.2
+        self.recognizer.phrase_threshold = 0.3
+        self.recognizer.non_speaking_duration = 0.5 
         
-        logger.info(f"STT Engine initialized: energy={self.energy_threshold}, dynamic={self.recognizer.dynamic_energy_threshold}")
+        logger.info(f"STT Engine initialized: energy={self.recognizer.energy_threshold}, dynamic={self.recognizer.dynamic_energy_threshold}")
     
     async def transcribe(self, play_activation_sound: bool = True) -> Tuple[bool, Optional[str], Optional[str]]:
         """
@@ -53,18 +54,19 @@ class STTEngine:
             Tuple of (success, text, error_message)
         """
         try:
+            # Play activation sound BEFORE opening microphone
+            # This ensures user hears the sound before timeout starts
+            if play_activation_sound:
+                from src.speech.tts import get_tts_engine
+                tts = get_tts_engine()
+                await tts.play_sound("activation")
+            
             # Broadcast listening status
             try:
                 from src.utils.websocket_broadcast import broadcast_voice_status
                 await broadcast_voice_status("listening", speaking=False)
             except Exception:
                 pass  # Non-critical
-            
-            # Play activation sound RIGHT when mic is about to listen
-            if play_activation_sound:
-                from src.speech.tts import get_tts_engine
-                tts = get_tts_engine()
-                await tts.play_sound("activation")
             
             # Run blocking listen operation in thread pool
             loop = asyncio.get_event_loop()
@@ -92,14 +94,31 @@ class STTEngine:
     def _listen_sync(self) -> Tuple[bool, Optional[str], Optional[str]]:
         """Synchronous listen operation (runs in thread pool)"""
         try:
-            with sr.Microphone() as source:
-                logger.debug("STT: Microphone ready")
+            # Use microphone with max sample rate for better quality
+            mic_kwargs = {"sample_rate": 48000}
+            if self.device_index is not None:
+                mic_kwargs["device_index"] = self.device_index
+                logger.debug(f"STT: Using microphone device index {self.device_index}")
+            
+            with sr.Microphone(**mic_kwargs) as source:
+                logger.debug("STT: Microphone ready (48kHz sample rate)")
+                
+                # Use 0.5s to get a reliable noise sample
+                self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
+                
+                # Prevent threshold from dropping too low (which causes "hearing everything")
+                # 200 is a safe floor that still catches normal speech
+                if self.recognizer.energy_threshold < 200:
+                    self.recognizer.energy_threshold = 200
+                
+                logger.debug(f"STT: Ready to listen - energy threshold={self.recognizer.energy_threshold}")
                 
                 # Listen for audio
                 try:
-                    # FASTER: 5 second max recording time
-                    audio = self.recognizer.listen(source, timeout=self.timeout, phrase_time_limit=5)
-                    logger.debug("STT: Audio captured")
+                    # timeout=self.timeout applies to initial silence only
+                    # phrase_time_limit=None allows natural conversation length
+                    audio = self.recognizer.listen(source, timeout=self.timeout)
+                    logger.debug("STT: Audio captured successfully")
                 except sr.WaitTimeoutError:
                     logger.info("STT: Timeout - no speech detected")
                     return False, None, "timeout"
@@ -130,7 +149,11 @@ class STTEngine:
     def adjust_for_ambient_noise(self, duration: float = 1.0):
         """Adjust for ambient noise (run once at startup)"""
         try:
-            with sr.Microphone() as source:
+            mic_kwargs = {}
+            if self.device_index is not None:
+                mic_kwargs["device_index"] = self.device_index
+            
+            with sr.Microphone(**mic_kwargs) as source:
                 logger.info(f"STT: Adjusting for ambient noise ({duration}s)...")
                 self.recognizer.adjust_for_ambient_noise(source, duration=duration)
                 logger.info(f"STT: Adjusted energy threshold to {self.recognizer.energy_threshold}")

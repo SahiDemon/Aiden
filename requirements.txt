@@ -31,7 +31,7 @@ SpeechRecognition>=3.10.0
 pyaudio>=0.2.14
 
 # Text-to-Speech (TTS)
-edge-tts==7.2.1  # Locked to 7.2.1 due to issues with 7.2.3
+edge-tts>=7.2.7  # Updated to fix 403 errors from Microsoft
 pyttsx3>=2.90
 pygame>=2.5.2
 
@@ -39,7 +39,7 @@ pygame>=2.5.2
 vosk>=0.3.45
 sounddevice>=0.4.6
 numpy>=1.24.0
-pvporcupine>=3.0.5
+pvporcupine==3.0.5  # Pin to 3.0.5 for stability (if model is v4, upgrade to pvporcupine==3.0.5 or get v3 model)
 
 # System Tray
 pystray>=0.19.5

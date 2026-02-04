@@ -354,6 +354,21 @@ class TTSEngine:
                     await asyncio.sleep(0.1)
         except Exception as e:
             logger.error(f"Error playing sound file: {e}")
+    
+    async def wait_until_done(self, timeout: float = 10.0):
+        """Wait for all queued audio to finish playing"""
+        start = asyncio.get_event_loop().time()
+        while True:
+            # Check if queue is empty and not processing
+            if self.audio_queue.empty() and not self.is_processing:
+                return True
+            
+            # Check timeout
+            if asyncio.get_event_loop().time() - start > timeout:
+                logger.warning(f"TTS wait timed out after {timeout}s")
+                return False
+            
+            await asyncio.sleep(0.1)
 
 
 # Global instance

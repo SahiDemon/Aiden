@@ -61,7 +61,11 @@ class AidenAssistant:
         try:
             import asyncio
             
-            # Wait briefly before auto-listen
+            # Wait for TTS to finish speaking before listening
+            logger.debug("Waiting for TTS to complete before auto-listen...")
+            await self.tts.wait_until_done(timeout=10.0)
+            
+            # Brief pause after TTS for natural conversation flow
             await asyncio.sleep(0.3)
             
             # Listen for user response (activation sound plays automatically)

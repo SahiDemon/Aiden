@@ -121,9 +121,10 @@ class SpeechConfig(BaseSettings):
     tts_voice: str = Field(default="en-US-AvaNeural", description="Edge TTS voice")
     tts_rate: float = Field(default=1.2, description="TTS speech rate")
     stt_language: str = Field(default="en-US", description="STT language")
-    stt_timeout: int = Field(default=10, description="STT timeout in seconds")
+    stt_timeout: int = Field(default=5, description="STT timeout in seconds - reduced from 10 to prevent long listening")
     stt_energy_threshold: int = Field(default=300, description="Audio energy threshold")
-    stt_pause_threshold: float = Field(default=0.8, description="Pause detection threshold")
+    stt_pause_threshold: float = Field(default=1.2, description="Pause detection threshold - allows natural mid-sentence pauses")
+    stt_device_index: Optional[int] = Field(default=None, description="Microphone device index (None = system default)")
     vosk_model_path: str = Field(default="vosk_models/vosk-model-small-en-us-0.15", description="Vosk model path")
     
     # Porcupine Wake Word Settings

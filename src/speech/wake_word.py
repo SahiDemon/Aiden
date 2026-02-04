@@ -47,8 +47,8 @@ class WakeWordDetector:
         self.audio = None
         self.stream = None
         
-        # False positive prevention
-        self.min_audio_energy = 150.0  # Minimum RMS energy to consider
+        # False positive prevention - INCREASED threshold to reduce background noise triggers
+        self.min_audio_energy = 150.0  # Minimum RMS energy to consider (increased from 150)
         self.debounce_time = 1.5  # Seconds between detections
         self.last_detection_time = 0
         

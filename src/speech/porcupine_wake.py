@@ -111,7 +111,22 @@ class PorcupineWakeWordDetector:
             logger.info(f"Porcupine initialized: sample_rate={self.sample_rate}, frame_length={self.frame_length}")
             
         except Exception as e:
-            logger.error(f"Failed to initialize Porcupine: {e}")
+            error_msg = str(e)
+            logger.error(f"Failed to initialize Porcupine: {error_msg}")
+            
+            # Check for version mismatch
+            if "different version" in error_msg or "4.0.0" in error_msg or "3.0.0" in error_msg:
+                logger.error("=" * 80)
+                logger.error("PORCUPINE VERSION MISMATCH!")
+                logger.error("=" * 80)
+                logger.error("Your model file version doesn't match the library version.")
+                logger.error("")
+                logger.error("Quick Fix:")
+                logger.error("  Run: .\\fix_porcupine_version.ps1")
+                logger.error("")
+                logger.error("Or add to .env: SPEECH_USE_PORCUPINE=false")
+                logger.error("=" * 80)
+            
             raise
     
     def _apply_agc(self, audio_data: np.ndarray) -> np.ndarray:
