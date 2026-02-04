@@ -80,7 +80,7 @@ class AppConfig(BaseSettings):
     )
     
     name: str = Field(default="Aiden", description="Application name")
-    user_name: str = Field(default="Boss", description="User's preferred name")
+    user_name: str = Field(default="Sir", description="User's preferred name")
     wake_word: str = Field(default="aiden", description="Wake word for voice activation")
     hotkey: str = Field(default="ctrl+shift+space", description="Hotkey combination for voice activation")
     toggle_hotkey: str = Field(default="ctrl+shift+w", description="Hotkey to toggle wake word listening on/off")
@@ -162,6 +162,24 @@ class SpotifyConfig(BaseSettings):
     default_device_name: Optional[str] = Field(default=None, description="Preferred Spotify device name")
 
 
+class UPSConfig(BaseSettings):
+    """UPS Power Monitoring Configuration"""
+    model_config = SettingsConfigDict(
+        env_prefix="UPS_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore"
+    )
+    
+    enabled: bool = Field(default=True, description="Enable UPS power monitoring")
+    info_log_path: str = Field(default=r"C:\ViewPower\log\info.log", description="Path to ViewPower info.log")
+    alert_threshold: int = Field(default=80, description="[DEPRECATED] Battery % to trigger first alert")
+    critical_threshold: int = Field(default=50, description="[DEPRECATED] Battery % to trigger critical alert")
+    shutdown_threshold: int = Field(default=50, description="[DEPRECATED] Battery % to force shutdown")
+    polling_interval: float = Field(default=1.0, description="Seconds between log checks")
+    shutdown_timeout: int = Field(default=120, description="[DEPRECATED] Seconds to wait for user response")
+
+
 class Settings(BaseSettings):
     """Main Application Settings"""
     model_config = SettingsConfigDict(
@@ -182,6 +200,7 @@ class Settings(BaseSettings):
     speech: SpeechConfig = Field(default_factory=SpeechConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)
     spotify: SpotifyConfig = Field(default_factory=SpotifyConfig)
+    ups: UPSConfig = Field(default_factory=UPSConfig)
     
     def model_post_init(self, __context) -> None:
         """Validate that required env vars are set"""

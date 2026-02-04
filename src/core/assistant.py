@@ -216,7 +216,7 @@ class AidenAssistant:
     ) -> str:
         """Append dynamic status messages from command execution to the spoken response."""
         status_messages: List[str] = []
-        enriching_types = {"battery_status", "cpu_status", "gpu_status", "browser_media", "spotify", "media", "self_termination"}
+        enriching_types = {"battery_status", "cpu_status", "gpu_status", "browser_media", "spotify", "media", "self_termination", "ups_status"}
         for result in execution_results:
             data = result.get("response_data")
             if not isinstance(data, dict):

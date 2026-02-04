@@ -99,6 +99,9 @@ class CommandExecutor:
                 case "wake_word_control":
                     success = await self._handle_wake_word_control(params)
                 
+                case "ups_control":
+                    success, response_data = await self._handle_ups_control(params)
+                
                 case "shell_command":
                     success, error_message = await self._handle_shell_command(params)
                 
@@ -407,6 +410,83 @@ class CommandExecutor:
                 logger.error(f"Unknown wake word control action: {action}")
                 return False
     
+    async def _handle_ups_control(self, params: Dict[str, Any]) -> tuple[bool, Optional[dict]]:
+        """
+        Handle UPS-related commands (shutdown confirmation/cancellation)
+        
+        Args:
+            params: {
+                "action": "confirm_shutdown" | "cancel_shutdown" | "get_status"
+            }
+            
+        Returns:
+            Tuple of (success, response_data)
+        """
+        action = params.get("action", "").lower()
+        
+        try:
+            from src.utils.ups_handler import get_ups_handler
+            ups_handler = get_ups_handler()
+            
+            match action:
+                case "confirm_shutdown" | "yes" | "shutdown" | "proceed":
+                    if ups_handler.is_waiting_for_response():
+                        ups_handler.user_confirmed_shutdown(True)
+                        logger.info("✅ User confirmed UPS shutdown")
+                        return True, None
+                    else:
+                        logger.warning("Not waiting for UPS shutdown confirmation")
+                        return False, None
+                
+                case "cancel_shutdown" | "no" | "cancel" | "abort":
+                    if ups_handler.is_waiting_for_response():
+                        ups_handler.user_confirmed_shutdown(False)
+                        logger.info("❌ User cancelled UPS shutdown")
+                        return True, None
+                    else:
+                        logger.warning("Not waiting for UPS shutdown confirmation")
+                        return False, None
+                
+                case "get_status" | "status":
+                    # Get UPS status
+                    from src.utils.ups_monitor import get_ups_monitor
+                    ups_monitor = get_ups_monitor()
+                    status = ups_monitor.get_status()
+                    logger.info(f"UPS Status: {status}")
+                    
+                    # Format a nice message for the user
+                    mode = status.get("mode", "unknown")
+                    battery_pct = status.get("battery_percentage", 0)
+                    battery_v = status.get("battery_voltage", 0.0)
+                    load_pct = status.get("load_percentage", 0)
+                    time_on_battery = status.get("time_on_battery_minutes")
+                    
+                    if mode == "ac_online":
+                        message = f"We're plugged in and running on power. Battery is at {battery_pct}% ({battery_v:.1f}V), and we're drawing {load_pct}% load."
+                    elif mode == "battery":
+                        if time_on_battery and time_on_battery >= 2:
+                            message = f"We've been on battery for {time_on_battery} minutes. Battery is at {battery_pct}% ({battery_v:.1f}V), load is {load_pct}%. I'll need to shut down soon if power isn't restored."
+                        else:
+                            message = f"We're on battery power right now. Battery is at {battery_pct}% ({battery_v:.1f}V). I just asked if you want to shutdown."
+                    else:
+                        message = f"UPS status unknown. Battery: {battery_pct}% ({battery_v:.1f}V), Load: {load_pct}%"
+                    
+                    # Return enriched response
+                    response_data = {
+                        "type": "ups_status",
+                        "message": message,
+                        **status
+                    }
+                    return True, response_data
+                
+                case _:
+                    logger.warning(f"Unknown UPS control action: {action}")
+                    return False, None
+        
+        except Exception as e:
+            logger.error(f"Error handling UPS control: {e}", exc_info=True)
+            return False, None
+    
     async def _handle_shell_command(self, params: Dict[str, Any]) -> tuple[bool, Optional[str]]:
         """Handle arbitrary shell command"""
         command = params.get("command", "")
@@ -617,6 +697,14 @@ class CommandExecutor:
                 "get_current_track",
                 "identify",
                 "what_song",
+            }
+        
+        # UPS control commands that return data
+        if command_type == "ups_control":
+            action = (command.get("params") or {}).get("action", "").lower()
+            return action in {
+                "get_status",
+                "status",
             }
         
         return False

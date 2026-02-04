@@ -158,7 +158,7 @@ class GeminiClient:
         try:
             from src.speech.tts import get_tts_engine
             tts = get_tts_engine()
-            message = "Boss! I detected an issue with my backend server API, so I've automatically switched to a new one to keep things running smoothly."
+            message = "Sir! I detected an issue with my backend server API, so I've automatically switched to a new one to keep things running smoothly."
             await tts.speak(message)
             logger.info("Announced API key rotation via TTS")
         except Exception as e:

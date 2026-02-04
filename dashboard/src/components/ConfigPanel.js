@@ -487,7 +487,7 @@ const ConfigPanel = ({ open, onClose, socket }) => {
                 label="Preferred Address"
                 value={userProfile.personal.form_of_address}
                 onChange={(e) => updateUserProfile('personal.form_of_address', e.target.value)}
-                helperText="How Aiden should address you (e.g., Boss, Sir, etc.)"
+                helperText="How Aiden should address you (e.g., Sir, etc.)"
               />
             </Grid>
 

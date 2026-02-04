@@ -1,0 +1,280 @@
+"""
+UPS Event Handler - Integrates UPS monitoring with Aiden's voice system
+Handles power loss alerts, battery warnings, and shutdown coordination
+"""
+import asyncio
+from typing import Optional
+
+from src.speech.tts import get_tts_engine
+from src.utils.config import get_settings
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+class UPSEventHandler:
+    """
+    Handles UPS events and coordinates with Aiden assistant
+    
+    Provides cool voice alerts and smart shutdown logic
+    """
+    
+    def __init__(self):
+        self.settings = get_settings()
+        self.tts = get_tts_engine()
+        self.shutdown_task = None
+        self.waiting_for_response = False
+        
+        logger.info("UPS Event Handler initialized")
+    
+    async def handle_power_lost(self):
+        """
+        Handle power loss - immediate engagement
+        
+        Ask user right away if they want to shutdown or need time
+        """
+        logger.info("🔋 Power loss detected - asking user immediately")
+        
+        # Play warning sound before speaking
+        await self.tts.play_sound("warning")
+        
+        # Immediate engagement - ask right away
+        message = (
+            f"Sir, we've lost power. We're running on UPS battery. "
+            f"Should I shut down the system now to be safe, or do you need time to save your work?"
+        )
+        
+        await self.tts.speak(message)
+        
+        # Mark waiting for response
+        self.waiting_for_response = True
+        
+        # Trigger auto-listen for user response
+        asyncio.create_task(self._trigger_auto_listen())
+        
+        # Start timeout for no response (30 seconds)
+        self.shutdown_task = asyncio.create_task(
+            self._initial_response_timeout()
+        )
+        
+        logger.info("Waiting for immediate response (30s timeout)")
+    
+    async def handle_battery_alert(self, elapsed_minutes: int):
+        """
+        Handle 2-minute alert
+        
+        Args:
+            elapsed_minutes: Minutes elapsed on battery power
+        """
+        logger.info(f"⚠️ 2-minute alert: {elapsed_minutes} minutes on battery")
+        
+        # Play warning sound before speaking
+        await self.tts.play_sound("warning")
+        
+        message = (
+            f"Sir, you've had {elapsed_minutes} minutes on battery. "
+            f"I need to know - should I shut down now?"
+        )
+        
+        await self.tts.speak(message)
+        
+        # Mark that we're waiting for response
+        self.waiting_for_response = True
+        
+        # Trigger auto-listen for user response
+        asyncio.create_task(self._trigger_auto_listen())
+        
+        logger.info("Waiting for user response (2 minutes until force shutdown)")
+    
+    async def handle_battery_critical(self, elapsed_minutes: int):
+        """
+        Handle battery critical (no longer used - kept for backwards compatibility)
+        The 3-minute warning has been removed. Now we just:
+        - Ask immediately on power loss
+        - Check in at 2 minutes
+        - Force shutdown at 4 minutes
+        
+        Args:
+            elapsed_minutes: Minutes elapsed on battery power
+        """
+        logger.warning(f"handle_battery_critical called but no longer used (elapsed: {elapsed_minutes} min)")
+        pass
+    
+    async def handle_shutdown_request(self, force: bool = False, reason: str = "unknown"):
+        """
+        Handle shutdown request
+        
+        Args:
+            force: Force shutdown without confirmation
+            reason: Reason for shutdown
+        """
+        logger.warning(f"🔌 Shutdown requested (force={force}, reason={reason})")
+        
+        self.waiting_for_response = False
+        
+        # Cancel timeout task
+        if self.shutdown_task:
+            self.shutdown_task.cancel()
+            self.shutdown_task = None
+        
+        # Play error sound for forced shutdown, success for user-confirmed
+        if force:
+            await self.tts.play_sound("error")
+        else:
+            await self.tts.play_sound("success")
+        
+        # Cool shutdown message
+        if force and reason == "critical_voltage":
+            message = (
+                "Sir, battery voltage is critically low. "
+                "I'm forcing an emergency shutdown to protect the system. "
+                "Initiating shutdown now."
+            )
+        elif force and reason == "timeout":
+            message = (
+                "Sir, it's been 4 minutes on battery with no response. "
+                "Forcing shutdown to protect your data. "
+                "Goodbye, Sir."
+            )
+        elif force and reason == "critical_battery":
+            message = (
+                "I'm forcing the system down to avoid data corruption. "
+                "All unsaved work will be lost. "
+                "Initiating shutdown now."
+            )
+        else:
+            message = (
+                "Understood, Sir. "
+                "Initiating graceful shutdown. "
+                "See you on the other side."
+            )
+        
+        await self.tts.speak(message)
+        
+        # Give TTS time to finish
+        await asyncio.sleep(1)
+        
+        # Execute shutdown
+        await self._execute_shutdown()
+    
+    async def _trigger_auto_listen(self):
+        """
+        Trigger the assistant to listen for user response after asking a question
+        """
+        try:
+            # Import here to avoid circular imports
+            from src.core.assistant import get_assistant
+            
+            # Get assistant instance
+            assistant = await get_assistant()
+            
+            # Use the assistant's auto-listen functionality
+            # This will wait for TTS to finish, then start listening
+            await assistant._auto_listen_for_followup()
+            
+        except Exception as e:
+            logger.error(f"Failed to trigger auto-listen: {e}", exc_info=True)
+    
+    async def _shutdown_timeout(self, timeout_seconds: int):
+        """
+        Timeout handler - no longer used with time-based system
+        
+        Time-based alerts handle the countdown automatically
+        """
+        pass
+    
+    async def _initial_response_timeout(self):
+        """
+        Handle no response to initial power loss question (30 seconds)
+        No longer triggers immediate action - user has until 4-minute mark
+        """
+        try:
+            await asyncio.sleep(30)
+            
+            # If still waiting for response, just log it
+            if self.waiting_for_response:
+                logger.info("No response to initial question - user has until 4-minute mark")
+        
+        except asyncio.CancelledError:
+            logger.info("Initial timeout cancelled (user responded)")
+    
+    async def _execute_shutdown(self):
+        """Execute system shutdown"""
+        import platform
+        
+        try:
+            logger.critical("🔌 EXECUTING SYSTEM SHUTDOWN")
+            
+            # Windows shutdown command
+            if platform.system() == "Windows":
+                import subprocess
+                
+                # Graceful shutdown with 30 second warning
+                # Note: /c comment must be the last parameter
+                result = subprocess.run(
+                    ["shutdown", "/s", "/t", "30", "/c", "Aiden: UPS battery low - shutting down to protect data"],
+                    capture_output=True,
+                    text=True
+                )
+                
+                if result.returncode == 0:
+                    logger.info("✅ Shutdown command executed successfully")
+                else:
+                    logger.error(f"Shutdown command failed: {result.stderr}")
+                    # Try simpler command without comment
+                    logger.info("Retrying shutdown without comment...")
+                    subprocess.run(["shutdown", "/s", "/t", "30"], check=True)
+            else:
+                logger.error("Shutdown only supported on Windows")
+        
+        except Exception as e:
+            logger.error(f"Failed to execute shutdown: {e}", exc_info=True)
+            # Last resort - immediate shutdown without comment
+            try:
+                import subprocess
+                logger.warning("Attempting immediate shutdown as fallback...")
+                subprocess.run(["shutdown", "/s", "/f", "/t", "0"], check=False)
+            except Exception as fallback_error:
+                logger.error(f"Fallback shutdown also failed: {fallback_error}")
+    
+    def user_confirmed_shutdown(self, confirmed: bool):
+        """
+        User confirmed or cancelled shutdown via voice command
+        
+        Args:
+            confirmed: True to proceed, False to cancel
+        """
+        if not self.waiting_for_response:
+            logger.warning("Not waiting for shutdown confirmation")
+            return
+        
+        self.waiting_for_response = False
+        
+        # Cancel timeout
+        if self.shutdown_task:
+            self.shutdown_task.cancel()
+            self.shutdown_task = None
+        
+        if confirmed:
+            logger.info("✅ User confirmed shutdown")
+            asyncio.create_task(
+                self.handle_shutdown_request(force=False, reason="user_confirmed")
+            )
+        else:
+            logger.info("❌ User cancelled shutdown - will monitor battery and force shutdown at critical level")
+    
+    def is_waiting_for_response(self) -> bool:
+        """Check if handler is waiting for user response"""
+        return self.waiting_for_response
+
+
+# Global instance
+_ups_handler: Optional[UPSEventHandler] = None
+
+
+def get_ups_handler() -> UPSEventHandler:
+    """Get or create global UPS handler instance"""
+    global _ups_handler
+    if _ups_handler is None:
+        _ups_handler = UPSEventHandler()
+    return _ups_handler

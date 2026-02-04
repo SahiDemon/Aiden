@@ -39,6 +39,7 @@ hotkey_listener: Optional[object] = None
 toggle_hotkey_listener: Optional[object] = None
 api_server_task: Optional[asyncio.Task] = None
 overlay_launcher: Optional[object] = None
+ups_monitor: Optional[object] = None
 shutdown_event = threading.Event()
 main_loop: Optional[asyncio.AbstractEventLoop] = None
 
@@ -121,7 +122,7 @@ def handle_toggle_wake_word():
 
 async def initialize_services():
     """Initialize all Aiden services"""
-    global assistant, wake_word_detector, wake_word_manager, hotkey_listener, toggle_hotkey_listener, api_server_task, overlay_launcher, main_loop
+    global assistant, wake_word_detector, wake_word_manager, hotkey_listener, toggle_hotkey_listener, api_server_task, overlay_launcher, ups_monitor, main_loop
     
     # Store the main event loop for thread-safe async calls
     main_loop = asyncio.get_event_loop()
@@ -226,6 +227,37 @@ async def initialize_services():
         except Exception as e:
             logger.warning(f"Could not start overlay: {e}")
         
+        # 5.5. Start UPS monitoring (if enabled)
+        if settings.ups.enabled:
+            logger.info("Initializing UPS power monitoring...")
+            try:
+                from src.utils.ups_monitor import get_ups_monitor
+                from src.utils.ups_handler import get_ups_handler
+                
+                # Get handler for callbacks
+                ups_handler = get_ups_handler()
+                
+                # Initialize monitor with callbacks
+                ups_monitor = get_ups_monitor(
+                    info_log_path=settings.ups.info_log_path,
+                    alert_threshold=settings.ups.alert_threshold,
+                    critical_threshold=settings.ups.critical_threshold,
+                    shutdown_threshold=settings.ups.shutdown_threshold,
+                    polling_interval=settings.ups.polling_interval,
+                    on_power_lost=ups_handler.handle_power_lost,
+                    on_battery_alert=ups_handler.handle_battery_alert,
+                    on_battery_critical=ups_handler.handle_battery_critical,
+                    on_shutdown_request=ups_handler.handle_shutdown_request,
+                    main_event_loop=main_loop
+                )
+                
+                ups_monitor.start()
+                logger.info("✅ UPS monitoring started")
+            except Exception as e:
+                logger.warning(f"Could not start UPS monitoring: {e}")
+        else:
+            logger.info("UPS monitoring disabled in config")
+        
         # 6. Greet user
         await assistant.greet_user()
         
@@ -236,6 +268,7 @@ async def initialize_services():
         logger.info(f"Toggle hotkey: {settings.app.toggle_hotkey}")
         logger.info(f"Dashboard: http://{settings.api.host}:{settings.api.port}")
         logger.info(f"Overlay: {'Running' if overlay_launcher and overlay_launcher.process else 'Not running'}")
+        logger.info(f"UPS Monitor: {'Running' if ups_monitor and ups_monitor.running else 'Not running'}")
         logger.info("=" * 70)
         
         return True
@@ -247,7 +280,7 @@ async def initialize_services():
 
 async def cleanup():
     """Cleanup all services"""
-    global wake_word_detector, hotkey_listener, toggle_hotkey_listener, api_server_task, overlay_launcher
+    global wake_word_detector, hotkey_listener, toggle_hotkey_listener, api_server_task, overlay_launcher, ups_monitor
     
     logger.info("=" * 70)
     logger.info("SHUTTING DOWN AIDEN")
