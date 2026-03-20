@@ -29,15 +29,17 @@ class STTEngine:
         self.energy_threshold = self.settings.speech.stt_energy_threshold
         self.pause_threshold = self.settings.speech.stt_pause_threshold
         self.device_index = self.settings.speech.stt_device_index
+        # Keep a sane minimum while still allowing quieter voices.
+        self.min_energy_threshold = max(80, int(self.energy_threshold * 0.6))
         
         # Apply configuration
         # Dynamic threshold prevents getting stuck open in noisy rooms
-        self.recognizer.energy_threshold = 300  # Lower threshold for normal speech volume
+        self.recognizer.energy_threshold = self.energy_threshold
         self.recognizer.dynamic_energy_threshold = True  # Allow adapting to fans/AC
         
         # Timing settings
         # 1.2s pause threshold allows natural pauses mid-sentence without cutting off
-        self.recognizer.pause_threshold = 1.2
+        self.recognizer.pause_threshold = self.pause_threshold
         self.recognizer.phrase_threshold = 0.3
         self.recognizer.non_speaking_duration = 0.5 
         
@@ -106,10 +108,10 @@ class STTEngine:
                 # Use 0.5s to get a reliable noise sample
                 self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
                 
-                # Prevent threshold from dropping too low (which causes "hearing everything")
-                # 200 is a safe floor that still catches normal speech
-                if self.recognizer.energy_threshold < 200:
-                    self.recognizer.energy_threshold = 200
+                # Prevent threshold from dropping too low (which causes hearing everything).
+                # Use a lower configurable floor so normal speaking volume is accepted.
+                if self.recognizer.energy_threshold < self.min_energy_threshold:
+                    self.recognizer.energy_threshold = self.min_energy_threshold
                 
                 logger.debug(f"STT: Ready to listen - energy threshold={self.recognizer.energy_threshold}")
                 

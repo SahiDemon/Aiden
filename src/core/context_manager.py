@@ -230,7 +230,69 @@ class ContextManager:
             
         except Exception as e:
             logger.error(f"Error updating context: {e}")
-    
+            
+    async def inject_assistant_message(
+        self,
+        message: str,
+        expecting_followup: bool = False,
+        conversation_id: Optional[str] = None
+    ):
+        """
+        Inject an assistant message directly into the context
+        Useful for proactive alerts (like UPS) to ensure the AI has context
+        for the user's response.
+        """
+        conversation_id = conversation_id or self.current_conversation_id
+        
+        if not conversation_id:
+            conversation_id = await self.start_conversation(mode="voice")
+            
+        try:
+            # Get current context
+            context = await self.get_context(conversation_id)
+            
+            # Append message to history
+            context["history"].append({"role": "assistant", "content": message})
+            
+            # Apply summarization if needed
+            if len(context["history"]) >= self._summary_after_messages:
+                logger.info(f"[CONTEXT] History exceeded threshold, triggering summarization...")
+                tail = context["history"][-self._history_keep_after_summary:]
+                head = context["history"][:-self._history_keep_after_summary]
+                existing_summary = context.get("summary", "") or ""
+                try:
+                    new_summary = await self._ai_summarize(head, existing_summary)
+                    if not new_summary:
+                        new_summary = self._summarize_messages(head, existing_summary)
+                except Exception as e:
+                    new_summary = self._summarize_messages(head, existing_summary)
+                context["summary"] = new_summary[: self._summary_max_chars]
+                context["history"] = tail
+
+            context["history"] = context["history"][-self._history_keep_after_summary:]
+            context["expecting_followup"] = expecting_followup
+            
+            # Save to redis
+            redis = await get_redis_client()
+            await redis.save_context(conversation_id, context)
+            
+            # Save to db in background
+            try:
+                db = await get_db_client()
+                asyncio.create_task(db.add_message(
+                    conversation_id=conversation_id,
+                    role="assistant",
+                    content=message,
+                    metadata={"injected": True}
+                ))
+            except Exception as e:
+                logger.debug(f"Background save failed: {e}")
+                
+            logger.debug(f"Injected assistant message to conversation {conversation_id}")
+            
+        except Exception as e:
+            logger.error(f"Error injecting assistant message: {e}")
+            
     async def end_conversation(self, conversation_id: Optional[str] = None):
         """
         End conversation and cleanup

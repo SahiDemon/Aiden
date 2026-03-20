@@ -1,6 +1,7 @@
 """
 Text-to-Speech (TTS) System with Caching
 Migrated and enhanced from original voice_system.py
+Supports multiple TTS providers: Edge TTS, Google Chirp 3 HD, and offline pyttsx3
 """
 import asyncio
 import hashlib
@@ -31,14 +32,29 @@ except Exception as e:
 class TTSEngine:
     """
     Text-to-Speech engine with Redis caching
-    Uses Microsoft edge-tts for high-quality voices
+    Supports multiple providers:
+    - Microsoft Edge TTS (default)
+    - Google Cloud TTS with Chirp 3 HD voices
+    - Offline pyttsx3 (fallback)
     """
     
     def __init__(self):
         self.settings = get_settings()
+        self.provider = self.settings.speech.tts_provider
         self.voice_id = self.settings.speech.tts_voice
         self.rate = self.settings.speech.tts_rate
         self.temp_dir = tempfile.gettempdir()
+        
+        # Google TTS specific settings
+        self.google_voice = self.settings.speech.google_tts_voice
+        self.google_pitch = self.settings.speech.google_tts_pitch
+        self.google_speaking_rate = self.settings.speech.google_tts_speaking_rate
+        self.google_credentials_path = self.settings.speech.google_tts_credentials_path
+        self.google_client = None
+        
+        # Initialize Google TTS client if provider is google
+        if self.provider == "google":
+            self._init_google_client()
         
         self.audio_queue = asyncio.Queue()
         self.is_processing = False
@@ -46,7 +62,23 @@ class TTSEngine:
         # Start queue processor
         asyncio.create_task(self._process_queue())
         
-        logger.info(f"TTS Engine initialized: voice={self.voice_id}, rate={self.rate}")
+        logger.info(f"TTS Engine initialized: provider={self.provider}, voice={self.voice_id if self.provider == 'edge' else self.google_voice}")
+    
+    def _init_google_client(self):
+        """Initialize Google Cloud TTS client"""
+        try:
+            from google.cloud import texttospeech
+            
+            # Set credentials if path is provided
+            if self.google_credentials_path and os.path.exists(self.google_credentials_path):
+                os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = self.google_credentials_path
+            
+            self.google_client = texttospeech.TextToSpeechClient()
+            logger.info(f"Google TTS client initialized with voice: {self.google_voice}")
+        except Exception as e:
+            logger.error(f"Failed to initialize Google TTS client: {e}")
+            logger.warning("Falling back to Edge TTS provider")
+            self.provider = "edge"
 
     async def _process_queue(self):
         """Process audio queue sequentially"""
@@ -124,13 +156,19 @@ class TTSEngine:
                 # Try online generation first, fallback to offline
                 audio_data = None
                 try:
-                    audio_data = await self._generate_speech(text)
+                    # Use appropriate provider
+                    if self.provider == "google":
+                        audio_data = await self._generate_google_speech(text)
+                    elif self.provider == "edge":
+                        audio_data = await self._generate_speech(text)
+                    else:  # offline
+                        audio_data = await self._generate_offline_speech(text)
                 except Exception as e:
                     error_str = str(e)
                     if "getaddrinfo failed" in error_str or "Cannot connect" in error_str:
-                        logger.warning(f"TTS: Edge-TTS unavailable (network issue), using offline TTS")
+                        logger.warning(f"TTS: {self.provider.upper()} unavailable (network issue), using offline TTS")
                     else:
-                        logger.warning(f"TTS: Edge-TTS failed, trying offline fallback: {e}")
+                        logger.warning(f"TTS: {self.provider.upper()} failed, trying offline fallback: {e}")
                     
                     try:
                         audio_data = await self._generate_offline_speech(text)
@@ -212,6 +250,57 @@ class TTSEngine:
                 logger.error(f"Edge TTS returned no audio (voice: {self.voice_id}): {e}")
             else:
                 logger.error(f"Edge TTS generation error: {e}")
+            raise
+    
+    async def _generate_google_speech(self, text: str) -> bytes:
+        """Generate speech audio using Google Cloud TTS with Chirp 3 HD voices"""
+        try:
+            from google.cloud import texttospeech
+            
+            if not self.google_client:
+                raise ValueError("Google TTS client not initialized")
+            
+            # Set up the synthesis request
+            synthesis_input = texttospeech.SynthesisInput(text=text)
+            
+            # Build the voice parameters
+            voice = texttospeech.VoiceSelectionParams(
+                name=self.google_voice,
+                language_code=self.google_voice[:5]  # Extract language code (e.g., en-US)
+            )
+            
+            # Configure audio format
+            audio_config = texttospeech.AudioConfig(
+                audio_encoding=texttospeech.AudioEncoding.MP3,
+                speaking_rate=self.google_speaking_rate,
+                pitch=self.google_pitch
+            )
+            
+            # Run the synchronous API call in an executor to avoid blocking
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: self.google_client.synthesize_speech(
+                    input=synthesis_input,
+                    voice=voice,
+                    audio_config=audio_config
+                )
+            )
+            
+            if not response.audio_content:
+                raise ValueError("No audio data generated by Google TTS")
+            
+            logger.debug(f"Google TTS: Generated {len(response.audio_content)} bytes for '{text[:30]}...'")
+            return response.audio_content
+            
+        except Exception as e:
+            error_msg = str(e)
+            if "permission" in error_msg.lower() or "credentials" in error_msg.lower():
+                logger.error(f"Google TTS authentication error: {e}")
+            elif "quota" in error_msg.lower():
+                logger.error(f"Google TTS quota exceeded: {e}")
+            else:
+                logger.error(f"Google TTS generation error: {e}")
             raise
     
     async def _generate_offline_speech(self, text: str) -> bytes:

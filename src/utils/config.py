@@ -118,8 +118,13 @@ class SpeechConfig(BaseSettings):
         extra="ignore"
     )
     
+    tts_provider: str = Field(default="edge", description="TTS provider (edge, google, or offline)")
     tts_voice: str = Field(default="en-US-AvaNeural", description="Edge TTS voice")
     tts_rate: float = Field(default=1.2, description="TTS speech rate")
+    google_tts_credentials_path: str = Field(default="", description="Path to Google Cloud TTS credentials JSON")
+    google_tts_voice: str = Field(default="en-US-Chirp-HD-F", description="Google Chirp 3 HD voice")
+    google_tts_pitch: float = Field(default=0.0, description="Voice pitch adjustment (-20.0 to 20.0)")
+    google_tts_speaking_rate: float = Field(default=1.0, description="Speaking rate (0.25 to 4.0)")
     stt_language: str = Field(default="en-US", description="STT language")
     stt_timeout: int = Field(default=5, description="STT timeout in seconds - reduced from 10 to prevent long listening")
     stt_energy_threshold: int = Field(default=300, description="Audio energy threshold")

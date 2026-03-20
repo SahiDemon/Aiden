@@ -49,6 +49,11 @@ class UPSEventHandler:
         # Mark waiting for response
         self.waiting_for_response = True
         
+        # Inject context so the LLM knows what we just asked
+        from src.core.context_manager import get_context_manager
+        ctx = get_context_manager()
+        await ctx.inject_assistant_message(message, expecting_followup=True)
+        
         # Trigger auto-listen for user response
         asyncio.create_task(self._trigger_auto_listen())
         
@@ -80,6 +85,11 @@ class UPSEventHandler:
         
         # Mark that we're waiting for response
         self.waiting_for_response = True
+        
+        # Inject context so the LLM knows what we just asked
+        from src.core.context_manager import get_context_manager
+        ctx = get_context_manager()
+        await ctx.inject_assistant_message(message, expecting_followup=True)
         
         # Trigger auto-listen for user response
         asyncio.create_task(self._trigger_auto_listen())

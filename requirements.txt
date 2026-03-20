@@ -32,6 +32,7 @@ pyaudio>=0.2.14
 
 # Text-to-Speech (TTS)
 edge-tts>=7.2.7  # Updated to fix 403 errors from Microsoft
+google-cloud-texttospeech>=2.16.0  # Google Chirp 3 HD voices
 pyttsx3>=2.90
 pygame>=2.5.2
 
