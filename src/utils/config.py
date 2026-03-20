@@ -130,6 +130,7 @@ class SpeechConfig(BaseSettings):
     stt_energy_threshold: int = Field(default=300, description="Audio energy threshold")
     stt_pause_threshold: float = Field(default=1.2, description="Pause detection threshold - allows natural mid-sentence pauses")
     stt_device_index: Optional[int] = Field(default=None, description="Microphone device index (None = system default)")
+    pending_clarification_grace_seconds: int = Field(default=60, description="How long clarification context stays active to accept short follow-ups on next hotkey")
     vosk_model_path: str = Field(default="vosk_models/vosk-model-small-en-us-0.15", description="Vosk model path")
     
     # Porcupine Wake Word Settings

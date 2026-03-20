@@ -98,15 +98,22 @@ def score_window_title(title: str, target: Optional[str]) -> int:
     score = 0
     if "incognito" in lower:
         score -= 1
+        
     if target == "youtube_music":
         if "youtube music" in lower:
             score += 5
-    if target == "youtube":
+        else:
+            return 0  # Do not match regular YouTube when YouTube Music is explicitly requested
+            
+    elif target == "youtube":
+        if "youtube music" in lower:
+            return 0
         if " - youtube" in lower or lower.endswith("youtube"):
             score += 4
-    if "youtube" in lower:
+            
+    if "youtube" in lower and target != "youtube_music":
         score += 2
-    if "music" in lower:
+    if "music" in lower and target != "youtube_music":
         score += 1
     return score
 
@@ -140,8 +147,14 @@ class BrowserMediaController:
                         # Open directly in watch mode which usually auto-plays
                         watch_url = f"https://music.youtube.com/watch?v={video_id}"
                         webbrowser.open(watch_url, new=2)
+                        
+                        # Wait for the site to load, then send play commands
+                        window = self._wait_for_window(target or "youtube_music", timeout=8)
+                        if window:
+                            self._start_youtube_music_after_open(window)
+                            
                         return True, {
-                            "type": "browser_media", 
+                            "type": "browser_media",
                             "message": f"Playing '{query}' on YouTube Music."
                         }
                 except Exception as e:
@@ -201,6 +214,20 @@ class BrowserMediaController:
             logger.warning(f"No {target} window found")
             self._maybe_open_target(target)
             window = self._wait_for_window(target, timeout=8)
+            if window and action in {"play_pause", "resume"}:
+                if self._activate_window(window.handle):
+                    if target == "youtube_music":
+                        self._start_youtube_music_after_open(window)
+                    else:
+                        # Give non-music tabs a brief moment to finish loading.
+                        time.sleep(1.2)
+                        self._send_keystroke("SPACE", [])
+                        time.sleep(0.2)
+                        self._send_keystroke("K", [])
+                    return True, {
+                        "type": "browser_media",
+                        "message": f"Opened {target.replace('_', ' ')} and started playback.",
+                    }
             if not window:
                 return False, {
                     "type": "browser_media",
@@ -219,6 +246,15 @@ class BrowserMediaController:
                     "message": "I couldn't bring the YouTube tab to the front. I opened a new tab—please bring it forward and try again.",
                 }
 
+        # YouTube Music is most reliable with SPACE on this setup.
+        if target == "youtube_music" and action in {"play_pause", "resume", "pause"}:
+            self._send_keystroke("SPACE", [])
+            action_desc = action.replace("_", " ")
+            return True, {
+                "type": "browser_media",
+                "message": f"{action_desc.title()} command sent to Youtube Music tab.",
+            }
+
         key, modifiers = ACTION_KEYMAP[action]
         self._send_keystroke(key, modifiers)
         action_desc = action.replace("_", " ")
@@ -234,7 +270,8 @@ class BrowserMediaController:
             candidates = self._score_windows(windows, target)
             if candidates:
                 return candidates[0][1]
-        # No explicit target or no match - fallback preference: YouTube Music -> YouTube
+            return None  # Do not fallback if a target is explicitly provided.
+        # No explicit target - fallback preference: YouTube Music -> YouTube
         for fallback in ("youtube_music", "youtube"):
             candidates = self._score_windows(windows, fallback)
             if candidates:
@@ -295,9 +332,29 @@ class BrowserMediaController:
     def _activate_window(self, hwnd: int) -> bool:
         try:
             win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-            win32gui.SetForegroundWindow(hwnd)
-            win32gui.BringWindowToTop(hwnd)
-            time.sleep(0.1)
+        except Exception:
+            pass
+
+        for attempt in range(2):
+            try:
+                win32gui.SetForegroundWindow(hwnd)
+                win32gui.BringWindowToTop(hwnd)
+                time.sleep(0.1)
+                return True
+            except Exception:
+                if attempt == 0:
+                    # ALT keypress is a known workaround for foreground-lock restrictions.
+                    try:
+                        win32api.keybd_event(win32con.VK_MENU, 0, 0, 0)
+                        time.sleep(0.02)
+                        win32api.keybd_event(win32con.VK_MENU, 0, win32con.KEYEVENTF_KEYUP, 0)
+                        time.sleep(0.05)
+                    except Exception:
+                        pass
+
+        try:
+            win32gui.SetActiveWindow(hwnd)
+            time.sleep(0.05)
             return True
         except Exception as e:
             logger.error(f"Failed to activate window {hwnd}: {e}")
@@ -324,6 +381,58 @@ class BrowserMediaController:
             if vk_mod:
                 time.sleep(0.01)
                 win32api.keybd_event(vk_mod, 0, win32con.KEYEVENTF_KEYUP, 0)
+
+    def _start_youtube_music_after_open(self, window: BrowserWindow) -> None:
+        """Start playback on a newly opened YouTube Music tab with guarded retries."""
+        if not self._activate_window(window.handle):
+            return
+
+        # Give initial page scripts/player controls time to initialize.
+        time.sleep(2.8)
+
+        # Re-activate before the first key to avoid focus drift after load.
+        self._activate_window(window.handle)
+
+        # Primary attempt.
+        self._send_keystroke("SPACE", [])
+        time.sleep(1.0)
+
+        # If still on the generic page title, retry once.
+        try:
+            current_title = win32gui.GetWindowText(window.handle).lower()
+        except Exception:
+            current_title = window.title.lower()
+
+        if " | youtube music" not in current_title:
+            self._activate_window(window.handle)
+            time.sleep(0.4)
+            self._send_keystroke("SPACE", [])
+
+        time.sleep(0.6)
+
+    def _send_appcommand(self, hwnd: int, command: str) -> bool:
+        if not WIN32_AVAILABLE:
+            return False
+
+        command_map = {
+            "play_pause": 14,
+            "next": 11,
+            "previous": 12,
+            "mute": 8,
+        }
+        app_cmd = command_map.get(command)
+        if app_cmd is None:
+            return False
+
+        try:
+            lparam = app_cmd << 16
+            wm_appcommand = getattr(win32con, "WM_APPCOMMAND", 0x0319)
+            win32gui.SendMessage(hwnd, wm_appcommand, hwnd, lparam)
+            time.sleep(0.05)
+            return True
+        except Exception as exc:
+            logger.warning(f"Failed WM_APPCOMMAND '{command}' for window {hwnd}: {exc}")
+            return False
 
     def _maybe_open_target(self, target: Optional[str]) -> None:
         if not target:

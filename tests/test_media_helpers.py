@@ -15,6 +15,14 @@ class BrowserMediaControllerTests(unittest.TestCase):
         score = score_window_title("My Documents - Not Chrome", "youtube")
         self.assertEqual(score, 0)
 
+    def test_youtube_music_target_rejects_regular_youtube_title(self):
+        score = score_window_title("Some Video - YouTube - Google Chrome", "youtube_music")
+        self.assertEqual(score, 0)
+
+    def test_youtube_target_rejects_youtube_music_title(self):
+        score = score_window_title("YouTube Music - Google Chrome", "youtube")
+        self.assertEqual(score, 0)
+
 
 class SpotifyDeviceSelectionTests(unittest.TestCase):
     def test_prefers_named_device(self):

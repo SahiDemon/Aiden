@@ -7,7 +7,7 @@ import uuid
 import logging
 import hashlib
 from typing import Dict, Any, List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from src.database.redis_client import get_redis_client
 from src.database.neon_client import get_db_client
@@ -29,6 +29,10 @@ class ContextManager:
         self._summary_after_messages: int = 8  # when to start summarizing (earlier = less tokens)
         self._history_keep_after_summary: int = 6  # keep recent 3 exchanges (6 messages) after summarizing
         self._summary_max_chars: int = 600  # reduced cap for summary length
+        self._pending_clarification_grace_seconds: int = max(
+            5,
+            int(self.settings.speech.pending_clarification_grace_seconds),
+        )
         
     async def start_conversation(self, user_id: str = "default", mode: str = "voice") -> str:
         """
@@ -58,6 +62,11 @@ class ContextManager:
                 "last_entities": [],
                 "last_action": None,
                 "expecting_followup": False,
+                "pending_clarification": False,
+                "pending_intent": None,
+                "pending_slots": [],
+                "pending_question": "",
+                "pending_expires_at": None,
                 "history": [],
                 "summary": ""
             }
@@ -131,6 +140,10 @@ class ContextManager:
             context = await redis.get_context(conversation_id)
             
             if context:
+                # Auto-clear stale pending clarification state after grace window expires.
+                if context.get("pending_clarification") and not self._is_pending_clarification_active(context):
+                    self._clear_pending_clarification(context)
+                    await redis.save_context(conversation_id, context)
                 return context
             else:
                 logger.warning(f"No context found for conversation {conversation_id}")
@@ -198,6 +211,17 @@ class ContextManager:
             # Update context fields from AI response
             context["last_intent"] = ai_response.get("intent")
             context["expecting_followup"] = ai_response.get("expecting_followup", False)
+
+            # Track pending clarification separately from compressed summary/history.
+            # This state is used to keep execution decisions safe across turns.
+            if context["expecting_followup"]:
+                context["pending_clarification"] = True
+                context["pending_intent"] = ai_response.get("intent")
+                context["pending_slots"] = self._infer_pending_slots(ai_response.get("response", ""))
+                context["pending_question"] = ai_response.get("response", "")
+                context["pending_expires_at"] = self._next_pending_expiry_iso()
+            else:
+                self._clear_pending_clarification(context)
             
             # Extract entities from commands
             entities = []
@@ -271,6 +295,14 @@ class ContextManager:
 
             context["history"] = context["history"][-self._history_keep_after_summary:]
             context["expecting_followup"] = expecting_followup
+
+            if expecting_followup:
+                context["pending_clarification"] = True
+                context["pending_question"] = message
+                context["pending_slots"] = self._infer_pending_slots(message)
+                context["pending_expires_at"] = self._next_pending_expiry_iso()
+            else:
+                self._clear_pending_clarification(context)
             
             # Save to redis
             redis = await get_redis_client()
@@ -380,8 +412,32 @@ class ContextManager:
             "last_entities": [],
             "last_action": None,
             "expecting_followup": False,
+            "pending_clarification": False,
+            "pending_intent": None,
+            "pending_slots": [],
+            "pending_question": "",
+            "pending_expires_at": None,
             "history": []
         }
+
+    async def refresh_pending_clarification_grace(self, conversation_id: Optional[str] = None) -> bool:
+        """Extend pending clarification grace so next hotkey can complete the slot-only reply."""
+        conversation_id = conversation_id or self.current_conversation_id
+        if not conversation_id:
+            return False
+
+        try:
+            context = await self.get_context(conversation_id)
+            if not context.get("pending_clarification"):
+                return False
+
+            context["pending_expires_at"] = self._next_pending_expiry_iso()
+            redis = await get_redis_client()
+            await redis.save_context(conversation_id, context)
+            return True
+        except Exception as e:
+            logger.debug(f"Could not refresh pending clarification grace: {e}")
+            return False
     
     async def is_followup(self, message: str, context: Dict[str, Any]) -> bool:
         """
@@ -529,6 +585,23 @@ class ContextManager:
             messages.append({
                 "role": "system",
                 "content": f"Conversation summary (for context): {summary_text}"
+            })
+
+        # Add structured pending clarification state as a hard constraint for decision safety.
+        if self._is_pending_clarification_active(context):
+            pending_intent = context.get("pending_intent") or "unknown"
+            pending_slots = context.get("pending_slots") or []
+            pending_question = context.get("pending_question") or ""
+            messages.append({
+                "role": "system",
+                "content": (
+                    "Pending clarification is active. "
+                    f"Intent: {pending_intent}. "
+                    f"Missing slots: {', '.join(pending_slots) if pending_slots else 'unspecified'}. "
+                    f"Assistant asked: {pending_question}. "
+                    "If user reply is short (for example, only an app name), treat it as the missing slot value. "
+                    "Do not execute or emit concrete commands until the missing detail is provided."
+                )
             })
 
         # Add conversation history if available
@@ -690,6 +763,49 @@ class ContextManager:
         if last_entities:
             return str(last_entities[-1]).lower()
         return ""
+
+    def _infer_pending_slots(self, assistant_response: str) -> List[str]:
+        """Infer likely missing slots from assistant clarification question text."""
+        text = (assistant_response or "").strip().lower()
+        if not text:
+            return []
+        if "which app" in text or "what app" in text or "which application" in text:
+            return ["app_name"]
+        if "which process" in text or "what process" in text:
+            return ["process_name"]
+        if "which song" in text or "what song" in text:
+            return ["song_name"]
+        if "which device" in text or "what device" in text:
+            return ["device_name"]
+        return []
+
+    def _next_pending_expiry_iso(self) -> str:
+        """Return ISO timestamp for pending clarification grace expiry."""
+        return (datetime.utcnow() + timedelta(seconds=self._pending_clarification_grace_seconds)).isoformat()
+
+    def _clear_pending_clarification(self, context: Dict[str, Any]):
+        """Clear pending clarification fields in-place."""
+        context["pending_clarification"] = False
+        context["pending_intent"] = None
+        context["pending_slots"] = []
+        context["pending_question"] = ""
+        context["pending_expires_at"] = None
+
+    def _is_pending_clarification_active(self, context: Dict[str, Any]) -> bool:
+        """Check whether pending clarification is still inside grace window."""
+        if not context.get("pending_clarification"):
+            return False
+
+        expires_at = context.get("pending_expires_at")
+        if not expires_at:
+            return True
+
+        try:
+            expires_dt = datetime.fromisoformat(str(expires_at))
+            return expires_dt > datetime.utcnow()
+        except Exception:
+            # If malformed, keep safe behavior and treat as active.
+            return True
 
 
 # Global context manager instance

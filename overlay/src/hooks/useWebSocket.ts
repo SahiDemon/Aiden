@@ -6,6 +6,7 @@ type OverlayState = 'listening' | 'thinking' | 'replying' | 'idle';
 interface VoiceActivity {
     status: VoiceActivityStatus;
     speaking: boolean;
+    active?: boolean;
 }
 
 interface Message {
@@ -19,6 +20,7 @@ interface UseWebSocketReturn {
     overlayState: OverlayState;
     currentText: string;
     userInput: string;
+    sessionActive: boolean;
 }
 
 export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocketReturn => {
@@ -26,12 +28,14 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocke
     const [overlayState, setOverlayState] = useState<OverlayState>('idle');
     const [currentText, setCurrentText] = useState('');
     const [userInput, setUserInput] = useState('');
+    const [sessionActive, setSessionActive] = useState(false);
 
     const wsRef = useRef<WebSocket | null>(null);
     const reconnectTimeoutRef = useRef<number | null>(null);
     const reconnectAttemptsRef = useRef(0);
     const isConnectingRef = useRef(false);
     const shouldReconnectRef = useRef(true);
+    const sessionActiveRef = useRef(false);
 
     const connect = useCallback(() => {
         if (!shouldReconnectRef.current) {
@@ -79,6 +83,8 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocke
                 setOverlayState('idle');
                 setCurrentText('');
                 setUserInput('');
+                setSessionActive(false);
+                sessionActiveRef.current = false;
 
                 if (!shouldReconnectRef.current) {
                     console.log('[Overlay WebSocket] Component unmounted, not reconnecting');
@@ -119,6 +125,15 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocke
                         case 'voice_activity': {
                             const voiceActivity: VoiceActivity = data.data;
 
+                            if (typeof voiceActivity.active === 'boolean') {
+                                setSessionActive(voiceActivity.active);
+                                sessionActiveRef.current = voiceActivity.active;
+                            }
+
+                            const activeNow = typeof voiceActivity.active === 'boolean'
+                                ? voiceActivity.active
+                                : sessionActiveRef.current;
+
                             if (voiceActivity.status === 'listening') {
                                 setOverlayState('listening');
                                 setUserInput('');
@@ -128,7 +143,11 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocke
                             } else if (voiceActivity.speaking) {
                                 setOverlayState('replying');
                             } else {
-                                setOverlayState('idle');
+                                if (activeNow) {
+                                    setOverlayState((prev) => (prev === 'idle' ? 'thinking' : prev));
+                                } else {
+                                    setOverlayState('idle');
+                                }
                             }
                             break;
                         }
@@ -137,6 +156,8 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocke
                             const speakingText = data.data?.text || '';
                             setCurrentText(speakingText);
                             setOverlayState('replying');
+                            setSessionActive(true);
+                            sessionActiveRef.current = true;
                             break;
                         }
 
@@ -203,6 +224,7 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocke
         overlayState,
         currentText,
         userInput,
+        sessionActive,
     };
 };
 

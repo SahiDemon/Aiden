@@ -74,9 +74,28 @@ class AidenAssistant:
             if not success:
                 if error == "timeout":
                     logger.info("No follow-up response - timeout")
-                    await self.tts.speak("Okay, let me know if you need anything.")
+                    await self.context_manager.refresh_pending_clarification_grace()
+                    retry_prompt = "I did not catch that. Please repeat briefly."
+                    try:
+                        context = await self.context_manager.get_context()
+                        if context.get("pending_clarification"):
+                            pending_slots = context.get("pending_slots") or []
+                            if "app_name" in pending_slots:
+                                retry_prompt = "I did not catch that. You can just say the app name."
+                            elif "process_name" in pending_slots:
+                                retry_prompt = "I did not catch that. You can just say the process name."
+                            elif "song_name" in pending_slots:
+                                retry_prompt = "I did not catch that. You can just say the song name."
+                            elif "device_name" in pending_slots:
+                                retry_prompt = "I did not catch that. You can just say the device name."
+                            else:
+                                retry_prompt = "I did not catch that. You can answer briefly."
+                    except Exception:
+                        pass
+                    await self.tts.speak(retry_prompt)
                 else:
                     logger.warning(f"STT failed during auto-listen: {error}")
+                    await self.context_manager.refresh_pending_clarification_grace()
                 return
             
             if not user_text:
@@ -247,7 +266,7 @@ class AidenAssistant:
         try:
             # Broadcast listening status
             from src.utils.websocket_broadcast import broadcast_voice_status
-            await broadcast_voice_status("listening", speaking=False)
+            await broadcast_voice_status("listening", speaking=False, active=True)
             
             # Step 1: Listen IMMEDIATELY (activation sound plays inside transcribe)
             # Don't wait for anything - just start listening!
@@ -259,7 +278,7 @@ class AidenAssistant:
             
             if not success:
                 # Broadcast idle status
-                await broadcast_voice_status("idle", speaking=False)
+                await broadcast_voice_status("idle", speaking=False, active=False)
                 if error == "timeout":
                     logger.info("No speech detected - timeout")
                 else:
@@ -270,7 +289,7 @@ class AidenAssistant:
             if not user_text:
                 logger.warning("Empty transcription")
                 # Broadcast idle status
-                await broadcast_voice_status("idle", speaking=False)
+                await broadcast_voice_status("idle", speaking=False, active=False)
                 return
             
             logger.info(f"USER: {user_text}")
@@ -287,7 +306,7 @@ class AidenAssistant:
                 pass  # Non-critical
             
             # Broadcast processing status
-            await broadcast_voice_status("processing", speaking=False)
+            await broadcast_voice_status("processing", speaking=False, active=True)
             
             # Step 2: Process with AI
             await self._process_user_message(user_text)
@@ -296,11 +315,11 @@ class AidenAssistant:
             logger.error(f"Error handling voice activation: {e}", exc_info=True)
             await self.tts.speak("Sorry, something went wrong.")
             # Broadcast idle status on error
-            await broadcast_voice_status("idle", speaking=False)
+            await broadcast_voice_status("idle", speaking=False, active=False)
         finally:
             self.is_processing = False
             # Broadcast idle status when conversation ends
-            await broadcast_voice_status("idle", speaking=False)
+            await broadcast_voice_status("idle", speaking=False, active=False)
             logger.info("=" * 60)
     
     async def handle_text_message(self, text: str) -> str:
@@ -395,6 +414,17 @@ class AidenAssistant:
             
             # Trust the AI's decision on whether to expect follow-up
             expecting_followup = ai_response.get("expecting_followup", False)
+
+            # Safety gate: if the AI is asking a clarification question, do not execute commands yet.
+            # This prevents accidental actions like launching placeholder apps while waiting for user detail.
+            if expecting_followup and commands:
+                logger.warning(
+                    "Safety gate triggered: blocking %d command(s) because follow-up clarification is pending",
+                    len(commands),
+                )
+                ai_response["blocked_commands"] = commands
+                commands = []
+                ai_response["commands"] = []
             
             # Execute commands concurrently if any
             if commands:

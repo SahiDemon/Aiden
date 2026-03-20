@@ -19,10 +19,10 @@ async def test_spotify_play_generic():
     print(f"Success: {success}")
     print(f"Response: {response}")
     
-    if response.get("message") == "Playing your Liked Songs on Spotify.":
-        print("PASS: Generic 'play' triggered Liked Songs.")
+    if "Starting Spotify playback" in response.get("message", "") or "Resuming your music" in response.get("message", ""):
+        print("PASS: Generic 'play' triggered playback.")
     else:
-        print("FAIL: Generic 'play' did NOT trigger Liked Songs.")
+        print("FAIL: Generic 'play' did NOT trigger playback.")
 
     print("\nTesting 'resume' action on Spotify (should just resume)...")
     success, response = await router.handle_media_command(
