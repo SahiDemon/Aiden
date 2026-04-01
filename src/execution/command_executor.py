@@ -322,6 +322,12 @@ class CommandExecutor:
                         logger.error(f"Invalid volume level: {level}")
                         return False, {"type": "audio", "message": "Invalid volume level."}
                     return await self.system_controller.control_volume("set_volume", numeric_level)
+                case "audio.set_output":
+                    target = params.get("target")
+                    if not target:
+                        logger.error("Audio target missing for set_output")
+                        return False, {"type": "audio", "message": "Audio target missing (speaker/headphone)."}
+                    return await self.system_controller.set_audio_output(target)
                 case "system.battery_status":
                     return await self.system_controller.get_battery_status()
                 case "system.cpu_usage":

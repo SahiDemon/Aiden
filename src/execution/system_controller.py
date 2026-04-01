@@ -10,6 +10,7 @@ import subprocess
 from pathlib import Path
 from typing import Optional, Tuple, List
 import shutil
+import re
 
 from src.utils.logger import get_logger
 from src.utils.system_parsers import (
@@ -389,6 +390,99 @@ class SystemController:
         else:
             msg = "Volume decreased."
         return True, {"type": "audio", "message": msg}
+
+    async def set_audio_output(self, target: str) -> tuple[bool, Optional[dict]]:
+        """Change the audio output device dynamically using Python heuristics."""
+        target = target.lower()
+        if target not in ["speaker", "headphone"]:
+            return False, {"type": "audio", "message": f"Unknown audio target: {target}"}
+
+        # 1. Get playback devices
+        ps_command = (
+            "if (-not (Get-Module -ListAvailable -Name AudioDeviceCmdlets)) {"
+            "Install-Module -Name AudioDeviceCmdlets -Scope CurrentUser -Force -ErrorAction SilentlyContinue;"
+            "}; "
+            "Import-Module AudioDeviceCmdlets; "
+            "$current = Get-AudioDevice -Playback; "
+            "$devices = Get-AudioDevice -List | ? Type -eq 'Playback' | Select-Object Name, Index, ID; "
+            "@{current=$current.ID; devices=$devices} | ConvertTo-Json -Depth 3"
+        )
+        success, stdout, stderr = self._run_command(["powershell", "-NoProfile", "-Command", ps_command])
+        
+        if not success or not stdout:
+            logger.error(f"Failed to query audio devices: {stderr}")
+            return False, {"type": "audio", "message": "Failed to query audio devices."}
+            
+        try:
+            # Extract JSON from stdout (ignoring initial loading bars etc.)
+            json_start = stdout.find('{')
+            json_end = stdout.rfind('}') + 1
+            if json_start == -1 or json_end == 0:
+                raise ValueError("No JSON found")
+            data = json.loads(stdout[json_start:json_end])
+            
+            current_id = data.get("current")
+            devices = data.get("devices", [])
+            if isinstance(devices, dict):  # ConvertTo-Json behavior with 1 item
+                devices = [devices]
+        except Exception as e:
+            logger.error(f"Failed to parse audio devices JSON: {e}\nStdout: {stdout}")
+            return False, {"type": "audio", "message": "Failed to parse audio devices."}
+
+        # 2. Filter real devices
+        real_devices = [
+            d for d in devices
+            if not re.search(r"(?i)fxsound|steam|nvidia|virtual|enhancer|ddk", d.get("Name", ""))
+        ]
+
+        selected_device = None
+        if target == "headphone":
+            for d in real_devices:
+                if re.search(r"(?i)head|ear|headset|buds|usb", d.get("Name", "")):
+                    selected_device = d
+                    break
+        elif target == "speaker":
+            speakers = [
+                d for d in real_devices
+                if re.search(r"(?i)speaker|line out|high definition audio|realtek", d.get("Name", ""))
+                and not re.search(r"(?i)digital|hdmi|head|ear|headset|buds|usb", d.get("Name", ""))
+            ]
+            
+            if speakers:
+                # Prefer current if it's already a suitable speaker to avoid needless switching
+                for s in speakers:
+                    if s.get("ID") == current_id:
+                        selected_device = s
+                        break
+                
+                # Otherwise, prefer non-digital
+                if not selected_device:
+                    for s in speakers:
+                        if not re.search(r"(?i)digital|hdmi", s.get("Name", "")):
+                            selected_device = s
+                            break
+                            
+                # Fallback to first
+                if not selected_device:
+                    selected_device = speakers[0]
+
+        if not selected_device:
+            return False, {"type": "audio", "message": f"Could not find a suitable {target}."}
+
+        if selected_device.get("ID") == current_id:
+            logger.info(f"Already using target audio device: {selected_device.get('Name')}")
+            return True, {"type": "audio", "message": f"Already using {selected_device.get('Name')}."}
+
+        # 3. Switch device
+        logger.info(f"Switching audio output to: {selected_device.get('Name')}")
+        switch_cmd = f"Import-Module AudioDeviceCmdlets; Set-AudioDevice -Index {selected_device.get('Index')}"
+        s_success, s_stdout, s_stderr = self._run_command(["powershell", "-NoProfile", "-Command", switch_cmd])
+        
+        if not s_success:
+            logger.error(f"Failed to switch to {selected_device.get('Name')}: {s_stderr}")
+            return False, {"type": "audio", "message": "Failed to execute switch command."}
+            
+        return True, {"type": "audio", "message": f"Switched audio to {selected_device.get('Name')}."}
 
     async def turn_off_screen(self) -> tuple[bool, Optional[dict]]:
         """Turn off displays using NirCmd."""

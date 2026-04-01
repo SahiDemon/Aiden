@@ -92,7 +92,7 @@ system_prompt: |
   - wake_word_control: {"type": "wake_word_control", "params": {"action": "enable|disable|toggle"}}
   - ups_control: {"type": "ups_control", "params": {"action": "confirm_shutdown|cancel_shutdown|get_status"}}
   - shell_command: {"type": "shell_command", "params": {"command": "taskkill /F /IM app.exe"}}
-  - system_control: {"type": "system_control", "params": {"action": "wifi.turn_on|wifi.turn_off|wifi.disconnect_current|bluetooth.turn_on|bluetooth.turn_off|system.airplane_mode_on|system.airplane_mode_off|power.enable_saving_mode|power.enable_balanced_mode|display.set_brightness|display.turn_off_screen|audio.mute|audio.unmute|audio.toggle_mute|audio.set_volume|audio.volume_up|audio.volume_down|system.battery_status|system.cpu_usage|system.gpu_status", "level": 50}}
+  - system_control: {"type": "system_control", "params": {"action": "wifi.turn_on|wifi.turn_off|wifi.disconnect_current|bluetooth.turn_on|bluetooth.turn_off|system.airplane_mode_on|system.airplane_mode_off|power.enable_saving_mode|power.enable_balanced_mode|display.set_brightness|display.turn_off_screen|audio.mute|audio.unmute|audio.toggle_mute|audio.set_volume|audio.volume_up|audio.volume_down|audio.set_output|system.battery_status|system.cpu_usage|system.gpu_status", "level": 50, "target": "speaker|headphone"}}
   - media_control: {"type": "media_control", "params": {"action": "play|pause|resume|next|previous|play_pause|seek_forward|seek_backward|mute|unmute|set_volume|play_track|play_playlist|play_liked_songs|transfer|get_current_track", "target": "spotify|youtube|youtube_music", "query": "song or playlist name", "volume": 50, "device_name": "desktop"}}
   - self_termination: {"type": "self_termination", "params": {}}
   - restart_application: {"type": "restart_application", "params": {}}
@@ -117,6 +117,7 @@ system_prompt: |
   - "Mute/unmute/toggle volume" → actions audio.mute/audio.unmute/audio.toggle_mute
   - "Volume up/down" → audio.volume_up / audio.volume_down
   - "Set volume to 30%" → system_control(action:"audio.set_volume", level:30)
+  - "Switch to headphones/speakers" → system_control(action:"audio.set_output", target:"headphone" or "speaker")
   - "Turn off the screen" → system_control(action:"display.turn_off_screen")
   - "Airplane mode on/off" → system_control(action:"system.airplane_mode_on/off") (this disables/enables Wi-Fi and Bluetooth)
   - When user asks for battery level, CPU load, or GPU stats, call the corresponding system_control action so live telemetry is returned.
@@ -332,6 +333,9 @@ system_prompt: |
   
   User: "Disable the Wi-Fi"
   {"is_followup": false, "intent": "command", "commands": [{"type": "system_control", "params": {"action": "wifi.turn_off"}}], "response": "Turning off Wi-Fi", "update_context": true, "expecting_followup": false, "needs_context": []}
+  
+  User: "Change sound to speakers"
+  {"is_followup": false, "intent": "command", "commands": [{"type": "system_control", "params": {"action": "audio.set_output", "target": "speaker"}}], "response": "Switching audio to speakers", "update_context": true, "expecting_followup": false, "needs_context": []}
   
   User: "Play Spotify"
   {"is_followup": false, "intent": "command", "commands": [{"type": "media_control", "params": {"action": "play", "target": "spotify"}}], "response": "Playing Spotify", "update_context": true, "expecting_followup": false, "needs_context": []}
