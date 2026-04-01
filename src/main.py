@@ -45,7 +45,12 @@ main_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
 def handle_activation(from_hotkey: bool = False):
-    """Handle voice activation (from wake word or hotkey)"""
+    """Handle voice activation (from wake word or hotkey).
+    
+    The outermost try/finally guarantees the wake word detector
+    is ALWAYS resumed, even if an unexpected error type escapes.
+    """
+    _resumed = False
     try:
         logger.info(f"[VOICE] Voice activation triggered! (from_hotkey={from_hotkey})")
         
@@ -57,9 +62,6 @@ def handle_activation(from_hotkey: bool = False):
         global main_loop
         if main_loop is None:
             logger.error("Main event loop not set yet!")
-            # Resume wake word detector
-            if wake_word_detector and wake_word_manager and wake_word_manager.is_enabled:
-                wake_word_detector.resume()
             return
         
         # Run the coroutine in the main loop from this thread
@@ -75,16 +77,23 @@ def handle_activation(from_hotkey: bool = False):
             logger.error("Voice activation timed out after 60 seconds")
         except Exception as e:
             logger.error(f"Error in voice activation: {e}", exc_info=True)
-        finally:
-            # ALWAYS resume wake word detector (only if enabled)
-            if wake_word_detector and wake_word_manager and wake_word_manager.is_enabled:
-                wake_word_detector.resume()
         
     except Exception as e:
         logger.error(f"Error handling activation: {e}", exc_info=True)
-        # Resume wake word detector even on error (only if enabled)
+    finally:
+        # GUARANTEED resume — no matter what exception path we took
         if wake_word_detector and wake_word_manager and wake_word_manager.is_enabled:
             wake_word_detector.resume()
+            _resumed = True
+            logger.debug("[VOICE] Wake word detector resumed after activation")
+        elif wake_word_detector and not wake_word_manager:
+            # Safety: if manager isn't initialized yet, still resume
+            wake_word_detector.resume()
+            _resumed = True
+            logger.debug("[VOICE] Wake word detector resumed (no manager)")
+        
+        if not _resumed:
+            logger.warning("[VOICE] Wake word detector was NOT resumed (disabled or missing)")
 
 
 def handle_toggle_wake_word():
@@ -169,19 +178,45 @@ async def initialize_services():
         # 3. Initialize wake word detector
         logger.info("Initializing wake word detector...")
         
+        def _fallback_to_vosk(error=None):
+            """Fallback to Vosk wake word detector (called from startup or watchdog thread)."""
+            global wake_word_detector
+            logger.info("⚠️ Falling back to Vosk wake word detector...")
+            try:
+                wake_word_detector = get_wake_word_detector(on_wake_word=handle_activation)
+                wake_word_detector.start()
+                logger.info("✅ Vosk wake word detector started (fallback)")
+                # Re-inject into wake word manager if it exists
+                if wake_word_manager:
+                    wake_word_manager.detector = wake_word_detector
+                    logger.info("Wake word manager updated with Vosk detector")
+            except Exception as vosk_err:
+                logger.error(f"Vosk fallback also failed: {vosk_err}", exc_info=True)
+        
         # Try Porcupine first (if enabled), fallback to Vosk
         if settings.speech.use_porcupine and settings.speech.porcupine_access_key:
             try:
                 logger.info("Using Porcupine wake word detector")
-                wake_word_detector = get_porcupine_detector(on_wake_word=handle_activation)
+                wake_word_detector = get_porcupine_detector(
+                    on_wake_word=handle_activation,
+                    on_permanent_failure=_fallback_to_vosk,
+                )
                 wake_word_detector.start()
-                logger.info("✅ Porcupine wake word detector started successfully")
+                
+                # Wait up to 5 seconds for Porcupine to actually initialize
+                # (it initializes inside its thread, so start() alone doesn't catch errors)
+                ready = wake_word_detector.wait_until_ready(timeout=5.0)
+                
+                if ready:
+                    logger.info("✅ Porcupine wake word detector started successfully")
+                else:
+                    logger.warning("⚠️ Porcupine failed to initialize — falling back to Vosk")
+                    wake_word_detector.stop()
+                    _fallback_to_vosk()
+                    
             except Exception as e:
                 logger.error(f"Failed to start Porcupine detector: {e}")
-                logger.info("⚠️ Falling back to Vosk wake word detector...")
-                wake_word_detector = get_wake_word_detector(on_wake_word=handle_activation)
-                wake_word_detector.start()
-                logger.info("✅ Vosk wake word detector started (fallback)")
+                _fallback_to_vosk()
         else:
             logger.info("Using Vosk wake word detector (Porcupine disabled or no access key)")
             wake_word_detector = get_wake_word_detector(on_wake_word=handle_activation)

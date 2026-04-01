@@ -1,4 +1,4 @@
-﻿# run_aiden.ps1 — Fixed Aiden launcher
+# run_aiden.ps1 — Fixed Aiden launcher
 param([switch]$Debug)
 
 # Use script directory as working directory

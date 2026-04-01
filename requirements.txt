@@ -74,3 +74,5 @@ httpx>=0.25.0  # For FastAPI testing
 black>=23.11.0
 flake8>=6.1.0
 mypy>=1.7.0
+
+webrtcvad-wheels>=2.0.14
