@@ -111,7 +111,26 @@ class STTEngine:
 
             # Run blocking listen operation in thread pool
             loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(None, self._listen_sync)
+            success, audio, error = await loop.run_in_executor(None, self._listen_sync)
+            
+            text = None
+            if success and audio:
+                from src.ai.groq_client import get_groq_client
+                groq_client = await get_groq_client()
+                try:
+                    text = await groq_client.transcribe_audio(audio.get_wav_data())
+                    if text:
+                        logger.info(f"STT: Recognized (Groq Whisper): '{text}'")
+                    else:
+                        logger.warning("STT: Empty recognition result")
+                        success = False
+                        error = "No speech detected"
+                except Exception as e:
+                    logger.error(f"STT: Groq API error: {e}")
+                    success = False
+                    error = f"Speech service error: {str(e)}"
+                    
+            result = (success, text, error)
 
             # Broadcast idle status after listening completes
             try:
@@ -239,7 +258,7 @@ class STTEngine:
 
         return sr.AudioData(audio_bytes, self.sample_rate, _SAMPLE_WIDTH)
 
-    def _listen_sync(self) -> Tuple[bool, Optional[str], Optional[str]]:
+    def _listen_sync(self) -> Tuple[bool, Optional[sr.AudioData], Optional[str]]:
         """Synchronous listen operation (runs in thread pool)"""
         try:
             mic_kwargs = {"sample_rate": self.sample_rate}
@@ -254,28 +273,10 @@ class STTEngine:
                 try:
                     audio = self._listen_with_vad(source)
                     logger.debug("STT: Audio captured via WebRTC VAD")
+                    return True, audio, None
                 except sr.WaitTimeoutError:
                     logger.info("STT: Timeout — no speech detected")
                     return False, None, "timeout"
-
-                # Recognize speech using Google's API
-                try:
-                    text = self.recognizer.recognize_google(audio, language=self.language)
-
-                    if text:
-                        logger.info(f"STT: Recognized: '{text}'")
-                        return True, text, None
-                    else:
-                        logger.warning("STT: Empty recognition result")
-                        return False, None, "No speech detected"
-
-                except sr.UnknownValueError:
-                    logger.warning("STT: Could not understand audio")
-                    return False, None, "Could not understand speech"
-
-                except sr.RequestError as e:
-                    logger.error(f"STT: API error: {e}")
-                    return False, None, f"Speech service error: {str(e)}"
 
         except Exception as e:
             logger.error(f"STT: Exception: {e}")

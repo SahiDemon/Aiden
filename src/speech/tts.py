@@ -443,6 +443,25 @@ class TTSEngine:
                     await asyncio.sleep(0.1)
         except Exception as e:
             logger.error(f"Error playing sound file: {e}")
+            
+    def stop(self):
+        """Stop current playback and clear the queue (Barge-in / Interruption)"""
+        logger.info("TTS: Stop requested (Barge-in)")
+        
+        # 1. Stop current audio
+        if PYGAME_AVAILABLE:
+            try:
+                pygame.mixer.music.stop()
+            except Exception as e:
+                logger.error(f"Error stopping mixer: {e}")
+                
+        # 2. Clear the queue
+        while not self.audio_queue.empty():
+            try:
+                self.audio_queue.get_nowait()
+                self.audio_queue.task_done()
+            except asyncio.QueueEmpty:
+                break
     
     async def wait_until_done(self, timeout: float = 10.0):
         """Wait for all queued audio to finish playing"""

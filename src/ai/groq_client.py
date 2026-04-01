@@ -251,6 +251,44 @@ class GroqClient:
         }, sort_keys=True)
         
         return hashlib.md5(context_str.encode()).hexdigest()
+        
+    async def transcribe_audio(self, audio_bytes: bytes) -> str:
+        """
+        Send raw WAV bytes to Groq's Whisper API.
+        This provides instantaneous transcription using Whisper Large V3.
+        """
+        try:
+            headers = {"Authorization": f"Bearer {self.settings.groq.api_key}"}
+            # We must use multipart form-data
+            files = {
+                "file": ("audio.wav", audio_bytes, "audio/wav")
+            }
+            data = {
+                "model": "whisper-large-v3",
+                "response_format": "json",
+                "language": "en" # hardcode English for fastest inference
+            }
+            
+            logger.debug(f"Sending audio ({len(audio_bytes)} bytes) to Groq Whisper API...")
+            
+            response = await self.client.post(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                headers=headers,
+                files=files,
+                data=data,
+                timeout=15.0
+            )
+            
+            response.raise_for_status()
+            result = response.json()
+            text = result.get("text", "").strip()
+            
+            logger.info(f"Groq STT Result: '{text}'")
+            return text
+            
+        except Exception as e:
+            logger.error(f"Groq Whisper API error: {e}")
+            raise
     
     async def close(self):
         """Close HTTP client"""

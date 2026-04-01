@@ -127,18 +127,12 @@ class MediaRouter:
             
             device_id = device["id"] if device else None
 
-            if action == "resume":
-                device_id = await self._activate_device(device, play=True)
-                if not device_id:
-                    await self.spotify_client.play()
-                return True, {"type": "spotify", "message": "Spotify playback resumed."}
-
-            if action == "play":
+            if action in ("play", "resume"):
                 # "Play something" -> Just resume what's there
                 device_id = await self._activate_device(device, play=True)
-                if not device_id:
-                    await self.spotify_client.play()
-                return True, {"type": "spotify", "message": "Starting Spotify playback."}
+                await self.spotify_client.play(device_id=device_id)
+                msg = "Spotify playback resumed." if action == "resume" else "Starting Spotify playback."
+                return True, {"type": "spotify", "message": msg}
 
             if action == "pause":
                 device_id = await self._activate_device(device, play=False)
@@ -176,8 +170,7 @@ class MediaRouter:
             if action == "play_liked_songs":
                 # Spotify API often fails on "spotify:collection:tracks" for desktop devices, so we just play what is current
                 device_id = await self._activate_device(device, play=True)
-                if not device_id:
-                    await self.spotify_client.play()
+                await self.spotify_client.play(device_id=device_id)
                 return True, {"type": "spotify", "message": "Resuming your music on Spotify."}
 
             logger.info(f"Checking action '{action}' for get_current_track")

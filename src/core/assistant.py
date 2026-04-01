@@ -39,6 +39,8 @@ class AidenAssistant:
         
         # State
         self.is_processing = False
+        self._speak_tasks = set()
+        self._current_request_task = None
         
         logger.info(f"Aiden Assistant initialized with {self.settings.app.llm_provider.upper()} LLM")
     
@@ -123,18 +125,40 @@ class AidenAssistant:
     
     async def _speak_async(self, text: str, wait: bool = False):
         """
-        Wrapper to speak asynchronously without blocking
+        Wrapper to speak asynchronously without blocking - streams by sentence
         
         Args:
             text: Text to speak
-            wait: If True, waits for TTS to complete (needed for follow-ups)
-        
-        Catches errors to prevent TTS from blocking execution
+            wait: If True, waits for TTS to complete 
         """
+        import asyncio
+        task = asyncio.current_task()
+        if task:
+            self._speak_tasks.add(task)
+            
         try:
-            await self.tts.speak(text)
+            import re
+            # Split text into sentences using regex, preserving punctuation
+            sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+|\n+', text) if s.strip()]
+            
+            if not sentences:
+                return
+
+            # By queuing sentences individually, Aiden begins playing the first
+            # sentence instantly while the rest are fetched in the background.
+            for sentence in sentences:
+                await self.tts.speak(sentence)
+
+            if wait:
+                await self.tts.wait_until_done()
+                
+        except asyncio.CancelledError:
+            logger.info("Background TTS chunking cancelled (barge-in)")
         except Exception as e:
             logger.error(f"Background TTS error (non-critical): {e}")
+        finally:
+            if task:
+                self._speak_tasks.discard(task)
     
     async def _enhance_response_with_feedback(
         self, 
@@ -257,13 +281,31 @@ class AidenAssistant:
         Args:
             from_hotkey: True if activated via hotkey (plays activation sound)
         """
-        if self.is_processing:
-            logger.warning("Already processing a request")
-            return
+        import asyncio
+        
+        # BARGE-IN: Cancel the main conversation task if one is currently processing
+        if self._current_request_task and not self._current_request_task.done():
+            logger.warning("Barge-in: Cancelling old request context")
+            self._current_request_task.cancel()
+            
+        self._current_request_task = asyncio.current_task()
+            
+        # BARGE-IN: Cancel any currently downloading TTS sentences
+        for task in list(self._speak_tasks):
+            if not task.done():
+                task.cancel()
+        self._speak_tasks.clear()
+        
+        # BARGE-IN: Stop any currently playing audio instantly
+        self.tts.stop()
         
         self.is_processing = True
         
         try:
+            # Wait 400ms to allow PyAudio/WASAPI buffers to clear and acoustic echo to dissipate
+            # This PREVENTS the STT from accidentally hearing the last split-second of Aiden's previous response
+            await asyncio.sleep(0.4)
+            
             # Broadcast listening status
             from src.utils.websocket_broadcast import broadcast_voice_status
             await broadcast_voice_status("listening", speaking=False, active=True)
