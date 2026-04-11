@@ -1,4 +1,4 @@
-param([switch]$Debug)
+﻿param([switch]$Debug)
 
 # Use script directory as working directory
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
@@ -53,7 +53,7 @@ if (-not (Test-Path $dashboardIndex)) {
         exit 1
     }
     Pop-Location
-    Write-Host "✓ Dashboard build complete" -ForegroundColor Green
+    Write-Host "[] Dashboard build complete" -ForegroundColor Green
 }
 
 Write-Host "Dashboard will be served from http://localhost:5000" -ForegroundColor Cyan

@@ -512,20 +512,25 @@ class ContextManager:
             try:
                 from src.utils.system_context import get_system_context
                 sys_ctx = get_system_context()
-                # Token-optimized: include only top fuzzy matches related to user's request
                 system_context_str = "\n\n## RELEVANT SYSTEM CONTEXT\n"
                 
                 query_hint = self._extract_query_from_text(user_text, context)
+                if not query_hint and context.get("expecting_followup"):
+                    t = (user_text or "").strip()
+                    if 2 < len(t) < 160:
+                        query_hint = t.lower()
+                apps_section = ""
+                proc_section = ""
+                proc_list: List[str] = []
                 
                 if "installed_apps" in needs_context:
                     if query_hint:
                         app_info = await sys_ctx.find_app(query_hint)
                         if app_info:
-                            system_context_str += "Installed app match: "
+                            apps_section += "Installed app match: "
                             display_name = app_info.get("display_name") or app_info.get("name") or query_hint
                             exe_path = app_info.get("exe_path", "")
                             install_path = app_info.get("install_path", "")
-                            # Try include Steam appid if applicable
                             steam_appid = None
                             try:
                                 from src.execution.app_launcher import get_app_launcher
@@ -534,28 +539,72 @@ class ContextManager:
                             except Exception:
                                 steam_appid = None
                             appid_str = f" | steam_appid: {steam_appid}" if steam_appid else ""
-                            system_context_str += f"{display_name} | exe: {exe_path} | path: {install_path}{appid_str}\n"
+                            apps_section += f"{display_name} | exe: {exe_path} | path: {install_path}{appid_str}\n"
                         else:
-                            system_context_str += f"No installed app match found for '{query_hint}'.\n"
+                            apps_section += f"No installed app match found for '{query_hint}'.\n"
                     else:
-                        system_context_str += "No app query inferred from user text.\n"
+                        apps_section += "No app query inferred from user text.\n"
                 
                 if "running_processes" in needs_context:
-                    if query_hint:
+                    all_procs = await sys_ctx.get_ai_context()
+                    proc_list = all_procs.get("running_processes", [])
+                    hint_block = ""
+                    if query_hint and not self._is_vague_query(user_text):
                         matches = await sys_ctx.find_process(query_hint)
                         if matches:
-                            top_matches = matches[:3]
-                            system_context_str += "Process matches: "
-                            descs = [f"{m.get('name','Unknown')} (PID {m.get('pid')}, {m.get('status','?')})" for m in top_matches]
-                            system_context_str += ", ".join(descs) + "\n"
-                        else:
-                            system_context_str += f"No running process match found for '{query_hint}'.\n"
-                    else:
-                        system_context_str += "No process query inferred from user text.\n"
+                            descs = [
+                                f"{m.get('name', 'Unknown')} (PID: {m.get('pid')})"
+                                for m in matches[:8]
+                            ]
+                            hint_block = (
+                                "Heuristic name/path matches for inferred query "
+                                f"'{query_hint}' (speech may be wrong — verify in table): "
+                                + "; ".join(descs) + "\n\n"
+                            )
+                    proc_section = (
+                        hint_block
+                        + "Running processes — choose kill_process targets ONLY from rows below. "
+                        "Use the exact `Name.exe (PID: N)` from a row. "
+                        "Match user phrases (game title, 'music player', etc.) using exe name AND "
+                        "the path tail after |.\n"
+                        + "\n".join(proc_list)
+                        + "\n"
+                    )
                 
-                # Hard cap to avoid token bloat from system context
-                if len(system_context_str) > 1500:
-                    system_context_str = system_context_str[:1497] + "..."
+                _MAX_APPS_CTX = 2500
+                _MAX_PROC_CTX = 28000
+                if len(apps_section) > _MAX_APPS_CTX:
+                    apps_section = apps_section[: _MAX_APPS_CTX - 3] + "..."
+                if len(proc_section) > _MAX_PROC_CTX:
+                    proc_section = proc_section[: _MAX_PROC_CTX - 3] + "..."
+                
+                system_context_str += apps_section + proc_section
+                
+                # #region agent log
+                try:
+                    import json as _json
+                    import time as _time
+                    _log_payload = {
+                        "sessionId": "a7b452",
+                        "timestamp": int(_time.time() * 1000),
+                        "location": "context_manager.py:build_messages",
+                        "message": "system_context_sizes",
+                        "hypothesisId": "H1_H2",
+                        "data": {
+                            "needs_context": needs_context,
+                            "proc_lines": len(proc_list) if "running_processes" in needs_context else 0,
+                            "apps_chars": len(apps_section),
+                            "proc_chars": len(proc_section),
+                            "total_chars": len(system_context_str),
+                            "query_hint": (query_hint or "")[:80],
+                        },
+                    }
+                    with open("debug-a7b452.log", "a", encoding="utf-8") as _df:
+                        _df.write(_json.dumps(_log_payload) + "\n")
+                except Exception:
+                    pass
+                # #endregion
+                
                 logger.debug(f"System context provided: {needs_context}")
             
             except Exception as e:
@@ -599,8 +648,8 @@ class ContextManager:
                     f"Intent: {pending_intent}. "
                     f"Missing slots: {', '.join(pending_slots) if pending_slots else 'unspecified'}. "
                     f"Assistant asked: {pending_question}. "
-                    "If user reply is short (for example, only an app name), treat it as the missing slot value. "
-                    "Do not execute or emit concrete commands until the missing detail is provided."
+                    "If user reply is short (for example, only an app name), treat it as the missing slot value and COMPLETE the original action. "
+                    "For example, if the original intent was to CLOSE an app and the user gives a name, you MUST close it — NOT open or launch it."
                 )
             })
 
@@ -738,6 +787,18 @@ class ContextManager:
             logger.debug(f"AI summarization failed: {e}")
             return ""
 
+    def _is_vague_query(self, user_text: str) -> bool:
+        """Return True if the user's request is semantically vague (e.g. 'the app playing music')."""
+        text = (user_text or "").lower()
+        vague_patterns = [
+            "playing music", "playing audio", "playing sound",
+            "music player", "my music", "close my music",
+            "my game", "my browser", "my editor", "my chat app",
+            "that app", "the app",
+            "running game", "current game", "the game", "a game",
+        ]
+        return any(p in text for p in vague_patterns)
+
     def _extract_query_from_text(self, user_text: str, context: Dict[str, Any]) -> str:
         """
         Infer a simple query string (likely app or process name) from user text/history.
@@ -756,8 +817,9 @@ class ContextManager:
             if m:
                 candidate = m.group(1).strip()
                 # trim common extras
-                candidate = re.sub(r"\b(app|application|program)\b", "", candidate).strip()
-                return candidate
+                candidate = re.sub(r"\b(app|application|program|the|that|is|playing|music|audio|sound|my|game|browser)\b", "", candidate).strip()
+                if candidate:
+                    return candidate
         # Fallback to last_entities
         last_entities = context.get("last_entities") or []
         if last_entities:
@@ -775,6 +837,8 @@ class ContextManager:
             return ["process_name"]
         if "which song" in text or "what song" in text:
             return ["song_name"]
+        if "which game" in text or "what game" in text:
+            return ["process_name"]
         if "which device" in text or "what device" in text:
             return ["device_name"]
         return []

@@ -3,8 +3,11 @@ Main Aiden Assistant Orchestrator
 Coordinates all components for intelligent voice interaction
 """
 import asyncio
+import json
 import logging
-from typing import Optional, List, Dict, Any
+import re
+import time
+from typing import Optional, List, Dict, Any, Tuple
 
 from src.ai.groq_client import get_groq_client
 from src.ai.gemini_client import get_gemini_client
@@ -43,7 +46,133 @@ class AidenAssistant:
         self._current_request_task = None
         
         logger.info(f"Aiden Assistant initialized with {self.settings.app.llm_provider.upper()} LLM")
-    
+
+    async def _maybe_apply_vague_close_heuristic(
+        self,
+        user_text: str,
+        needs_context: List[str],
+        ai_response: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        If the user asked to close a vague 'game' or 'music player' and the LLM only asked a question,
+        pick a kill target from the running-process table (singleton) or list concrete candidates.
+        """
+        if not ai_response or "running_processes" not in (needs_context or []):
+            return ai_response
+        if ai_response.get("commands"):
+            return ai_response
+
+        ut = (user_text or "").lower()
+        wants_game = bool(
+            re.search(
+                r"\b(close|kill|end|quit|stop|force\s*quit)\s+(my|the|this)?\s*game\b",
+                ut,
+            )
+        ) or ("close" in ut and "my game" in ut)
+        wants_music = bool(
+            re.search(
+                r"\b(close|kill|end|quit|stop)\s+.*\b(music\s*player|my\s+music|app\s+playing\s+music|the\s+music\s+app)\b",
+                ut,
+            )
+        ) or ("close" in ut and "playing music" in ut)
+
+        if not wants_game and not wants_music:
+            return ai_response
+
+        from src.utils.system_context import get_system_context
+
+        lines = (await get_system_context().get_ai_context()).get("running_processes") or []
+
+        def parse_pid_rows(tag: str) -> List[Tuple[str, int, str]]:
+            rows: List[Tuple[str, int, str]] = []
+            for line in lines:
+                if tag not in line:
+                    continue
+                m = re.match(r"^(.+?)\s+\(PID:\s*(\d+)\)", line.strip())
+                if m:
+                    rows.append((m.group(1).strip(), int(m.group(2)), line))
+            return rows
+
+        path_markers = (
+            "steamapps",
+            "epic games",
+            "riot games",
+            "ubisoft",
+            "ea games",
+            "electronic arts",
+            "battle.net",
+            "gog ",
+            "xboxgames",
+            "rockstar games",
+        )
+
+        def parse_rows_from_path_hints() -> List[Tuple[str, int, str]]:
+            rows: List[Tuple[str, int, str]] = []
+            for line in lines:
+                low = line.lower()
+                if not any(m in low for m in path_markers):
+                    continue
+                m = re.match(r"^(.+?)\s+\(PID:\s*(\d+)\)", line.strip())
+                if m:
+                    rows.append((m.group(1).strip(), int(m.group(2)), line))
+            return rows
+
+        candidates: List[Tuple[str, int, str]] = []
+        if wants_game:
+            candidates = parse_pid_rows("[game]")
+            if not candidates:
+                candidates = parse_rows_from_path_hints()
+        elif wants_music:
+            candidates = parse_pid_rows("[media/music]")
+
+        # #region agent log
+        try:
+            with open("debug-a7b452.log", "a", encoding="utf-8") as _df:
+                _df.write(
+                    json.dumps(
+                        {
+                            "sessionId": "a7b452",
+                            "timestamp": int(time.time() * 1000),
+                            "location": "assistant.py:_maybe_apply_vague_close_heuristic",
+                            "message": "vague_close_heuristic",
+                            "hypothesisId": "H5",
+                            "data": {
+                                "wants_game": wants_game,
+                                "wants_music": wants_music,
+                                "candidate_count": len(candidates),
+                                "llm_had_commands": bool(ai_response.get("commands")),
+                            },
+                        }
+                    )
+                    + "\n"
+                )
+        except Exception:
+            pass
+        # #endregion
+
+        if len(candidates) == 1:
+            name, pid, _ = candidates[0]
+            out = dict(ai_response)
+            out["commands"] = [{"type": "kill_process", "params": {"name": f"{name} (PID: {pid})"}}]
+            out["response"] = f"Closing {name}."
+            out["expecting_followup"] = False
+            out["intent"] = "command"
+            logger.info(f"Vague close heuristic: killing singleton {name} (PID {pid})")
+            return out
+
+        if len(candidates) > 1:
+            kind = "games" if wants_game else "music apps"
+            names = [c[0] for c in candidates[:6]]
+            out = dict(ai_response)
+            out["commands"] = []
+            out["response"] = f"I see several {kind} running: {', '.join(names)}. Which one should I close?"
+            out["expecting_followup"] = True
+            out["intent"] = "command"
+            logger.info("Vague close heuristic: listed multiple candidates for user choice")
+            return out
+
+        return ai_response
+
     async def _ensure_llm_client(self):
         """Lazy initialize LLM client based on provider setting"""
         if self.llm_client is None:
@@ -432,6 +561,11 @@ class AidenAssistant:
                 # No additional context needed, use Pass 1 response
                 logger.info("✅ No additional context needed")
                 ai_response = ai_response_pass1
+
+            if needs_context and "running_processes" in needs_context:
+                ai_response = await self._maybe_apply_vague_close_heuristic(
+                    user_text, needs_context, ai_response
+                )
             
             # Parse AI response
             intent = ai_response.get("intent", "unknown")
@@ -524,20 +658,13 @@ class AidenAssistant:
                         esp32_feedback = esp32_feedback.get("message", "")
                     logger.info(f"📡 ESP32 Response: {esp32_feedback}")
                 
-                # Check for failures and update response
+                # Check for failures - log them but DON'T replace the spoken response with raw API errors
                 failed = [r for r in execution_results if not r.get("success", False)]
-                failure_messages = [
-                    (r.get("response_data") or {}).get("message")
-                    for r in failed
-                    if isinstance(r.get("response_data"), dict) and r.get("response_data", {}).get("message")
-                ]
-                if failure_messages:
-                    response_text = " ".join(failure_messages)
-                elif failed:
-                    logger.warning(f"Command execution failures: {failed}")
-                    errors = [r.get("error") for r in failed if r.get("error")]
-                    if any("Connection failed" in str(e) or "Timeout" in str(e) for e in errors):
-                        response_text = "I couldn't reach the ESP32. Please check if it's powered on and connected to the network."
+                if failed:
+                    for r in failed:
+                        err_payload = r.get("response_data")
+                        err_msg = (err_payload or {}).get("message") if isinstance(err_payload, dict) else None
+                        logger.warning(f"Command failed ({r.get('command')}): {err_msg or r.get('error')}")
                 
                 if should_delay_response:
                     if expecting_followup:

@@ -128,9 +128,13 @@ class MediaRouter:
             device_id = device["id"] if device else None
 
             if action in ("play", "resume"):
-                # "Play something" -> Just resume what's there
+                # Activate device. If it was inactive, transfer_playback(play=True) already starts
+                # playback — calling play() again immediately causes a 403 Restriction Violated.
+                was_inactive = device and not device.get("is_active")
                 device_id = await self._activate_device(device, play=True)
-                await self.spotify_client.play(device_id=device_id)
+                if not was_inactive:
+                    # Device was already active — safe to also call play() to resume
+                    await self.spotify_client.play(device_id=device_id)
                 msg = "Spotify playback resumed." if action == "resume" else "Starting Spotify playback."
                 return True, {"type": "spotify", "message": msg}
 

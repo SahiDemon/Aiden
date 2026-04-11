@@ -298,7 +298,8 @@ class GeminiClient:
                 "commands": parsed.get("commands", []),
                 "response": parsed.get("response", "Done"),
                 "update_context": parsed.get("update_context", True),
-                "expecting_followup": parsed.get("expecting_followup", False)
+                "expecting_followup": parsed.get("expecting_followup", False),
+                "needs_context": parsed.get("needs_context", [])
             }
             
             return response
