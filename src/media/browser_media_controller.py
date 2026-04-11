@@ -31,6 +31,15 @@ try:
 except ImportError:  # pragma: no cover - non-Windows environments
     WIN32_AVAILABLE = False
 
+try:
+    import comtypes
+    from comtypes import COMMETHOD, GUID, HRESULT, IUnknown, POINTER
+    from ctypes import c_float, c_int
+
+    COMTYPES_AVAILABLE = True
+except ImportError:  # pragma: no cover - optional runtime dependency
+    COMTYPES_AVAILABLE = False
+
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -88,6 +97,98 @@ class BrowserWindow:
     handle: int
     title: str
     process_name: str
+    process_id: int
+
+
+if COMTYPES_AVAILABLE:
+    class IMMDevice(IUnknown):
+        _iid_ = GUID("{D666063F-1587-4E43-81F1-B948E807363F}")
+        _methods_ = [
+            COMMETHOD([], HRESULT, "Activate",
+                      (["in"], POINTER(GUID), "iid"),
+                      (["in"], c_int, "dwClsCtx"),
+                      (["in"], POINTER(IUnknown), "pActivationParams"),
+                      (["out", "retval"], POINTER(POINTER(IUnknown)), "ppInterface")),
+        ]
+
+
+    class IMMDeviceEnumerator(IUnknown):
+        _iid_ = GUID("{A95664D2-9614-4F35-A746-DE8DB63617E6}")
+        _methods_ = [
+            COMMETHOD([], HRESULT, "EnumAudioEndpoints"),
+            COMMETHOD([], HRESULT, "GetDefaultAudioEndpoint",
+                      (["in"], c_int, "dataFlow"),
+                      (["in"], c_int, "role"),
+                      (["out", "retval"], POINTER(POINTER(IMMDevice)), "ppEndpoint")),
+        ]
+
+
+    class IAudioMeterInformation(IUnknown):
+        _iid_ = GUID("{C02216F6-8C67-4B5B-9D00-D008E73E0064}")
+        _methods_ = [
+            COMMETHOD([], HRESULT, "GetPeakValue",
+                      (["out", "retval"], POINTER(c_float), "pfPeak")),
+        ]
+
+
+    class IAudioSessionControl(IUnknown):
+        _iid_ = GUID("{F4B1A599-7266-4319-A8CA-E70ACB11E8CD}")
+        _methods_ = [
+            COMMETHOD([], HRESULT, "GetState",
+                      (["out", "retval"], POINTER(c_int), "pRetVal")),
+        ]
+
+
+    class IAudioSessionControl2(IAudioSessionControl):
+        _iid_ = GUID("{BFB7FF88-7239-4FC9-8FA2-07C950BE9C6D}")
+        _methods_ = IAudioSessionControl._methods_ + [
+            COMMETHOD([], HRESULT, "GetDisplayName"),
+            COMMETHOD([], HRESULT, "SetDisplayName"),
+            COMMETHOD([], HRESULT, "GetIconPath"),
+            COMMETHOD([], HRESULT, "SetIconPath"),
+            COMMETHOD([], HRESULT, "GetGroupingParam"),
+            COMMETHOD([], HRESULT, "SetGroupingParam"),
+            COMMETHOD([], HRESULT, "RegisterAudioSessionNotification"),
+            COMMETHOD([], HRESULT, "UnregisterAudioSessionNotification"),
+            COMMETHOD([], HRESULT, "GetSessionIdentifier"),
+            COMMETHOD([], HRESULT, "GetSessionInstanceIdentifier"),
+            COMMETHOD([], HRESULT, "GetProcessId",
+                      (["out", "retval"], POINTER(c_int), "pRetVal")),
+            COMMETHOD([], HRESULT, "IsSystemSoundsSession"),
+            COMMETHOD([], HRESULT, "SetDuckingPreference"),
+        ]
+
+
+    class IAudioSessionEnumerator(IUnknown):
+        _iid_ = GUID("{E2F5BB11-0570-40CA-ACDD-3AA01277DEE8}")
+        _methods_ = [
+            COMMETHOD([], HRESULT, "GetCount",
+                      (["out", "retval"], POINTER(c_int), "SessionCount")),
+            COMMETHOD([], HRESULT, "GetSession",
+                      (["in"], c_int, "SessionCount"),
+                      (["out", "retval"], POINTER(POINTER(IAudioSessionControl)), "Session")),
+        ]
+
+
+    class IAudioSessionManager2(IUnknown):
+        _iid_ = GUID("{77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F}")
+        _methods_ = [
+            COMMETHOD([], HRESULT, "GetAudioSessionControl"),
+            COMMETHOD([], HRESULT, "GetSimpleAudioVolume"),
+            COMMETHOD([], HRESULT, "GetSessionEnumerator",
+                      (["out", "retval"], POINTER(POINTER(IAudioSessionEnumerator)), "SessionEnum")),
+            COMMETHOD([], HRESULT, "RegisterSessionNotification"),
+            COMMETHOD([], HRESULT, "UnregisterSessionNotification"),
+            COMMETHOD([], HRESULT, "RegisterDuckNotification"),
+            COMMETHOD([], HRESULT, "UnregisterDuckNotification"),
+        ]
+
+
+    CLSID_MMDeviceEnumerator = GUID("{BCDE0395-E52F-467C-8E3D-C4579291692E}")
+    E_RENDER = 0
+    E_MULTIMEDIA = 1
+    AUDIO_SESSION_STATE_ACTIVE = 1
+    AUDIO_ACTIVITY_THRESHOLD = 0.0005
 
 
 def score_window_title(title: str, target: Optional[str]) -> int:
@@ -127,6 +228,14 @@ class BrowserMediaController:
     async def control(self, action: str, target: Optional[str] = None, query: Optional[str] = None) -> Tuple[bool, dict]:
         """Execute a media action (play/pause/etc.) for the target browser tab."""
         return await asyncio.to_thread(self._control_sync, action.lower(), target, query)
+
+    async def duck_for_listening(self) -> dict:
+        """Best-effort pause of active browser media while STT is listening."""
+        return await asyncio.to_thread(self._duck_for_listening_sync)
+
+    async def restore_after_listening(self, state: Optional[dict]) -> None:
+        """Resume browser media that we paused for STT."""
+        await asyncio.to_thread(self._restore_after_listening_sync, state or {})
 
     def _control_sync(self, action: str, target: Optional[str], query: Optional[str] = None) -> Tuple[bool, dict]:
         if not WIN32_AVAILABLE:
@@ -264,6 +373,124 @@ class BrowserMediaController:
             "message": f"{action_desc.title()} command sent to {target_desc.title()} tab.",
         }
 
+    def _duck_for_listening_sync(self) -> dict:
+        if not WIN32_AVAILABLE or not psutil:
+            return {"toggled_handles": []}
+
+        toggled_handles: List[int] = []
+        for window in self._get_duck_candidates():
+            if self._send_appcommand(window.handle, "play_pause"):
+                logger.info(f"Paused browser media for STT: {window.title}")
+                toggled_handles.append(window.handle)
+
+        return {"toggled_handles": toggled_handles}
+
+    def _restore_after_listening_sync(self, state: dict) -> None:
+        if not WIN32_AVAILABLE:
+            return
+
+        for handle in state.get("toggled_handles", []):
+            try:
+                if win32gui.IsWindow(handle):
+                    if self._send_appcommand(handle, "play_pause"):
+                        logger.info(f"Restored browser media after STT for window {handle}")
+            except Exception as exc:
+                logger.debug(f"Skipping browser media restore for window {handle}: {exc}")
+
+    def _get_duck_candidates(self) -> List[BrowserWindow]:
+        """Choose the most likely active browser media windows to pause/resume."""
+        windows = self._enumerate_browser_windows()
+        active_audio_pids = self._get_active_browser_audio_pids()
+        if not active_audio_pids:
+            logger.debug("No active browser audio sessions detected; skipping browser ducking.")
+            return []
+
+        windows = [window for window in windows if window.process_id in active_audio_pids]
+        candidates: List[BrowserWindow] = []
+        seen_handles: set[int] = set()
+
+        for target in ("youtube_music", "youtube"):
+            scored = self._score_windows(windows, target)
+            if not scored:
+                continue
+            window = scored[0][1]
+            if window.handle not in seen_handles:
+                seen_handles.add(window.handle)
+                candidates.append(window)
+
+        return candidates
+
+    def _get_active_browser_audio_pids(self) -> set[int]:
+        """Return browser process IDs that are actively producing audible output."""
+        if not COMTYPES_AVAILABLE or not psutil:
+            logger.debug("Browser audio-session detection unavailable.")
+            return set()
+
+        active_pids: set[int] = set()
+
+        try:
+            comtypes.CoInitialize()
+        except Exception:
+            pass
+
+        try:
+            enumerator = comtypes.CoCreateInstance(
+                CLSID_MMDeviceEnumerator,
+                interface=IMMDeviceEnumerator,
+                clsctx=comtypes.CLSCTX_ALL,
+            )
+            device = enumerator.GetDefaultAudioEndpoint(E_RENDER, E_MULTIMEDIA)
+            session_manager_unknown = device.Activate(
+                IAudioSessionManager2._iid_,
+                comtypes.CLSCTX_ALL,
+                None,
+            )
+            session_manager = session_manager_unknown.QueryInterface(IAudioSessionManager2)
+            session_enum = session_manager.GetSessionEnumerator()
+            session_count = session_enum.GetCount()
+
+            for index in range(session_count):
+                try:
+                    session = session_enum.GetSession(index)
+                    session_control = session.QueryInterface(IAudioSessionControl2)
+                    if session_control.GetState() != AUDIO_SESSION_STATE_ACTIVE:
+                        continue
+
+                    pid = int(session_control.GetProcessId() or 0)
+                    if not pid:
+                        continue
+
+                    try:
+                        process = psutil.Process(pid)
+                        process_name = process.name().lower()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        continue
+
+                    if process_name not in BROWSER_PROCESS_NAMES:
+                        continue
+
+                    peak = 0.0
+                    try:
+                        meter = session.QueryInterface(IAudioMeterInformation)
+                        peak = float(meter.GetPeakValue())
+                    except Exception:
+                        peak = 0.0
+
+                    if peak > AUDIO_ACTIVITY_THRESHOLD:
+                        active_pids.add(pid)
+                except Exception as exc:
+                    logger.debug(f"Skipping browser audio session during inspection: {exc}")
+        except Exception as exc:
+            logger.debug(f"Browser audio session inspection failed: {exc}")
+            return set()
+        finally:
+            try:
+                comtypes.CoUninitialize()
+            except Exception:
+                pass
+
+        return active_pids
+
     def _find_window(self, target: Optional[str]) -> Optional[BrowserWindow]:
         windows = self._enumerate_browser_windows()
         if target:
@@ -312,7 +539,7 @@ class BrowserMediaController:
             if name not in BROWSER_PROCESS_NAMES:
                 return True
 
-            results.append(BrowserWindow(handle=hwnd, title=title, process_name=name))
+            results.append(BrowserWindow(handle=hwnd, title=title, process_name=name, process_id=process_id))
             return True
 
         win32gui.EnumWindows(callback, None)

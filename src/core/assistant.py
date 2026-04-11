@@ -11,6 +11,7 @@ from typing import Optional, List, Dict, Any, Tuple
 
 from src.ai.groq_client import get_groq_client
 from src.ai.gemini_client import get_gemini_client
+from src.ai.ollama_client import get_ollama_client
 from src.core.context_manager import get_context_manager
 from src.execution.command_executor import get_command_executor
 from src.speech.stt import get_stt_engine
@@ -44,6 +45,7 @@ class AidenAssistant:
         self.is_processing = False
         self._speak_tasks = set()
         self._current_request_task = None
+        self._is_listening = False
         
         logger.info(f"Aiden Assistant initialized with {self.settings.app.llm_provider.upper()} LLM")
 
@@ -179,9 +181,12 @@ class AidenAssistant:
             if self.settings.app.llm_provider == "gemini":
                 logger.info("Initializing Google Gemini client...")
                 self.llm_client = await get_gemini_client()
-            else:  # groq
+            elif self.settings.app.llm_provider == "groq":
                 logger.info("Initializing Groq client...")
                 self.llm_client = await get_groq_client()
+            else:
+                logger.info("Initializing Ollama client...")
+                self.llm_client = await get_ollama_client()
         return self.llm_client
     
     async def _auto_listen_for_followup(self):
@@ -249,6 +254,9 @@ class AidenAssistant:
             # Process the follow-up message
             await self._process_user_message(user_text)
             
+        except asyncio.CancelledError:
+            logger.info("Auto-listen follow-up cancelled")
+            raise
         except Exception as e:
             logger.error(f"Error during auto-listen: {e}", exc_info=True)
     
@@ -309,25 +317,20 @@ class AidenAssistant:
         try:
             llm = await self._ensure_llm_client()
             
-            # Load enhancement prompt from prompts.yaml
-            from pathlib import Path
-            import yaml
-            
-            enhancement_prompt = "You are a voice assistant. Convert device responses to natural speech."
+            from src.utils.prompt_loader import get_prompt
+
+            enhancement_template = get_prompt(
+                "enhancement_prompt",
+                "You are a voice assistant. Convert device responses to natural speech.",
+            )
+            enhancement_prompt = enhancement_template
             try:
-                prompts_file = Path("config/prompts.yaml")
-                if prompts_file.exists():
-                    with open(prompts_file, 'r', encoding='utf-8') as f:
-                        prompts = yaml.safe_load(f)
-                        enhancement_template = prompts.get("enhancement_prompt", "")
-                        if enhancement_template:
-                            # Fill in the template
-                            enhancement_prompt = enhancement_template.format(
-                                user_request=user_text,
-                                device_response=esp32_feedback
-                            )
-            except Exception as e:
-                logger.warning(f"Could not load enhancement_prompt from prompts.yaml: {e}")
+                enhancement_prompt = enhancement_template.format(
+                    user_request=user_text,
+                    device_response=esp32_feedback
+                )
+            except Exception:
+                pass
             
             # Build messages for AI - use direct API call instead of chat()
             # because chat() forces JSON response format which we don't need here
@@ -401,6 +404,112 @@ class AidenAssistant:
             return base_text
         addition = " ".join(status_messages)
         return f"{base_text.strip()} {addition}".strip() if base_text else addition
+
+    def _describe_failed_action(self, result: Dict[str, Any]) -> str:
+        """Create a short, honest user-facing message for a failed command."""
+        data = result.get("response_data")
+        if isinstance(data, dict):
+            data_type = (data.get("type") or "").strip().lower()
+            message = (data.get("message") or "").strip()
+
+            if data_type == "spotify":
+                params = result.get("params") or {}
+                action = (params.get("action") or "").lower()
+                query = params.get("query")
+
+                if action == "play_track" and query:
+                    return f"I couldn't play {query} on Spotify."
+                if action == "play_playlist" and query:
+                    return f"I couldn't play the playlist {query} on Spotify."
+                if action in {"play", "resume", "play_liked_songs"}:
+                    return "I couldn't start Spotify playback."
+                if action == "pause":
+                    return "I couldn't pause Spotify."
+                if action == "transfer":
+                    return "I couldn't move Spotify to that device."
+                return message or "I couldn't complete that on Spotify."
+
+            if data_type == "browser_media":
+                params = result.get("params") or {}
+                action = (params.get("action") or "").lower()
+                target = (params.get("target") or "browser media").replace("_", " ")
+
+                if action in {"play", "resume", "play_pause"}:
+                    return f"I couldn't control playback in {target}."
+                if action == "play_track" and params.get("query"):
+                    return f"I couldn't play {params.get('query')} in {target}."
+                return message or f"I couldn't control {target}."
+
+            if message:
+                return message
+
+        command = result.get("command")
+        params = result.get("params") or {}
+
+        if command == "system_command":
+            action = (params.get("action") or "").lower()
+            action_map = {
+                "lock": "I couldn't lock your PC.",
+                "shutdown": "I couldn't shut down your PC.",
+                "restart": "I couldn't restart your PC.",
+                "sleep": "I couldn't put the PC to sleep.",
+                "hibernate": "I couldn't hibernate the PC.",
+                "empty_recycle_bin": "I couldn't empty the recycle bin.",
+                "clear_recycle_bin": "I couldn't empty the recycle bin.",
+            }
+            return action_map.get(action, "I couldn't complete that system action.")
+
+        if command == "launch_app":
+            app_name = params.get("name") or params.get("app_name") or "that app"
+            return f"I couldn't open {app_name}."
+
+        if command == "kill_process":
+            process_name = params.get("name") or "that app"
+            return f"I couldn't close {process_name}."
+
+        if command == "scheduled_command":
+            action = (params.get("action") or "that").lower()
+            return f"I couldn't set the {action} timer."
+
+        if command == "cancel_timer":
+            return "I couldn't cancel the timer."
+
+        if command == "shell_command":
+            return "I couldn't run that command."
+
+        if command == "media_control":
+            return "I couldn't complete that media action."
+
+        if command == "fan_control":
+            return "I couldn't control the fan."
+
+        return "I couldn't complete that action."
+
+    def _build_failure_followup(
+        self,
+        execution_results: List[Dict[str, Any]]
+    ) -> Optional[str]:
+        """Create a follow-up line only when one or more commands failed."""
+        failed = [r for r in execution_results if not r.get("success", False)]
+        if not failed:
+            return None
+
+        failure_messages: List[str] = []
+        for result in failed:
+            message = self._describe_failed_action(result).strip()
+            if message and message not in failure_messages:
+                failure_messages.append(message)
+
+        if not failure_messages:
+            return "I couldn't complete that."
+
+        if len(failed) == len(execution_results):
+            return " ".join(failure_messages[:2])
+
+        if len(failure_messages) == 1:
+            return f"I completed part of that, but {failure_messages[0][0].lower()}{failure_messages[0][1:]}"
+
+        return f"I completed part of that, but {' '.join(failure_messages[:2])}"
     
     async def handle_voice_activation(self, from_hotkey: bool = False):
         """
@@ -441,7 +550,9 @@ class AidenAssistant:
             
             # Step 1: Listen IMMEDIATELY (activation sound plays inside transcribe)
             # Don't wait for anything - just start listening!
+            self._is_listening = True
             success, user_text, error = await self.stt.transcribe(play_activation_sound=True)
+            self._is_listening = False
             
             # Start conversation in background while user was speaking
             if not self.context_manager.current_conversation_id:
@@ -452,6 +563,8 @@ class AidenAssistant:
                 await broadcast_voice_status("idle", speaking=False, active=False)
                 if error == "timeout":
                     logger.info("No speech detected - timeout")
+                elif error == "cancelled":
+                    logger.info("Voice listening cancelled by user hotkey")
                 else:
                     logger.warning(f"STT failed: {error}")
                     await self.tts.speak("Sorry, I didn't catch that.")
@@ -482,16 +595,46 @@ class AidenAssistant:
             # Step 2: Process with AI
             await self._process_user_message(user_text)
             
+        except asyncio.CancelledError:
+            logger.info("Voice activation cancelled by user")
         except Exception as e:
             logger.error(f"Error handling voice activation: {e}", exc_info=True)
             await self.tts.speak("Sorry, something went wrong.")
             # Broadcast idle status on error
             await broadcast_voice_status("idle", speaking=False, active=False)
         finally:
+            self._is_listening = False
             self.is_processing = False
             # Broadcast idle status when conversation ends
             await broadcast_voice_status("idle", speaking=False, active=False)
             logger.info("=" * 60)
+
+    async def cancel_active_listening(self) -> bool:
+        """Stop an active STT listen or current request pipeline."""
+        cancelled = False
+
+        if self._is_listening:
+            logger.info("Cancelling active STT listen")
+            self.stt.request_stop()
+            cancelled = True
+
+        if self._current_request_task and not self._current_request_task.done():
+            logger.info("Cancelling active assistant request task")
+            self._current_request_task.cancel()
+            cancelled = True
+
+        for task in list(self._speak_tasks):
+            if not task.done():
+                task.cancel()
+                cancelled = True
+
+        self.tts.stop()
+        if cancelled:
+            try:
+                await self.tts.play_sound("stopped")
+            except Exception as e:
+                logger.debug(f"Could not play stopped sound: {e}")
+        return cancelled
     
     async def handle_text_message(self, text: str) -> str:
         """
@@ -604,35 +747,22 @@ class AidenAssistant:
             
             # Execute commands concurrently if any
             if commands:
-                has_system_control = any(cmd.get("type") == "system_control" for cmd in commands)
                 has_self_termination = any(cmd.get("type") == "self_termination" for cmd in commands)
-                should_delay_response = has_system_control or has_self_termination or any(
+                should_delay_response = has_self_termination or any(
                     self.executor.command_requires_post_response(cmd)
                     for cmd in commands
                 )
-                
-                tts_task = None
-                if should_delay_response:
+
+                initial_tts_task = None
+                if should_delay_response or expecting_followup:
                     execution_results = await self.executor.execute_multiple(commands)
                 else:
-                    tts_task = asyncio.create_task(self._speak_async(response_text))
+                    initial_tts_task = asyncio.create_task(self._speak_async(response_text))
                     execution_results = await self.executor.execute_multiple(commands)
                 
                 # Merge dynamic command responses (battery/cpu/gpu stats) into spoken text
                 original_response = response_text
                 response_text = self._merge_command_responses(response_text, execution_results)
-                
-                # If response was enriched with command data, broadcast the updated message
-                if response_text != original_response:
-                    try:
-                        from src.utils.websocket_broadcast import broadcast_message
-                        await broadcast_message("message", {
-                            "role": "assistant",
-                            "content": response_text,
-                            "timestamp": __import__('datetime').datetime.now().isoformat()
-                        })
-                    except Exception:
-                        pass  # Non-critical
                 
                 # Check for ESP32 responses and enhance AI response
                 esp32_payloads = [
@@ -658,22 +788,48 @@ class AidenAssistant:
                         esp32_feedback = esp32_feedback.get("message", "")
                     logger.info(f"📡 ESP32 Response: {esp32_feedback}")
                 
-                # Check for failures - log them but DON'T replace the spoken response with raw API errors
+                # Check for failures and turn them into honest spoken feedback
                 failed = [r for r in execution_results if not r.get("success", False)]
                 if failed:
                     for r in failed:
                         err_payload = r.get("response_data")
                         err_msg = (err_payload or {}).get("message") if isinstance(err_payload, dict) else None
                         logger.warning(f"Command failed ({r.get('command')}): {err_msg or r.get('error')}")
-                
-                if should_delay_response:
+
+                failure_followup = self._build_failure_followup(execution_results)
+
+                # Broadcast the enriched initial response if execution changed it
+                if response_text != original_response:
+                    try:
+                        from src.utils.websocket_broadcast import broadcast_message
+                        await broadcast_message("message", {
+                            "role": "assistant",
+                            "content": response_text,
+                            "timestamp": __import__('datetime').datetime.now().isoformat()
+                        })
+                    except Exception:
+                        pass  # Non-critical
+
+                if should_delay_response or expecting_followup:
+                    await self._speak_async(response_text)
+                elif initial_tts_task:
+                    await initial_tts_task
+
+                if failure_followup:
+                    try:
+                        from src.utils.websocket_broadcast import broadcast_message
+                        await broadcast_message("message", {
+                            "role": "assistant",
+                            "content": failure_followup,
+                            "timestamp": __import__('datetime').datetime.now().isoformat()
+                        })
+                    except Exception:
+                        pass  # Non-critical
+
                     if expecting_followup:
-                        await self._speak_async(response_text)
+                        await self._speak_async(failure_followup)
                     else:
-                        asyncio.create_task(self._speak_async(response_text))
-                else:
-                    if expecting_followup and tts_task:
-                        await tts_task
+                        asyncio.create_task(self._speak_async(failure_followup))
             else:
                 # No commands, just respond
                 # Wait for TTS if we're expecting follow-up, otherwise background
@@ -700,6 +856,9 @@ class AidenAssistant:
             
             return response_text
             
+        except asyncio.CancelledError:
+            logger.info("User message processing cancelled")
+            raise
         except Exception as e:
             logger.error(f"Error processing message: {e}", exc_info=True)
             response_text = "Sorry, I encountered an error."
@@ -732,3 +891,8 @@ async def get_assistant() -> AidenAssistant:
     if _assistant is None:
         _assistant = AidenAssistant()
     return _assistant
+
+
+def reset_assistant() -> None:
+    global _assistant
+    _assistant = None

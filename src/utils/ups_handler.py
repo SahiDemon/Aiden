@@ -219,10 +219,10 @@ class UPSEventHandler:
             if platform.system() == "Windows":
                 import subprocess
                 
-                # Graceful shutdown with 30 second warning
+                # Forced shutdown with 30 second warning so it still works from a locked session
                 # Note: /c comment must be the last parameter
                 result = subprocess.run(
-                    ["shutdown", "/s", "/t", "30", "/c", "Aiden: UPS battery low - shutting down to protect data"],
+                    ["shutdown", "/s", "/f", "/t", "30", "/c", "Aiden: UPS battery low - shutting down to protect data"],
                     capture_output=True,
                     text=True
                 )
@@ -233,7 +233,7 @@ class UPSEventHandler:
                     logger.error(f"Shutdown command failed: {result.stderr}")
                     # Try simpler command without comment
                     logger.info("Retrying shutdown without comment...")
-                    subprocess.run(["shutdown", "/s", "/t", "30"], check=True)
+                    subprocess.run(["shutdown", "/s", "/f", "/t", "30"], check=True)
             else:
                 logger.error("Shutdown only supported on Windows")
         

@@ -7,6 +7,7 @@ import asyncio
 from typing import Optional, Tuple
 
 # from src.execution.app_launcher import get_app_launcher  <-- Moved to inside method to avoid circular import
+from src.media.audio_session_ducker import get_audio_session_ducker
 from src.media.browser_media_controller import get_browser_media_controller
 from src.media.spotify_client import (
     SpotifyClient,
@@ -49,6 +50,55 @@ class MediaRouter:
         if await self._spotify_is_active():
             return await self._handle_spotify(action, query, entity_type, volume, device_name)
         return await self.browser_controller.control(action_alias(action), None)
+
+    async def duck_for_listening(self) -> dict:
+        """Best-effort pause of active media while STT is listening."""
+        state = {
+            "spotify_was_playing": False,
+            "spotify_device_id": None,
+            "muted_app_sessions": {"muted_sessions": []},
+        }
+
+        try:
+            if self.spotify_client.is_enabled():
+                playback = await self.spotify_client.get_current_playback()
+                if playback and playback.get("is_playing"):
+                    device = playback.get("device") or {}
+                    state["spotify_was_playing"] = True
+                    state["spotify_device_id"] = device.get("id")
+                    await self.spotify_client.pause(device_id=device.get("id"))
+                    logger.info("Paused Spotify for STT listening window.")
+        except Exception as exc:
+            logger.debug(f"Spotify ducking skipped: {exc}")
+
+        try:
+            state["muted_app_sessions"] = await asyncio.to_thread(
+                get_audio_session_ducker().duck_for_listening
+            )
+        except Exception as exc:
+            logger.debug(f"App-session ducking skipped: {exc}")
+
+        return state
+
+    async def restore_after_listening(self, state: Optional[dict]) -> None:
+        """Restore media playback after STT completes."""
+        if not state:
+            return
+
+        try:
+            await asyncio.to_thread(
+                get_audio_session_ducker().restore_after_listening,
+                state.get("muted_app_sessions") or {},
+            )
+        except Exception as exc:
+            logger.debug(f"App-session restore skipped: {exc}")
+
+        try:
+            if state.get("spotify_was_playing"):
+                await self.spotify_client.play(device_id=state.get("spotify_device_id"))
+                logger.info("Resumed Spotify after STT listening window.")
+        except Exception as exc:
+            logger.debug(f"Spotify restore skipped: {exc}")
 
     async def _spotify_is_active(self) -> bool:
         if not self.spotify_client.is_enabled():
@@ -128,12 +178,26 @@ class MediaRouter:
             device_id = device["id"] if device else None
 
             if action in ("play", "resume"):
-                # Activate device. If it was inactive, transfer_playback(play=True) already starts
-                # playback — calling play() again immediately causes a 403 Restriction Violated.
+                playback = await self.spotify_client.get_current_playback()
+                current_device = (playback or {}).get("device") or {}
+                current_device_id = current_device.get("id")
+                is_already_playing = bool(
+                    playback
+                    and playback.get("is_playing")
+                    and device
+                    and current_device_id
+                    and current_device_id == device.get("id")
+                )
+
+                if is_already_playing:
+                    msg = "Spotify is already playing." if action == "play" else "Spotify playback is already running."
+                    return True, {"type": "spotify", "message": msg}
+
+                # If the target device is inactive, transfer_playback(play=True) already starts
+                # playback, so calling play() again can trigger a 403 Restriction Violated.
                 was_inactive = device and not device.get("is_active")
                 device_id = await self._activate_device(device, play=True)
                 if not was_inactive:
-                    # Device was already active — safe to also call play() to resume
                     await self.spotify_client.play(device_id=device_id)
                 msg = "Spotify playback resumed." if action == "resume" else "Starting Spotify playback."
                 return True, {"type": "spotify", "message": msg}
@@ -211,7 +275,27 @@ class MediaRouter:
         except SpotifyNotConfiguredError:
             return False, {"type": "spotify", "message": "Spotify credentials are not configured."}
         except SpotifyError as exc:
-            return False, {"type": "spotify", "message": f"Spotify error: {exc}"}
+            error_text = str(exc)
+            lowered = error_text.lower()
+
+            if "restriction violated" in lowered:
+                message = "Spotify wouldn't allow that playback command on the current device."
+            elif "no matching track found" in lowered:
+                message = "I couldn't find that track on Spotify."
+            elif "no matching playlist found" in lowered:
+                message = "I couldn't find that playlist on Spotify."
+            elif "request failed: 404" in lowered:
+                message = "I couldn't find an active Spotify player to control."
+            elif "request failed: 403" in lowered:
+                message = "Spotify refused that command on the current device."
+            else:
+                message = "I couldn't complete that on Spotify."
+
+            return False, {
+                "type": "spotify",
+                "message": message,
+                "error_detail": error_text,
+            }
 
     async def _play_track_by_query(self, query: str, device_id: Optional[str]):
         results = await self.spotify_client.search(query, ["track"])

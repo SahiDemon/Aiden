@@ -37,10 +37,12 @@ wake_word_detector: Optional[object] = None
 wake_word_manager: Optional[object] = None
 hotkey_listener: Optional[object] = None
 toggle_hotkey_listener: Optional[object] = None
+stop_listening_hotkey_listener: Optional[object] = None
 api_server_task: Optional[asyncio.Task] = None
 overlay_launcher: Optional[object] = None
 ups_monitor: Optional[object] = None
 shutdown_event = threading.Event()
+restart_event = threading.Event()
 main_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
@@ -82,18 +84,24 @@ def handle_activation(from_hotkey: bool = False):
         logger.error(f"Error handling activation: {e}", exc_info=True)
     finally:
         # GUARANTEED resume — no matter what exception path we took
-        if wake_word_detector and wake_word_manager and wake_word_manager.is_enabled:
-            wake_word_detector.resume()
-            _resumed = True
-            logger.debug("[VOICE] Wake word detector resumed after activation")
+        if wake_word_detector and wake_word_manager:
+            if wake_word_manager.is_enabled:
+                wake_word_detector.resume()
+                _resumed = True
+                logger.debug("[VOICE] Wake word detector resumed after activation")
+            else:
+                logger.debug("[VOICE] Wake word detector not resumed because wake word listening is disabled")
         elif wake_word_detector and not wake_word_manager:
             # Safety: if manager isn't initialized yet, still resume
             wake_word_detector.resume()
             _resumed = True
             logger.debug("[VOICE] Wake word detector resumed (no manager)")
-        
-        if not _resumed:
-            logger.warning("[VOICE] Wake word detector was NOT resumed (disabled or missing)")
+        else:
+            logger.warning(
+                "[VOICE] Wake word detector was NOT resumed because the detector is missing "
+                f"(from_hotkey={from_hotkey}, manager_present={wake_word_manager is not None}, "
+                f"manager_enabled={getattr(wake_word_manager, 'is_enabled', None)})"
+            )
 
 
 def handle_toggle_wake_word():
@@ -129,9 +137,40 @@ def handle_toggle_wake_word():
         logger.error(f"Error handling toggle: {e}", exc_info=True)
 
 
+def handle_stop_listening():
+    """Handle stop-listening hotkey by cancelling active STT/request work."""
+    try:
+        logger.info("[STOP] Stop-listening hotkey triggered!")
+
+        global main_loop, assistant
+        if main_loop is None:
+            logger.error("Main event loop not set yet!")
+            return
+
+        if assistant is None:
+            logger.error("Assistant not initialized!")
+            return
+
+        future = asyncio.run_coroutine_threadsafe(
+            assistant.cancel_active_listening(),
+            main_loop
+        )
+
+        try:
+            cancelled = future.result(timeout=5)
+            logger.info(f"[STOP] Active listening cancel result: {cancelled}")
+        except TimeoutError:
+            logger.error("Stop-listening hotkey timed out")
+        except Exception as e:
+            logger.error(f"Error stopping active listening: {e}", exc_info=True)
+
+    except Exception as e:
+        logger.error(f"Error handling stop-listening hotkey: {e}", exc_info=True)
+
+
 async def initialize_services():
     """Initialize all Aiden services"""
-    global assistant, wake_word_detector, wake_word_manager, hotkey_listener, toggle_hotkey_listener, api_server_task, overlay_launcher, ups_monitor, main_loop
+    global assistant, wake_word_detector, wake_word_manager, hotkey_listener, toggle_hotkey_listener, stop_listening_hotkey_listener, api_server_task, overlay_launcher, ups_monitor, main_loop
     
     # Store the main event loop for thread-safe async calls
     main_loop = asyncio.get_event_loop()
@@ -237,17 +276,30 @@ async def initialize_services():
         
         # 4. Initialize hotkey listener
         logger.info("Initializing hotkey listener...")
-        hotkey_listener = get_hotkey_listener(on_activation=lambda: handle_activation(from_hotkey=True))
+        hotkey_listener = get_hotkey_listener(
+            on_activation=lambda: handle_activation(from_hotkey=True),
+            hotkey_override=settings.app.hotkey,
+        )
         hotkey_listener.start()
+        logger.info(f"✅ Voice hotkey: {settings.app.hotkey}")
         
         # 4.5. Initialize toggle hotkey listener
         logger.info("Initializing toggle hotkey listener...")
-        toggle_hotkey_listener = HotkeyListener(on_activation=handle_toggle_wake_word)
-        # Override the hotkey with toggle_hotkey from settings
-        toggle_hotkey_listener.settings.app.hotkey = settings.app.toggle_hotkey
-        toggle_hotkey_listener.hotkey_combo = toggle_hotkey_listener._parse_hotkey()
+        toggle_hotkey_listener = HotkeyListener(
+            on_activation=handle_toggle_wake_word,
+            hotkey_override=settings.app.toggle_hotkey,
+        )
         toggle_hotkey_listener.start()
         logger.info(f"✅ Toggle hotkey: {settings.app.toggle_hotkey}")
+
+        # 4.6. Initialize stop-listening hotkey listener
+        logger.info("Initializing stop-listening hotkey listener...")
+        stop_listening_hotkey_listener = HotkeyListener(
+            on_activation=handle_stop_listening,
+            hotkey_override=settings.app.stop_listening_hotkey,
+        )
+        stop_listening_hotkey_listener.start()
+        logger.info(f"✅ Stop-listening hotkey: {settings.app.stop_listening_hotkey}")
         
         # 5. Start overlay (if built)
         logger.info("Starting overlay...")
@@ -301,6 +353,7 @@ async def initialize_services():
         logger.info(f"Wake word: '{settings.app.wake_word}'")
         logger.info(f"Hotkey: {settings.app.hotkey}")
         logger.info(f"Toggle hotkey: {settings.app.toggle_hotkey}")
+        logger.info(f"Stop-listening hotkey: {settings.app.stop_listening_hotkey}")
         logger.info(f"Dashboard: http://{settings.api.host}:{settings.api.port}")
         logger.info(f"Overlay: {'Running' if overlay_launcher and overlay_launcher.process else 'Not running'}")
         logger.info(f"UPS Monitor: {'Running' if ups_monitor and ups_monitor.running else 'Not running'}")
@@ -315,7 +368,7 @@ async def initialize_services():
 
 async def cleanup():
     """Cleanup all services"""
-    global wake_word_detector, hotkey_listener, toggle_hotkey_listener, api_server_task, overlay_launcher, ups_monitor
+    global wake_word_detector, hotkey_listener, toggle_hotkey_listener, stop_listening_hotkey_listener, api_server_task, overlay_launcher, ups_monitor
     
     logger.info("=" * 70)
     logger.info("SHUTTING DOWN AIDEN")
@@ -341,6 +394,10 @@ async def cleanup():
         if toggle_hotkey_listener:
             logger.info("Stopping toggle hotkey listener...")
             toggle_hotkey_listener.stop()
+
+        if stop_listening_hotkey_listener:
+            logger.info("Stopping stop-listening hotkey listener...")
+            stop_listening_hotkey_listener.stop()
         
         # Stop API server
         if api_server_task:
@@ -367,6 +424,9 @@ def signal_handler(signum, frame):
 def main():
     """Main entry point"""
     try:
+        shutdown_event.clear()
+        restart_event.clear()
+
         # Setup signal handlers
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
@@ -387,11 +447,17 @@ def main():
             """Called when user exits from tray"""
             shutdown_event.set()
             loop.call_soon_threadsafe(loop.stop)
+
+        def on_tray_restart():
+            """Called when user requests restart from tray."""
+            restart_event.set()
+            shutdown_event.set()
+            loop.call_soon_threadsafe(loop.stop)
         
         # Run tray in separate thread with wake_word_manager and event loop
         tray_thread = threading.Thread(
             target=run_tray_app, 
-            args=(on_tray_exit, wake_word_manager, loop), 
+            args=(on_tray_exit, wake_word_manager, loop, on_tray_restart), 
             daemon=True
         )
         tray_thread.start()
@@ -407,6 +473,10 @@ def main():
         
         # Cleanup
         loop.run_until_complete(cleanup())
+
+        if restart_event.is_set():
+            logger.info("Restart requested - re-launching current process")
+            os.execv(sys.executable, [sys.executable, *sys.argv])
         
         logger.info("Goodbye!")
         return 0
@@ -421,4 +491,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-

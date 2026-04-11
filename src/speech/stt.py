@@ -18,6 +18,7 @@ import collections
 import io
 import time
 import struct
+import threading
 from typing import Optional, Tuple
 
 import speech_recognition as sr
@@ -49,6 +50,7 @@ class STTEngine:
     def __init__(self):
         self.settings = get_settings()
         self.recognizer = sr.Recognizer()
+        self._stop_requested = threading.Event()
 
         # Configure from settings
         self.language = self.settings.speech.stt_language
@@ -59,9 +61,9 @@ class STTEngine:
 
         # WebRTC VAD aggressiveness: 0 = most sensitive (catches quiet speech),
         # 3 = most aggressive (only loud/clear speech).
-        # Level 1 is a good balance: catches normal-to-quiet speech from distance
-        # while still filtering out most non-speech sounds.
-        self.vad_aggressiveness = 0
+        # Level 1 is a better balance here so brief background noise is less
+        # likely to be treated as continuing speech after the user stops talking.
+        self.vad_aggressiveness = 1
 
         # Audio parameters — 16kHz mono 16-bit PCM is what WebRTC VAD requires
         self.sample_rate = 16000
@@ -88,6 +90,23 @@ class STTEngine:
             f"pre_buffer=300ms"
         )
 
+    def _should_reject_transcript(self, text: str) -> bool:
+        """Reject obviously leaked/non-user transcripts that should never trigger actions."""
+        normalized = " ".join((text or "").lower().split())
+        if not normalized:
+            return False
+
+        blocked_phrases = (
+            "subtitles by the amara.org community",
+        )
+
+        for phrase in blocked_phrases:
+            if phrase in normalized:
+                logger.warning(f"STT: Rejecting leaked transcript phrase: '{text}'")
+                return True
+
+        return False
+
     async def transcribe(self, play_activation_sound: bool = True) -> Tuple[bool, Optional[str], Optional[str]]:
         """
         Listen and transcribe speech to text.
@@ -95,12 +114,21 @@ class STTEngine:
         Returns:
             Tuple of (success, text, error_message)
         """
+        duck_state = None
+        self._stop_requested.clear()
         try:
             # Play activation sound BEFORE opening microphone
             if play_activation_sound:
                 from src.speech.tts import get_tts_engine
                 tts = get_tts_engine()
                 await tts.play_sound("activation")
+
+            # Briefly pause media sources so STT does not capture music/voice playback.
+            try:
+                from src.media.media_router import get_media_router
+                duck_state = await get_media_router().duck_for_listening()
+            except Exception as exc:
+                logger.debug(f"STT media ducking unavailable: {exc}")
 
             # Broadcast listening status
             try:
@@ -112,15 +140,30 @@ class STTEngine:
             # Run blocking listen operation in thread pool
             loop = asyncio.get_event_loop()
             success, audio, error = await loop.run_in_executor(None, self._listen_sync)
+
+            if self._stop_requested.is_set():
+                logger.info("STT: Stop requested after audio capture - treating listen as cancelled")
+                return False, None, "cancelled"
             
             text = None
             if success and audio:
                 from src.ai.groq_client import get_groq_client
                 groq_client = await get_groq_client()
+                if self._stop_requested.is_set():
+                    logger.info("STT: Stop requested before transcription - skipping transcription")
+                    return False, None, "cancelled"
                 try:
                     text = await groq_client.transcribe_audio(audio.get_wav_data())
+                    if self._stop_requested.is_set():
+                        logger.info("STT: Stop requested during transcription - discarding transcription result")
+                        return False, None, "cancelled"
                     if text:
-                        logger.info(f"STT: Recognized (Groq Whisper): '{text}'")
+                        if self._should_reject_transcript(text):
+                            success = False
+                            text = None
+                            error = "No speech detected"
+                        else:
+                            logger.info(f"STT: Recognized (Groq Whisper): '{text}'")
                     else:
                         logger.warning("STT: Empty recognition result")
                         success = False
@@ -149,6 +192,15 @@ class STTEngine:
             except Exception:
                 pass
             return False, None, str(e)
+        finally:
+            try:
+                if duck_state is not None:
+                    from src.media.media_router import get_media_router
+                    await get_media_router().restore_after_listening(duck_state)
+            except Exception as exc:
+                logger.debug(f"STT media restore skipped: {exc}")
+            finally:
+                self._stop_requested.clear()
 
     def _listen_with_vad(self, source) -> sr.AudioData:
         """
@@ -184,6 +236,10 @@ class STTEngine:
         )
 
         while True:
+            if self._stop_requested.is_set():
+                logger.info("STT VAD: Stop requested - aborting active listen")
+                raise InterruptedError("stt_cancelled")
+
             elapsed = time.time() - start_time
 
             # Timeout waiting for speech to start
@@ -234,7 +290,10 @@ class STTEngine:
                 speech_duration += frame_duration_s
 
                 if is_speech:
-                    silence_duration = 0.0
+                    # Don't let a single noisy frame fully reset the silence timer.
+                    # This makes end-of-speech detection more stable in rooms with
+                    # light background noise.
+                    silence_duration = max(0.0, silence_duration - (frame_duration_s * 2))
                 else:
                     silence_duration += frame_duration_s
 
@@ -277,10 +336,17 @@ class STTEngine:
                 except sr.WaitTimeoutError:
                     logger.info("STT: Timeout — no speech detected")
                     return False, None, "timeout"
+                except InterruptedError:
+                    logger.info("STT: Listening cancelled")
+                    return False, None, "cancelled"
 
         except Exception as e:
             logger.error(f"STT: Exception: {e}")
             return False, None, str(e)
+
+    def request_stop(self):
+        """Request an active microphone listen to stop as soon as possible."""
+        self._stop_requested.set()
 
     def adjust_for_ambient_noise(self, duration: float = 1.0):
         """No-op: WebRTC VAD doesn't need ambient noise calibration."""
@@ -301,3 +367,8 @@ def get_stt_engine() -> STTEngine:
     if _stt_engine is None:
         _stt_engine = STTEngine()
     return _stt_engine
+
+
+def reset_stt_engine() -> None:
+    global _stt_engine
+    _stt_engine = None

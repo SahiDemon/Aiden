@@ -491,6 +491,10 @@ def get_tts_engine() -> TTSEngine:
     return _tts_engine
 
 
+def reset_tts_engine() -> None:
+    global _tts_engine
+    _tts_engine = None
+
 
 
 

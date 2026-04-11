@@ -90,7 +90,7 @@ class SystemController:
             logger.error(f"Error locking screen: {e}")
             return False
 
-    async def shutdown(self, force: bool = False) -> bool:
+    async def shutdown(self, force: bool = True) -> bool:
         """Shutdown Windows"""
         command = "shutdown /s /t 0"
         if force:

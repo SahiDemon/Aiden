@@ -488,21 +488,8 @@ class ContextManager:
         """
         messages = []
         
-        # Load system prompt from prompts.yaml
-        from pathlib import Path
-        import yaml
-        
-        try:
-            prompts_file = Path("config/prompts.yaml")
-            if prompts_file.exists():
-                with open(prompts_file, 'r', encoding='utf-8') as f:
-                    prompts = yaml.safe_load(f)
-                    system_prompt = prompts.get("system_prompt", "")
-            else:
-                system_prompt = "You are Aiden, an intelligent Windows assistant."
-        except Exception as e:
-            logger.error(f"Error loading prompts.yaml: {e}")
-            system_prompt = "You are Aiden, an intelligent Windows assistant."
+        from src.utils.prompt_loader import get_prompt
+        system_prompt = get_prompt("system_prompt", "You are Aiden, an intelligent Windows assistant.")
         
         # Get system context ONLY if AI requested it via needs_context
         system_context_str = ""
@@ -882,4 +869,3 @@ def get_context_manager() -> ContextManager:
     if _context_manager is None:
         _context_manager = ContextManager()
     return _context_manager
-

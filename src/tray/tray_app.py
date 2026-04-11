@@ -25,7 +25,13 @@ class AidenTrayApp:
     Provides menu access to dashboard, settings, and exit
     """
     
-    def __init__(self, on_exit_callback: Optional[callable] = None, wake_word_manager=None, event_loop=None):
+    def __init__(
+        self,
+        on_exit_callback: Optional[callable] = None,
+        wake_word_manager=None,
+        event_loop=None,
+        on_restart_callback: Optional[callable] = None,
+    ):
         """
         Initialize tray app
         
@@ -36,6 +42,7 @@ class AidenTrayApp:
         """
         self.settings = get_settings()
         self.on_exit_callback = on_exit_callback
+        self.on_restart_callback = on_restart_callback
         self.wake_word_manager = wake_word_manager
         self.event_loop = event_loop
         self.icon = None
@@ -71,6 +78,27 @@ class AidenTrayApp:
         
         return image
     
+    def build_menu(self):
+        """Build the tray menu based on current settings and state."""
+        wake_word_enabled = self.get_wake_word_state()
+        status_text = "Disable Wake Word" if wake_word_enabled else "Enable Wake Word"
+
+        items = [
+            pystray.MenuItem("Open Dashboard", self.open_dashboard),
+            pystray.MenuItem(status_text, self.toggle_wake_word),
+            pystray.MenuItem("Settings", self.open_settings),
+        ]
+
+        if self.settings.app.tray_show_restart:
+            items.append(pystray.MenuItem("Restart Aiden", self.restart_app))
+
+        items.extend([
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Exit Aiden", self.exit_app),
+        ])
+
+        return pystray.Menu(*items)
+
     def open_dashboard(self, icon, item):
         """Open the dashboard in browser"""
         try:
@@ -132,20 +160,20 @@ class AidenTrayApp:
             logger.warning("Cannot update menu: icon not initialized")
             return
         
-        wake_word_enabled = self.get_wake_word_state()
-        status_text = "Disable Wake Word" if wake_word_enabled else "Enable Wake Word"
-        
-        menu = pystray.Menu(
-            pystray.MenuItem("Open Dashboard", self.open_dashboard),
-            pystray.MenuItem(status_text, self.toggle_wake_word),
-            pystray.MenuItem("Settings", self.open_settings),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Exit Aiden", self.exit_app)
-        )
-        
-        icon.menu = menu
-        logger.debug(f"Menu updated: {status_text}")
-    
+        icon.menu = self.build_menu()
+        logger.debug("Tray menu updated")
+
+    def restart_app(self, icon, item):
+        """Restart the application from the tray."""
+        logger.info("Restart requested from tray")
+
+        icon.stop()
+
+        if self.on_restart_callback:
+            self.on_restart_callback()
+        elif self.on_exit_callback:
+            self.on_exit_callback()
+
     def exit_app(self, icon, item):
         """Exit the application"""
         logger.info("Exit requested from tray")
@@ -160,17 +188,7 @@ class AidenTrayApp:
     def run(self):
         """Run the tray app (blocks until exit)"""
         try:
-            # Create initial menu
-            wake_word_enabled = self.get_wake_word_state()
-            status_text = "Disable Wake Word" if wake_word_enabled else "Enable Wake Word"
-            
-            menu = pystray.Menu(
-                pystray.MenuItem("Open Dashboard", self.open_dashboard),
-                pystray.MenuItem(status_text, self.toggle_wake_word),
-                pystray.MenuItem("Settings", self.open_settings),
-                pystray.Menu.SEPARATOR,
-                pystray.MenuItem("Exit Aiden", self.exit_app)
-            )
+            menu = self.build_menu()
             
             # Create icon
             self.icon = pystray.Icon(
@@ -190,7 +208,12 @@ class AidenTrayApp:
             raise
 
 
-def run_tray_app(on_exit_callback: Optional[callable] = None, wake_word_manager=None, event_loop=None):
+def run_tray_app(
+    on_exit_callback: Optional[callable] = None,
+    wake_word_manager=None,
+    event_loop=None,
+    on_restart_callback: Optional[callable] = None,
+):
     """
     Run the tray app
     This function blocks until the app exits
@@ -200,9 +223,8 @@ def run_tray_app(on_exit_callback: Optional[callable] = None, wake_word_manager=
         wake_word_manager: Wake word manager for toggle functionality
         event_loop: Main asyncio event loop for running coroutines
     """
-    app = AidenTrayApp(on_exit_callback, wake_word_manager, event_loop)
+    app = AidenTrayApp(on_exit_callback, wake_word_manager, event_loop, on_restart_callback)
     app.run()
-
 
 
 
