@@ -241,8 +241,21 @@ class GroqClient:
     async def transcribe_audio(self, audio_bytes: bytes) -> str:
         """
         Send raw WAV bytes to Groq's Whisper API.
-        This provides instantaneous transcription using Whisper Large V3.
+        Uses whisper-large-v3-turbo for ~3x faster transcription at equal accuracy.
+
+        Minimum audio gate: if the WAV data is too small (< 0.3s of audio) we
+        skip the API call entirely to avoid paying latency for silence/noise.
         """
+        # --- Minimum audio gate ---
+        # WAV header = 44 bytes.  16kHz, 16-bit mono = 32000 bytes/second.
+        # 0.3 s threshold = 9600 bytes of PCM data.
+        MIN_AUDIO_BYTES = 44 + 9_600  # ~0.3 s guard
+        if len(audio_bytes) < MIN_AUDIO_BYTES:
+            logger.info(
+                f"STT: Audio too short ({len(audio_bytes)} bytes < {MIN_AUDIO_BYTES}) "
+                "— skipping Groq transcription (likely silence/noise)"
+            )
+            return ""
         try:
             headers = {"Authorization": f"Bearer {self.settings.groq.api_key}"}
             # We must use multipart form-data
@@ -250,9 +263,10 @@ class GroqClient:
                 "file": ("audio.wav", audio_bytes, "audio/wav")
             }
             data = {
-                "model": "whisper-large-v3",
+                # whisper-large-v3-turbo: 3× faster than large-v3, virtually identical accuracy
+                "model": "whisper-large-v3-turbo",
                 "response_format": "json",
-                "language": "en" # hardcode English for fastest inference
+                "language": "en"  # hardcode English for fastest inference
             }
             
             logger.debug(f"Sending audio ({len(audio_bytes)} bytes) to Groq Whisper API...")

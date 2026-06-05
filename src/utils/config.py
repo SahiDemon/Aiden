@@ -142,6 +142,21 @@ class AppConfig(BaseSettings):
                 return False
         return bool(value)
 
+    @field_validator("hotkey", "toggle_hotkey", "stop_listening_hotkey", mode="before")
+    @classmethod
+    def normalize_hotkey_value(cls, value: Any, info) -> Any:
+        if not isinstance(value, str):
+            return value
+
+        normalized = value.strip()
+        if info.field_name == "hotkey" and normalized == "":
+            return "ctrl+shift+space"
+        if info.field_name == "toggle_hotkey" and normalized == "":
+            return "ctrl+."
+        if info.field_name == "stop_listening_hotkey" and normalized == "":
+            return "ctrl+shift+/"
+        return normalized
+
 
 class APIConfig(BaseSettings):
     model_config = SettingsConfigDict(
@@ -187,8 +202,10 @@ class SpeechConfig(BaseSettings):
     google_tts_speaking_rate: float = Field(default=1.0)
     stt_language: str = Field(default="en-US")
     stt_timeout: int = Field(default=5)
-    stt_pause_threshold: float = Field(default=1.5)
-    stt_non_speaking_duration: float = Field(default=0.8)
+    # How long silence must last before speech is considered done.
+    stt_pause_threshold: float = Field(default=0.9)
+    # Keep a short trailing non-speaking buffer without cutting natural pauses.
+    stt_non_speaking_duration: float = Field(default=0.7)
     stt_device_index: Optional[int] = Field(default=None)
     stt_energy_threshold: int = Field(default=600)
     pending_clarification_grace_seconds: int = Field(default=60)
@@ -197,9 +214,21 @@ class SpeechConfig(BaseSettings):
     porcupine_model_path: str = Field(default="vosk_models/aiden_en_windows.ppn")
     porcupine_sensitivity: float = Field(default=0.7)
     porcupine_min_energy: float = Field(default=100.0)
-    porcupine_debounce_seconds: float = Field(default=1.5)
+    # Raised from 1.5 → 2.0s: longer debounce prevents rapid re-triggers
+    porcupine_debounce_seconds: float = Field(default=2.0)
     porcupine_confirmation_window: float = Field(default=0.2)
     use_porcupine: bool = Field(default=True)
+    # openWakeWord — open-source, no API key, built-in Silero VAD gating
+    # Set SPEECH_USE_OPENWAKEWORD=true to switch from Porcupine to openWakeWord
+    use_openwakeword: bool = Field(default=False)
+    oww_model_path: str = Field(default="")          # path to custom .tflite/.onnx model; leave blank for pre-trained
+    oww_threshold: float = Field(default=0.5)         # activation score threshold (0-1)
+    oww_vad_threshold: float = Field(default=0.3)     # Silero VAD gate; 0=disabled, higher=stricter
+    # Silero VAD — more accurate than WebRTC VAD (requires torch)
+    stt_use_silero_vad: bool = Field(default=True)
+    stt_silero_threshold: float = Field(default=0.5)
+    # VAD aggressiveness for WebRTC fallback (0=sensitive, 3=strict)
+    stt_vad_aggressiveness: int = Field(default=2)
 
     @field_validator("stt_device_index", mode="before")
     @classmethod

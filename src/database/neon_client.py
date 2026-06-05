@@ -4,11 +4,13 @@ Async PostgreSQL database client using SQLAlchemy
 """
 import asyncio
 import logging
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.future import select
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 # CRITICAL: Import event loop policy FIRST
 from src.utils.event_loop import ensure_selector_event_loop
@@ -30,33 +32,18 @@ class NeonDBClient:
     async def connect(self):
         """Initialize database connection"""
         try:
-            # Convert postgresql:// to postgresql+asyncpg://
-            db_url = self.settings.database.database_url
-            if db_url.startswith("postgresql://"):
-                db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
-            
-            # Remove incompatible SSL parameters from URL for asyncpg
-            # asyncpg uses 'ssl' parameter instead of 'sslmode'
-            if "?" in db_url:
-                base_url, params = db_url.split("?", 1)
-                # Filter out incompatible parameters
-                filtered_params = []
-                for param in params.split("&"):
-                    if not param.startswith(("sslmode=", "channel_binding=")):
-                        filtered_params.append(param)
-                # Add asyncpg-compatible SSL
-                filtered_params.append("ssl=require")
-                db_url = f"{base_url}?{'&'.join(filtered_params)}"
-            else:
-                # Add SSL requirement
-                db_url = f"{db_url}?ssl=require"
+            db_url = self._build_asyncpg_url(self.settings.database.database_url)
             
             # asyncpg connection arguments (pure async driver, works on Windows)
             connect_args = {
-                "timeout": 10,  # 10 second connection timeout
-                "command_timeout": 10,
-                "ssl": "require"  # Force SSL
+                "timeout": 60,  # Neon can take a moment to wake up / pool
+                "command_timeout": 60,
+                "ssl": True,  # Force SSL
             }
+
+            if "pooler." in db_url or "pooler-" in db_url:
+                # Pooler endpoints can benefit from a smaller statement cache.
+                connect_args["statement_cache_size"] = 0
             
             logger.info("Creating Neon DB engine with asyncpg (native async)...")
             # Create async engine with asyncpg (true async driver)
@@ -80,11 +67,13 @@ class NeonDBClient:
             logger.info("Testing Neon DB connection...")
             # Test connection with timeout
             try:
-                async with self.engine.connect() as conn:
-                    result = await conn.execute(text("SELECT 1"))
-                    result.close()
+                await asyncio.wait_for(self._test_connection(), timeout=60)
             except Exception as test_error:
-                logger.error(f"Connection test failed: {test_error}")
+                logger.error(
+                    "Connection test failed: %s (%s)",
+                    test_error,
+                    type(test_error).__name__,
+                )
                 raise
             
             logger.info("Connected to Neon DB successfully!")
@@ -100,6 +89,39 @@ class NeonDBClient:
             # Don't raise - allow app to continue without database
             self.engine = None
             self.session_maker = None
+
+    def _build_asyncpg_url(self, raw_url: str) -> str:
+        """Normalize Neon connection strings for asyncpg."""
+        if not raw_url:
+            return raw_url
+
+        normalized = raw_url.strip()
+        if normalized.startswith("postgresql://"):
+            normalized = normalized.replace("postgresql://", "postgresql+asyncpg://", 1)
+        elif normalized.startswith("postgres://"):
+            normalized = normalized.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif not normalized.startswith("postgresql+asyncpg://"):
+            normalized = f"postgresql+asyncpg://{normalized}"
+
+        parts = urlsplit(normalized)
+        query_params = []
+        for key, value in parse_qsl(parts.query, keep_blank_values=True):
+            if key.lower() in {"sslmode", "channel_binding"}:
+                continue
+            query_params.append((key, value))
+
+        # asyncpg does not use sslmode; it uses the connection argument.
+        query = urlencode(query_params)
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, query, parts.fragment))
+
+    async def _test_connection(self) -> None:
+        """Run a simple query to verify the connection is usable."""
+        if not self.engine:
+            raise RuntimeError("Database engine not initialized")
+
+        async with self.engine.connect() as conn:
+            result = await conn.execute(text("SELECT 1"))
+            result.close()
     
     async def disconnect(self):
         """Close database connection"""
@@ -138,16 +160,56 @@ class NeonDBClient:
                 raise
     
     # Conversation operations
-    async def create_conversation(self, user_id: str = "default", mode: str = "voice") -> Optional[Conversation]:
+    async def create_conversation(
+        self,
+        user_id: str = "default",
+        mode: str = "voice",
+        conversation_id: Optional[str] = None
+    ) -> Optional[Conversation]:
         """Create new conversation"""
         async with self.session() as session:
             if not session:
                 return None
-            conversation = Conversation(user_id=user_id, mode=mode)
+            conversation = Conversation(
+                id=conversation_id,
+                user_id=user_id,
+                mode=mode
+            )
             session.add(conversation)
             await session.flush()
             await session.refresh(conversation)
             return conversation
+
+    async def ensure_conversation_exists(
+        self,
+        conversation_id: str,
+        user_id: str = "default",
+        mode: str = "voice"
+    ) -> bool:
+        """Ensure a specific conversation row exists before inserting messages."""
+        async with self.session() as session:
+            if not session:
+                return False
+
+            result = await session.execute(
+                select(Conversation).where(Conversation.id == conversation_id)
+            )
+            conversation = result.scalar_one_or_none()
+            if conversation:
+                return True
+
+            conversation = Conversation(
+                id=conversation_id,
+                user_id=user_id,
+                mode=mode
+            )
+            session.add(conversation)
+            try:
+                await session.flush()
+            except IntegrityError:
+                # Another task created the same conversation concurrently.
+                await session.rollback()
+            return True
     
     async def end_conversation(self, conversation_id: str):
         """Mark conversation as ended"""
@@ -271,6 +333,8 @@ class NeonDBClient:
     async def get_user_preferences(self, user_id: str = "default") -> Optional[UserPreferences]:
         """Get user preferences"""
         async with self.session() as session:
+            if not session:
+                return None
             result = await session.execute(
                 select(UserPreferences).where(UserPreferences.user_id == user_id)
             )
@@ -283,6 +347,8 @@ class NeonDBClient:
     ) -> UserPreferences:
         """Update or create user preferences"""
         async with self.session() as session:
+            if not session:
+                raise RuntimeError("Database not connected")
             result = await session.execute(
                 select(UserPreferences).where(UserPreferences.user_id == user_id)
             )

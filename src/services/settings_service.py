@@ -112,8 +112,16 @@ def _sanitize_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def load_settings_overrides(user_id: str = "default") -> Dict[str, Any]:
-    db = await get_db_client()
-    prefs = await db.get_user_preferences(user_id=user_id)
+    try:
+        db = await get_db_client()
+        prefs = await db.get_user_preferences(user_id=user_id)
+    except Exception as exc:
+        logger.warning(f"Settings overrides unavailable from database: {exc}")
+        set_prompt_overrides({})
+        set_settings_overrides({})
+        reload_settings()
+        return {}
+
     if not prefs or not prefs.settings:
         set_prompt_overrides({})
         set_settings_overrides({})

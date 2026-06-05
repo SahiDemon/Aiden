@@ -64,6 +64,8 @@ coverage/
 *.tmp
 *.temp
 .cache/
+.build-tmp/
+.electron-builder-cache/
 vosk_models/
 .venv/Scripts/
 app_cache.json

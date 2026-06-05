@@ -214,7 +214,7 @@ class GeminiClient:
                 else:
                     full_prompt = f"{full_system_prompt}\n\nUser: {user_message}"
                 
-                response = model.generate_content(full_prompt)
+                response = await asyncio.to_thread(model.generate_content, full_prompt)
                 
                 # If not using JSON format, return plain text wrapped in expected dict format
                 if not use_json_format:
@@ -332,4 +332,3 @@ async def close_gemini_client():
     global _gemini_client
     if _gemini_client:
         _gemini_client = None
-

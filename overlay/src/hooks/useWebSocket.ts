@@ -2,6 +2,28 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 
 type VoiceActivityStatus = 'listening' | 'processing' | 'idle' | 'speaking';
 type OverlayState = 'listening' | 'thinking' | 'replying' | 'idle';
+type IpcRendererBridge = {
+    send?: (channel: string, ...args: unknown[]) => void;
+};
+type OverlayWindow = Window & typeof globalThis & {
+    ipcRenderer?: IpcRendererBridge;
+};
+
+const raiseOverlay = () => {
+    try {
+        (window as OverlayWindow).ipcRenderer?.send?.('overlay:raise');
+    } catch {
+        // Non-Electron preview builds do not expose ipcRenderer.
+    }
+};
+
+const hideOverlay = () => {
+    try {
+        (window as OverlayWindow).ipcRenderer?.send?.('overlay:hide');
+    } catch {
+        // Non-Electron preview builds do not expose ipcRenderer.
+    }
+};
 
 interface VoiceActivity {
     status: VoiceActivityStatus;
@@ -36,6 +58,28 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocke
     const isConnectingRef = useRef(false);
     const shouldReconnectRef = useRef(true);
     const sessionActiveRef = useRef(false);
+    const hideOverlayTimeoutRef = useRef<number | null>(null);
+    const connectRef = useRef<(() => void) | null>(null);
+
+    const clearHideOverlayTimeout = useCallback(() => {
+        if (hideOverlayTimeoutRef.current !== null) {
+            window.clearTimeout(hideOverlayTimeoutRef.current);
+            hideOverlayTimeoutRef.current = null;
+        }
+    }, []);
+
+    const raiseActiveOverlay = useCallback(() => {
+        clearHideOverlayTimeout();
+        raiseOverlay();
+    }, [clearHideOverlayTimeout]);
+
+    const scheduleOverlayHide = useCallback(() => {
+        clearHideOverlayTimeout();
+        hideOverlayTimeoutRef.current = window.setTimeout(() => {
+            hideOverlay();
+            hideOverlayTimeoutRef.current = null;
+        }, 700);
+    }, [clearHideOverlayTimeout]);
 
     const connect = useCallback(() => {
         if (!shouldReconnectRef.current) {
@@ -85,6 +129,7 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocke
                 setUserInput('');
                 setSessionActive(false);
                 sessionActiveRef.current = false;
+                scheduleOverlayHide();
 
                 if (!shouldReconnectRef.current) {
                     console.log('[Overlay WebSocket] Component unmounted, not reconnecting');
@@ -96,7 +141,7 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocke
 
                 reconnectTimeoutRef.current = window.setTimeout(() => {
                     console.log(`[Overlay WebSocket] Reconnecting... (attempt ${reconnectAttemptsRef.current})`);
-                    connect();
+                    connectRef.current?.();
                 }, delay);
             };
 
@@ -135,18 +180,29 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocke
                                 : sessionActiveRef.current;
 
                             if (voiceActivity.status === 'listening') {
+                                raiseActiveOverlay();
                                 setOverlayState('listening');
                                 setUserInput('');
                                 setCurrentText('');
                             } else if (voiceActivity.status === 'processing') {
+                                raiseActiveOverlay();
                                 setOverlayState('thinking');
                             } else if (voiceActivity.speaking) {
+                                raiseActiveOverlay();
                                 setOverlayState('replying');
                             } else {
-                                if (activeNow) {
+                                const explicitInactive = voiceActivity.active === false;
+                                const implicitIdle = typeof voiceActivity.active !== 'boolean'
+                                    && voiceActivity.status === 'idle'
+                                    && !voiceActivity.speaking;
+
+                                if (!explicitInactive && !implicitIdle && activeNow) {
                                     setOverlayState((prev) => (prev === 'idle' ? 'thinking' : prev));
                                 } else {
                                     setOverlayState('idle');
+                                    setSessionActive(false);
+                                    sessionActiveRef.current = false;
+                                    scheduleOverlayHide();
                                 }
                             }
                             break;
@@ -154,6 +210,7 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocke
 
                         case 'assistant_speaking': {
                             const speakingText = data.data?.text || '';
+                            raiseActiveOverlay();
                             setCurrentText(speakingText);
                             setOverlayState('replying');
                             setSessionActive(true);
@@ -188,7 +245,11 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocke
             console.error('[Overlay WebSocket] Error creating WebSocket:', error);
             isConnectingRef.current = false;
         }
-    }, [url]);
+    }, [raiseActiveOverlay, scheduleOverlayHide, url]);
+
+    useEffect(() => {
+        connectRef.current = connect;
+    }, [connect]);
 
     useEffect(() => {
         console.log('[Overlay WebSocket] Initializing connection...');
@@ -209,6 +270,8 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocke
                 clearTimeout(reconnectTimeoutRef.current);
                 reconnectTimeoutRef.current = null;
             }
+            clearHideOverlayTimeout();
+            hideOverlay();
             isConnectingRef.current = false;
             if (wsRef.current) {
                 wsRef.current.onclose = null;
@@ -217,7 +280,7 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocke
                 wsRef.current = null;
             }
         };
-    }, [connect]);
+    }, [clearHideOverlayTimeout, connect]);
 
     return {
         connected,

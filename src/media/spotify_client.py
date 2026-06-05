@@ -38,6 +38,7 @@ class SpotifyClient:
         self._access_token: Optional[str] = None
         self._token_expires_at: float = 0
         self._token_lock = asyncio.Lock()
+        self._background_refresh_task: Optional[asyncio.Task] = None
 
     # ------------------------------------------------------------------ Helpers
     def is_enabled(self) -> bool:
@@ -59,6 +60,33 @@ class SpotifyClient:
             if self._access_token and time.time() < self._token_expires_at - 30:
                 return
             await self._refresh_access_token()
+
+    def has_fresh_token(self, margin_seconds: float = 30.0) -> bool:
+        return bool(self._access_token and time.time() < self._token_expires_at - margin_seconds)
+
+    def refresh_token_in_background(self) -> None:
+        """Start token refresh without blocking latency-sensitive paths."""
+        if not self.is_enabled():
+            return
+
+        if self.has_fresh_token():
+            return
+
+        if self._background_refresh_task and not self._background_refresh_task.done():
+            return
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        async def _refresh() -> None:
+            try:
+                await self._ensure_token()
+            except Exception as exc:
+                logger.debug(f"Spotify background token refresh skipped: {exc}")
+
+        self._background_refresh_task = loop.create_task(_refresh())
 
     async def _refresh_access_token(self) -> None:
         cfg = self.settings.spotify

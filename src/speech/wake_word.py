@@ -4,15 +4,14 @@ Migrated from efficient_wake_word.py and vosk_wake_word.py
 
 Includes:
 - Auto-restart watchdog (survives PyAudio / driver crashes)
-- Thread-safe sound playback
 - False positive reduction with energy gating and debounce
 """
-import asyncio
 import json
 import logging
 import os
 import threading
 import time
+from pathlib import Path
 from typing import Callable, Optional
 import numpy as np
 import pyaudio
@@ -20,6 +19,7 @@ import vosk
 
 from src.utils.config import get_settings
 from src.utils.logger import get_logger
+from src.utils.paths import resource_path
 
 logger = get_logger(__name__)
 
@@ -41,7 +41,14 @@ class WakeWordDetector:
         self.on_wake_word = on_wake_word
 
         # Vosk model
-        self.model_path = self.settings.speech.vosk_model_path or "vosk_models/vosk-model-small-en-us-0.15"
+        configured_model_path = Path(
+            self.settings.speech.vosk_model_path or "vosk_models/vosk-model-small-en-us-0.15"
+        )
+        self.model_path = str(
+            configured_model_path
+            if configured_model_path.is_absolute()
+            else resource_path(*configured_model_path.parts)
+        )
         self.model = None
         self.recognizer = None
 
@@ -50,8 +57,10 @@ class WakeWordDetector:
         self.stream = None
 
         # False positive prevention
-        self.min_audio_energy = 150.0
-        self.debounce_time = 1.5
+        # Raised from 150.0 → 300.0: prevents distant TV / fan noise from
+        # passing the energy gate into the wake-word detection pipeline.
+        self.min_audio_energy = 300.0
+        self.debounce_time = 2.0   # raised from 1.5 s → 2.0 s (matches Porcupine default)
         self.last_detection_time = 0
 
         # Control flags
@@ -169,22 +178,30 @@ class WakeWordDetector:
         if wake in text:
             return True
 
-        # Common variations for "aiden"
+        # Common variations for "aiden".
+        # "aden" removed — only 4 chars; false-matches "eight", "maiden",
+        # names in background TV audio, etc.
         if wake == "aiden":
-            variations = ["aidan", "ayden", "aden", "hey aiden", "ok aiden"]
+            variations = ["aidan", "ayden", "hey aiden", "ok aiden"]
             for variation in variations:
                 if variation in text:
                     logger.debug(f"Matched variation: '{variation}' in '{text}'")
                     return True
 
-        # Fuzzy match
+        # Fuzzy match — requires:
+        #   1. Wake word >= 4 chars (already guaranteed for "aiden")
+        #   2. Candidate word is within 1 char of wake word length
+        #   3. Similarity >= 0.92 (raised from 0.90 to reduce false positives
+        #      from short words like "maiden", "hayden", "pagan")
         if len(wake) >= 4:
             from difflib import SequenceMatcher
             words = text.split()
             for word in words:
+                if len(word) < 4:
+                    continue  # very short words can't reliably fuzzy-match
                 if abs(len(word) - len(wake)) <= 1:
                     similarity = SequenceMatcher(None, wake, word).ratio()
-                    if similarity >= 0.90:
+                    if similarity >= 0.92:  # raised from 0.90
                         logger.debug(f"Fuzzy matched: '{word}' (similarity: {similarity:.2f})")
                         return True
 
@@ -330,15 +347,6 @@ class WakeWordDetector:
     def _on_wake_word_detected(self):
         """Handle wake word detection — thread-safe."""
         try:
-            # Play sound in dedicated thread
-            sound_thread = threading.Thread(
-                target=self._play_activation_sound_sync,
-                daemon=True,
-                name="vosk-wake-sound",
-            )
-            sound_thread.start()
-            sound_thread.join(timeout=3.0)
-
             self.pause()
 
             if self.on_wake_word:
@@ -346,22 +354,6 @@ class WakeWordDetector:
 
         except Exception as e:
             logger.error(f"Error handling wake word: {e}")
-
-    def _play_activation_sound_sync(self):
-        """Play wake word acknowledgment sound in a throwaway event loop."""
-        try:
-            import random
-            loop = asyncio.new_event_loop()
-            try:
-                from src.speech.tts import get_tts_engine
-                tts = get_tts_engine()
-                sound_name = random.choice(["mmm1", "mmm2"])
-                loop.run_until_complete(tts.play_sound(sound_name))
-                logger.debug(f"Played wake word acknowledgment sound: {sound_name}")
-            finally:
-                loop.close()
-        except Exception as e:
-            logger.error(f"Error playing wake word acknowledgment: {e}")
 
 
 # ------------------------------------------------------------------ #

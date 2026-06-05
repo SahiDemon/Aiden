@@ -13,6 +13,7 @@ import shutil
 import re
 
 from src.utils.logger import get_logger
+from src.utils.paths import app_root
 from src.utils.system_parsers import (
     parse_netsh_interfaces,
     select_wireless_interface,
@@ -24,7 +25,7 @@ from src.utils.system_parsers import (
 
 logger = get_logger(__name__)
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = app_root()
 
 
 def _resolve_tool_path(candidates: List[Path]) -> Optional[Path]:

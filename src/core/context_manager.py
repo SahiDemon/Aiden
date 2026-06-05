@@ -89,7 +89,11 @@ class ContextManager:
         """Save conversation to database in background (non-blocking)"""
         try:
             db = await get_db_client()
-            await db.create_conversation(user_id=user_id, mode=mode)
+            await db.create_conversation(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                mode=mode
+            )
         except Exception as e:
             logger.debug(f"Background DB save failed (non-critical): {e}")
     
@@ -97,6 +101,7 @@ class ContextManager:
         """Save messages to database in background (non-blocking)"""
         try:
             db = await get_db_client()
+            await db.ensure_conversation_exists(conversation_id=conversation_id)
             await db.add_message(
                 conversation_id=conversation_id,
                 role="user",
@@ -311,12 +316,16 @@ class ContextManager:
             # Save to db in background
             try:
                 db = await get_db_client()
-                asyncio.create_task(db.add_message(
-                    conversation_id=conversation_id,
-                    role="assistant",
-                    content=message,
-                    metadata={"injected": True}
-                ))
+                async def _save_injected_message():
+                    await db.ensure_conversation_exists(conversation_id=conversation_id)
+                    await db.add_message(
+                        conversation_id=conversation_id,
+                        role="assistant",
+                        content=message,
+                        metadata={"injected": True}
+                    )
+
+                asyncio.create_task(_save_injected_message())
             except Exception as e:
                 logger.debug(f"Background save failed: {e}")
                 
@@ -567,29 +576,30 @@ class ContextManager:
                 
                 system_context_str += apps_section + proc_section
                 
-                # #region agent log
-                try:
-                    import json as _json
-                    import time as _time
-                    _log_payload = {
-                        "sessionId": "a7b452",
-                        "timestamp": int(_time.time() * 1000),
-                        "location": "context_manager.py:build_messages",
-                        "message": "system_context_sizes",
-                        "hypothesisId": "H1_H2",
-                        "data": {
-                            "needs_context": needs_context,
-                            "proc_lines": len(proc_list) if "running_processes" in needs_context else 0,
-                            "apps_chars": len(apps_section),
-                            "proc_chars": len(proc_section),
-                            "total_chars": len(system_context_str),
-                            "query_hint": (query_hint or "")[:80],
-                        },
-                    }
-                    with open("debug-a7b452.log", "a", encoding="utf-8") as _df:
-                        _df.write(_json.dumps(_log_payload) + "\n")
-                except Exception:
-                    pass
+                # #region agent log — only active when APP_DEBUG=true
+                if getattr(self.settings.app, "debug", False):
+                    try:
+                        import json as _json
+                        import time as _time
+                        _log_payload = {
+                            "sessionId": "a7b452",
+                            "timestamp": int(_time.time() * 1000),
+                            "location": "context_manager.py:build_messages",
+                            "message": "system_context_sizes",
+                            "hypothesisId": "H1_H2",
+                            "data": {
+                                "needs_context": needs_context,
+                                "proc_lines": len(proc_list) if "running_processes" in needs_context else 0,
+                                "apps_chars": len(apps_section),
+                                "proc_chars": len(proc_section),
+                                "total_chars": len(system_context_str),
+                                "query_hint": (query_hint or "")[:80],
+                            },
+                        }
+                        with open("debug-a7b452.log", "a", encoding="utf-8") as _df:
+                            _df.write(_json.dumps(_log_payload) + "\n")
+                    except Exception:
+                        pass
                 # #endregion
                 
                 logger.debug(f"System context provided: {needs_context}")

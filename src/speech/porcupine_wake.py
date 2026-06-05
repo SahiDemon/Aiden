@@ -5,14 +5,13 @@ High-accuracy, low-latency wake word detection using Picovoice Porcupine
 Includes:
 - Auto-restart watchdog (survives PyAudio / driver crashes)
 - AGC applied *before* energy gating (quiet speech isn't thrown away)
-- Thread-safe sound playback (no asyncio.run from bg thread)
 """
-import asyncio
 import logging
 import os
 import struct
 import threading
 import time
+from pathlib import Path
 from typing import Callable, Optional
 import numpy as np
 import pvporcupine
@@ -21,20 +20,26 @@ from pvporcupine._porcupine import (
     PorcupineActivationLimitError,
     PorcupineActivationRefusedError,
     PorcupineActivationThrottledError,
+    PorcupineInvalidArgumentError,  # version mismatch / bad .ppn file — non-retryable
 )
 import pyaudio
 
 from src.utils.config import get_settings
 from src.utils.logger import get_logger
+from src.utils.paths import resource_path
 
 logger = get_logger(__name__)
 
-# Errors that will NEVER resolve by retrying (bad key, quota exhausted, etc.)
+# Errors that will NEVER resolve by retrying (bad key, quota exhausted,
+# version-mismatched .ppn file, etc.).
+# PorcupineInvalidArgumentError is included because a .ppn model version
+# mismatch (e.g. v4 model with v3 library) will NEVER succeed on retry.
 _PERMANENT_ERRORS = (
     PorcupineActivationError,
     PorcupineActivationLimitError,
     PorcupineActivationRefusedError,
     PorcupineActivationThrottledError,
+    PorcupineInvalidArgumentError,  # .ppn version mismatch or corrupt file
     ValueError,  # missing access key
 )
 
@@ -54,8 +59,6 @@ class PorcupineWakeWordDetector:
       PyAudio / OS-driver errors don't permanently kill listening.
     * AGC is applied **before** the energy gate – quiet speech gets boosted
       first, then evaluated.
-    * Sound playback from the background thread uses its own throwaway
-      asyncio loop in a dedicated thread to avoid corrupting the main loop.
     """
 
     def __init__(self, on_wake_word: Optional[Callable] = None,
@@ -66,7 +69,12 @@ class PorcupineWakeWordDetector:
 
         # Porcupine configuration
         self.access_key = self.settings.speech.porcupine_access_key
-        self.model_path = self.settings.speech.porcupine_model_path
+        configured_model_path = Path(self.settings.speech.porcupine_model_path)
+        self.model_path = str(
+            configured_model_path
+            if configured_model_path.is_absolute()
+            else resource_path(*configured_model_path.parts)
+        )
         self.sensitivity = self.settings.speech.porcupine_sensitivity
 
         # Porcupine instance (created inside the detection thread)
@@ -84,7 +92,9 @@ class PorcupineWakeWordDetector:
         self.max_noise_samples = 100
         self.agc_target_level = 0.35
         self.agc_current_gain = 1.0
-        self.agc_max_gain = 6.0  # Boosted from 4.0 → 6.0 so quiet voices are amplified more
+        # Reduced from 6.0 → 4.0: 6× amplification was too aggressive,
+        # causing distant TV/fan noise to reach Porcupine's detection level.
+        self.agc_max_gain = 4.0
 
         # False positive prevention
         self.min_audio_energy = self.settings.speech.porcupine_min_energy
@@ -513,16 +523,6 @@ class PorcupineWakeWordDetector:
     def _on_wake_word_detected(self):
         """Handle wake word detection — thread-safe."""
         try:
-            # Play activation sound in a dedicated thread to avoid
-            # asyncio.run() conflicts with the main event loop.
-            sound_thread = threading.Thread(
-                target=self._play_activation_sound_sync,
-                daemon=True,
-                name="wake-sound",
-            )
-            sound_thread.start()
-            sound_thread.join(timeout=3.0)  # Don't wait forever
-
             # Pause detection during interaction
             self.pause()
 
@@ -532,27 +532,6 @@ class PorcupineWakeWordDetector:
 
         except Exception as e:
             logger.error(f"Error handling wake word: {e}")
-
-    def _play_activation_sound_sync(self):
-        """
-        Play wake word acknowledgment sound.
-        Runs in its own thread with a throwaway event loop to avoid
-        interfering with the main asyncio loop.
-        """
-        try:
-            import random
-            loop = asyncio.new_event_loop()
-            try:
-                from src.speech.tts import get_tts_engine
-                tts = get_tts_engine()
-                sound_name = random.choice(["mmm1", "mmm2"])
-                loop.run_until_complete(tts.play_sound(sound_name))
-                logger.debug(f"Played wake word acknowledgment sound: {sound_name}")
-            finally:
-                loop.close()
-        except Exception as e:
-            logger.error(f"Error playing wake word acknowledgment: {e}")
-
 
 # ------------------------------------------------------------------ #
 #  Global singleton

@@ -17,6 +17,7 @@ import sys
 from src.database.redis_client import get_redis_client
 from src.utils.config import get_settings
 from src.utils.logger import get_logger
+from src.utils.paths import resource_path
 
 logger = get_logger(__name__)
 
@@ -58,11 +59,53 @@ class TTSEngine:
         
         self.audio_queue = asyncio.Queue()
         self.is_processing = False
+        self._wake_word_pause_depth = 0
         
         # Start queue processor
         asyncio.create_task(self._process_queue())
         
         logger.info(f"TTS Engine initialized: provider={self.provider}, voice={self.voice_id if self.provider == 'edge' else self.google_voice}")
+
+    def _pause_wake_word_detection(self) -> bool:
+        """Pause wake-word detection while TTS audio is playing."""
+        try:
+            from src.core.wake_word_manager import get_wake_word_manager
+
+            wake_word_manager = get_wake_word_manager()
+            if not wake_word_manager or not getattr(wake_word_manager, "detector", None):
+                return False
+
+            if not wake_word_manager.get_state():
+                return False
+
+            if self._wake_word_pause_depth == 0:
+                wake_word_manager.detector.pause()
+                logger.debug("TTS: Paused wake-word detection during playback")
+
+            self._wake_word_pause_depth += 1
+            return True
+        except Exception as e:
+            logger.debug(f"TTS: Could not pause wake-word detection: {e}")
+            return False
+
+    def _resume_wake_word_detection(self, was_paused: bool):
+        """Resume wake-word detection after TTS playback completes."""
+        if not was_paused:
+            return
+
+        try:
+            self._wake_word_pause_depth = max(0, self._wake_word_pause_depth - 1)
+            if self._wake_word_pause_depth != 0:
+                return
+
+            from src.core.wake_word_manager import get_wake_word_manager
+
+            wake_word_manager = get_wake_word_manager()
+            if wake_word_manager and getattr(wake_word_manager, "detector", None):
+                wake_word_manager.detector.resume()
+                logger.debug("TTS: Resumed wake-word detection after playback")
+        except Exception as e:
+            logger.debug(f"TTS: Could not resume wake-word detection: {e}")
     
     def _init_google_client(self):
         """Initialize Google Cloud TTS client"""
@@ -99,17 +142,29 @@ class TTSEngine:
                     await broadcast_voice_status("speaking", speaking=True)
                     if text:
                         await broadcast_message("assistant_speaking", {"text": text})
-                    
-                    # Play
-                    await self._play_audio_data(audio_data)
+
+                    wake_word_paused = self._pause_wake_word_detection()
+                    try:
+                        # Play
+                        await self._play_audio_data(audio_data)
+                    finally:
+                        self._resume_wake_word_detection(wake_word_paused)
                     
                     # Broadcast idle status
                     await broadcast_voice_status("idle", speaking=False)
                     
                 elif task_type == "sound":
                     sound_path = task.get("path")
+                    wake_word_paused = self._pause_wake_word_detection()
+
+                    async def _play_sound_and_resume():
+                        try:
+                            await self._play_sound_file(sound_path)
+                        finally:
+                            self._resume_wake_word_detection(wake_word_paused)
+
                     # Play sound NON-BLOCKING (fire and forget task)
-                    asyncio.create_task(self._play_sound_file(sound_path))
+                    asyncio.create_task(_play_sound_and_resume())
                     # DO NOT wait here, immediately process next item in queue (which might be speech)
                     self.audio_queue.task_done()
                     continue
@@ -407,15 +462,15 @@ class TTSEngine:
         """Play a sound effect"""
         try:
             # Try both .mp3 and .MP3 extensions
-            sound_path = os.path.join("sounds", f"{sound_name}.mp3")
-            if not os.path.exists(sound_path):
-                sound_path = os.path.join("sounds", f"{sound_name}.MP3")
+            sound_path = resource_path("sounds", f"{sound_name}.mp3")
+            if not sound_path.exists():
+                sound_path = resource_path("sounds", f"{sound_name}.MP3")
             
-            if os.path.exists(sound_path):
+            if sound_path.exists():
                 # Queue the sound
                 await self.audio_queue.put({
                     "type": "sound",
-                    "path": sound_path
+                    "path": str(sound_path)
                 })
                 logger.debug(f"TTS: Queued sound: {sound_name}")
             else:
@@ -423,6 +478,21 @@ class TTSEngine:
                 
         except Exception as e:
             logger.error(f"TTS: Error queuing sound: {e}")
+
+    async def play_sound_now(self, sound_name: str):
+        """Play a sound effect immediately and wait for it to finish."""
+        try:
+            sound_path = resource_path("sounds", f"{sound_name}.mp3")
+            if not sound_path.exists():
+                sound_path = resource_path("sounds", f"{sound_name}.MP3")
+
+            if sound_path.exists():
+                logger.debug(f"TTS: Playing sound now: {sound_name}")
+                await self._play_sound_file(str(sound_path))
+            else:
+                logger.warning(f"TTS: Sound not found: {sound_name}")
+        except Exception as e:
+            logger.error(f"TTS: Error playing sound immediately: {e}")
 
     async def _play_sound_file(self, sound_path: str):
         """Internal method to play sound file and wait"""
@@ -447,21 +517,41 @@ class TTSEngine:
     def stop(self):
         """Stop current playback and clear the queue (Barge-in / Interruption)"""
         logger.info("TTS: Stop requested (Barge-in)")
-        
-        # 1. Stop current audio
+
+        # 1. Stop current audio — music track AND all Sound channels.
+        # Previously only music.stop() was called, leaving sound-effect channels
+        # (pygame.mixer.Sound) running even after a barge-in.
         if PYGAME_AVAILABLE:
             try:
                 pygame.mixer.music.stop()
             except Exception as e:
-                logger.error(f"Error stopping mixer: {e}")
-                
-        # 2. Clear the queue
+                logger.debug(f"TTS: Error stopping music: {e}")
+            try:
+                pygame.mixer.stop()   # stops all active Sound channels
+            except Exception as e:
+                logger.debug(f"TTS: Error stopping channels: {e}")
+
+        # 2. Clear the pending-speech queue
         while not self.audio_queue.empty():
             try:
                 self.audio_queue.get_nowait()
                 self.audio_queue.task_done()
             except asyncio.QueueEmpty:
                 break
+
+    def stop_playback_now(self):
+        """Thread-friendly immediate audio stop for global hotkey callbacks."""
+        if not PYGAME_AVAILABLE:
+            return
+
+        try:
+            pygame.mixer.music.stop()
+        except Exception as e:
+            logger.debug(f"TTS: Error stopping music immediately: {e}")
+        try:
+            pygame.mixer.stop()
+        except Exception as e:
+            logger.debug(f"TTS: Error stopping channels immediately: {e}")
     
     async def wait_until_done(self, timeout: float = 10.0):
         """Wait for all queued audio to finish playing"""
@@ -494,10 +584,6 @@ def get_tts_engine() -> TTSEngine:
 def reset_tts_engine() -> None:
     global _tts_engine
     _tts_engine = None
-
-
-
-
 
 
 

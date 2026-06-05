@@ -163,6 +163,8 @@ class CommandExecutor:
         Returns:
             List of result dictionaries with success status and details
         """
+        commands = self._normalize_execution_order(commands)
+
         if sequential:
             results = []
             for command in commands:
@@ -177,6 +179,32 @@ class CommandExecutor:
             ]
             results = await asyncio.gather(*tasks)
             return results
+
+    def _normalize_execution_order(self, commands: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Put audio output switching before playback commands."""
+        if len(commands) < 2:
+            return commands
+
+        def priority(command: Dict[str, Any]) -> int:
+            command_type = command.get("type")
+            params = command.get("params") or {}
+            action = str(params.get("action") or "").lower()
+
+            if command_type == "system_control" and action == "audio.set_output":
+                return 0
+
+            if command_type == "media_control":
+                media_action = str(params.get("action") or "").lower()
+                if media_action in {"play", "resume", "play_track", "play_playlist", "play_liked_songs"}:
+                    return 1
+
+            return 2
+
+        ordered = sorted(enumerate(commands), key=lambda item: (priority(item[1]), item[0]))
+        normalized = [command for _, command in ordered]
+        if normalized != commands:
+            logger.info("Reordered commands so audio output changes happen before media playback.")
+        return normalized
     
     async def _handle_launch_app(self, params: Dict[str, Any]) -> bool:
         """Handle app launch command"""
@@ -368,31 +396,74 @@ class CommandExecutor:
         )
         return success, payload
     
-    async def _handle_fan_control(self, params: Dict[str, Any]) -> tuple[bool, Optional[str]]:
-        """Handle ESP32 fan control command"""
+    async def _handle_fan_control(self, params: Dict[str, Any]) -> tuple[bool, Optional[dict]]:
+        """Handle ESP32 fan control command.
+
+        For power, speed, mode, osc, and timer commands the ESP32 exposes
+        simple shortcut GET routes (e.g. GET /power, GET /speed/3).  We use
+        direct_toggle() which fires a SINGLE HTTP request with no pre/post
+        state checks, keeping latency to <200 ms on LAN.
+
+        Falls back to the full execute_control_request() path for anything
+        that can't be mapped to a shortcut route.
+        """
         if not self.esp32_client:
             logger.warning("ESP32 client not configured - fan control unavailable")
             logger.info("To enable fan control, configure ESP32 settings in .env file")
             return False, None
-        
-        operation = params.get("operation", "").lower()
-        
-        match operation:
-            case "on" | "turn_on" | "increase" | "speed_up" | "faster" | "high":
-                # /on endpoint - cycles through speeds (1 → 2 → 3)
-                success, response = await self.esp32_client.turn_on()
-                return success, response
-            case "off" | "turn_off" | "stop":
-                # /off endpoint
-                success, response = await self.esp32_client.turn_off()
-                return success, response
-            case "mode" | "change_mode" | "switch_mode":
-                # /mode endpoint
-                success, response = await self.esp32_client.change_mode()
-                return success, response
-            case _:
-                logger.error(f"Unknown fan operation: {operation}")
-                return False, None
+
+        control_id = params.get("control_id")
+        target = str(params.get("target")) if params.get("target") is not None else None
+        legacy_action = params.get("operation") or params.get("action")
+
+        # ── Fast path: map to a shortcut GET route ────────────────────────
+        shortcut_path: Optional[str] = None
+
+        if control_id == "power" or (legacy_action and legacy_action.lower() in
+                {"on", "off", "turn_on", "turn_off", "stop", "toggle"}):
+            # Always just toggle /power — no status pre-check needed
+            shortcut_path = "/power"
+        elif control_id in {"speed", "mode", "timer", "osc"} and target is not None:
+            shortcut_path = f"/{control_id}/{target}"
+        elif control_id in {"speed", "mode", "timer", "osc"} and not target:
+            # cycle / toggle with no explicit target → hit the base route
+            shortcut_path = f"/{control_id}"
+
+        if shortcut_path is not None:
+            result = await self.esp32_client.direct_toggle(shortcut_path)
+            if not result.get("success"):
+                logger.error("ESP32 fan control failed: %s", result.get("error"))
+                return False, {
+                    "type": "fan_control",
+                    "message": result.get("error") or "I couldn't control the fan.",
+                    "control_id": control_id,
+                    "target": target,
+                }
+            payload = dict(result)
+            payload["type"] = "fan_control"
+            return True, payload
+
+        # ── Slow path: full metadata-aware request ────────────────────────
+        result = await self.esp32_client.execute_control_request(
+            control_id=control_id,
+            target=target,
+            action=params.get("action"),
+            legacy_action=params.get("operation"),
+        )
+
+        if not result.get("success"):
+            logger.error("ESP32 fan control failed: %s", result.get("error"))
+            return False, {
+                "type": "fan_control",
+                "message": result.get("error") or "I couldn't control the fan.",
+                "control_id": result.get("control_id"),
+                "target": result.get("target"),
+                "device": result.get("device"),
+            }
+
+        payload = dict(result)
+        payload["type"] = "fan_control"
+        return True, payload
     
     async def _handle_wake_word_control(self, params: Dict[str, Any]) -> bool:
         """Handle wake word control command (enable/disable/toggle)"""
@@ -536,15 +607,17 @@ class CommandExecutor:
         
         # Play dramatic outro sound
         try:
-            import pygame
-            sound_path = os.path.join(os.getcwd(), "sounds", "dramatic_outro.mp3")
-            if os.path.exists(sound_path):
+            import pygame  # type: ignore[import-untyped]
+            from src.utils.paths import resource_path
+
+            sound_path = resource_path("sounds", "dramatic_outro.mp3")
+            if sound_path.exists():
                 if not pygame.mixer.get_init():
                     pygame.mixer.init()
                 
                 # Use Sound object instead of music stream to allow mixing with TTS
                 # TTS uses the music channel, so this allows them to play simultaneously
-                outro_sound = pygame.mixer.Sound(sound_path)
+                outro_sound = pygame.mixer.Sound(str(sound_path))
                 outro_sound.set_volume(0.5)  # Lower volume slightly so TTS is audible
                 outro_sound.play()
                 logger.info(f"Playing dramatic outro: {sound_path}")
@@ -704,6 +777,10 @@ class CommandExecutor:
                 "identify",
                 "what_song",
             }
+
+        # Fan control no longer blocks TTS — we speak optimistically and only
+        # append a failure message if the ESP32 actually rejects the command.
+        # (fan_control was here previously but has been moved to fast-path)
         
         # UPS control commands that return data
         if command_type == "ups_control":

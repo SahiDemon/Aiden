@@ -1,8 +1,15 @@
-import React, { useState, useEffect } from 'react'
-import { Fan, Power, PowerOff, RefreshCw, Wifi, WifiOff } from 'lucide-react'
+import React, { useEffect, useMemo, useState } from 'react'
+import { Fan, RefreshCw, Wifi, WifiOff } from 'lucide-react'
 import { toast } from 'react-hot-toast'
 import { Button } from '../ui/button'
 import { Badge } from '../ui/badge'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../ui/select'
 import api from '../../lib/api'
 
 const SmartDeviceCard = ({ connected, deviceUpdates, compact = false }) => {
@@ -10,69 +17,185 @@ const SmartDeviceCard = ({ connected, deviceUpdates, compact = false }) => {
   const [loading, setLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState(null)
 
-  useEffect(() => {
-    // Fetch status once on mount
-    fetchDeviceStatus()
-    
-    // Don't poll constantly - only fetch when needed
-    // WebSocket will handle real-time updates
-  }, [])
-
   const fetchDeviceStatus = async () => {
     try {
       setLoading(true)
-      const data = await api.getESP32Status()
+      const data = await api.getESP32Device()
       setDeviceStatus(data)
     } catch (error) {
-      console.error('Error fetching device status:', error)
+      console.error('Error fetching ESP32 device payload:', error)
     } finally {
       setLoading(false)
     }
   }
 
-  const handleControl = async (action) => {
-    // Prevent multiple clicks - return if already loading
-    if (actionLoading) {
-      console.log('Action already in progress, ignoring click')
+  useEffect(() => {
+    fetchDeviceStatus()
+
+    const interval = setInterval(() => {
+      fetchDeviceStatus()
+    }, 15000)
+
+    return () => clearInterval(interval)
+  }, [])
+
+  useEffect(() => {
+    const payload = deviceUpdates?.data
+    if (!payload) return
+
+    if (payload.device) {
+      setDeviceStatus((prev) => ({
+        ...(prev || {}),
+        success: true,
+        connected: payload.connected ?? prev?.connected ?? false,
+        ip_address: payload.device.ip_address || prev?.ip_address,
+        device: payload.device,
+        status: payload.device.summary || prev?.status,
+      }))
       return
     }
 
-    if (!connected || !deviceStatus?.connected) {
+    fetchDeviceStatus()
+  }, [deviceUpdates])
+
+  const isDeviceConnected = deviceStatus?.connected
+  const device = deviceStatus?.device
+  const summary = device?.summary || deviceStatus?.status || {}
+  const controls = device?.controls || []
+
+  const quickFacts = useMemo(() => {
+    const parts = []
+    if (summary.state) parts.push(`Power ${summary.state}`)
+    if (summary.speed) parts.push(`Speed ${summary.speed}`)
+    if (summary.timer) parts.push(`Timer ${summary.timer}`)
+    if (summary.mode) parts.push(`Mode ${summary.mode}`)
+    return parts
+  }, [summary])
+
+  const handleControl = async (controlId, payload) => {
+    if (actionLoading) {
+      return
+    }
+
+    if (!connected || !isDeviceConnected) {
       toast.error('Device not connected')
       return
     }
 
-    setActionLoading(action)
-    
+    const loadingKey = `${controlId}:${payload.target || payload.action || 'set'}`
+    setActionLoading(loadingKey)
+
     try {
-      console.log(`Sending single command: ${action}`)
-      const result = await api.controlESP32(action)
-      
+      const result = await api.controlESP32({
+        control_id: controlId,
+        ...payload,
+      })
+
       if (result.success) {
-        toast.success(result.message || `Fan ${action} successful`)
-        // Don't fetch status after control - WebSocket will update
-        // This prevents constant polling that causes the fan to turn on/off repeatedly
+        if (result.device) {
+          setDeviceStatus((prev) => ({
+            ...(prev || {}),
+            success: true,
+            connected: result.connected ?? prev?.connected ?? true,
+            ip_address: result.device.ip_address || prev?.ip_address,
+            device: result.device,
+            status: result.device.summary || prev?.status,
+          }))
+        } else {
+          fetchDeviceStatus()
+        }
+        toast.success(result.message || `${controlId} updated`)
       } else {
         toast.error(result.message || 'Control failed')
       }
     } catch (error) {
-      toast.error('Failed to control device')
-      console.error('Control error:', error)
+      toast.error(error.message || 'Failed to control device')
+      console.error('ESP32 control error:', error)
     } finally {
       setActionLoading(null)
     }
   }
 
-  const isDeviceConnected = deviceStatus?.connected
-  const deviceState = deviceStatus?.status
+  const renderStepButtons = (control, columns = 2) => (
+    <div className={`grid gap-2 ${columns === 3 ? 'grid-cols-3' : 'grid-cols-2'}`}>
+      {control.steps.map((step) => {
+        const isActive = control.value === step.key
+        const loadingKey = `${control.id}:${step.key}`
+        return (
+          <Button
+            key={`${control.id}-${step.key}`}
+            onClick={() => handleControl(control.id, { target: step.key })}
+            disabled={!isDeviceConnected || actionLoading !== null}
+            className={
+              isActive
+                ? 'bg-blue-500/20 border border-blue-400/40 text-blue-100 hover:bg-blue-500/25'
+                : 'bg-white/5 border border-white/10 text-white/75 hover:bg-white/10'
+            }
+          >
+            {actionLoading === loadingKey ? (
+              <RefreshCw className="w-4 h-4 animate-spin mr-2" />
+            ) : null}
+            {step.label}
+          </Button>
+        )
+      })}
+    </div>
+  )
+
+  const renderControl = (control) => {
+    const steps = control.steps || []
+    const isToggle = control.kind === 'toggle' || steps.length === 2
+    const usesSelect = control.kind === 'cycle' && steps.length > 5
+
+    return (
+      <div key={control.id} className="rounded-xl border border-white/10 bg-white/5 p-3 space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium text-white/85">{control.label}</p>
+            <p className="text-xs text-white/50">
+              {control.value_label || control.value || 'Unknown'}
+            </p>
+          </div>
+          <Badge className="bg-white/10 border-white/10 text-white/80">
+            {control.feature}
+          </Badge>
+        </div>
+
+        {usesSelect ? (
+          <Select
+            value={control.value || ''}
+            onValueChange={(value) => handleControl(control.id, { target: value })}
+          >
+            <SelectTrigger
+              className="border-white/10 bg-white/5 text-white"
+              disabled={!isDeviceConnected || actionLoading !== null}
+            >
+              <SelectValue placeholder={`Select ${control.label.toLowerCase()}`} />
+            </SelectTrigger>
+            <SelectContent className="border-white/10 bg-slate-950 text-white">
+              {steps.map((step) => (
+                <SelectItem key={`${control.id}-${step.key}`} value={step.key} className="text-white">
+                  {step.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : isToggle ? (
+          renderStepButtons(control, 2)
+        ) : (
+          renderStepButtons(control, steps.length >= 3 ? 3 : 2)
+        )}
+      </div>
+    )
+  }
 
   if (compact) {
     return (
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-medium text-blue-200/80 flex items-center gap-2">
-            <Fan className="w-4 h-4 text-blue-300" />
-            Smart Fan
+            <Fan className={`w-4 h-4 ${summary.state === 'on' ? 'text-emerald-300' : 'text-blue-300'}`} />
+            {device?.device_name || 'Smart Fan'}
           </h3>
           <Button
             size="sm"
@@ -84,7 +207,7 @@ const SmartDeviceCard = ({ connected, deviceUpdates, compact = false }) => {
             <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
           </Button>
         </div>
-        
+
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             {isDeviceConnected ? (
@@ -94,21 +217,18 @@ const SmartDeviceCard = ({ connected, deviceUpdates, compact = false }) => {
             )}
             <span className="text-xs text-white/70">Device</span>
           </div>
-          <Badge 
-            variant={isDeviceConnected ? "default" : "destructive"}
-            className={`text-xs px-2 py-0.5 ${isDeviceConnected ? 'bg-blue-500/20 border-blue-400/30 text-blue-200' : ''}`}
+          <Badge
+            variant={isDeviceConnected ? 'default' : 'destructive'}
+            className={isDeviceConnected ? 'text-xs px-2 py-0.5 bg-blue-500/20 border-blue-400/30 text-blue-200' : 'text-xs px-2 py-0.5'}
           >
             {isDeviceConnected ? 'Online' : 'Offline'}
           </Badge>
         </div>
 
-        {isDeviceConnected && deviceState && (
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-white/70">State</span>
-            <span className="text-blue-200 capitalize">
-              {deviceState.state || 'Unknown'}
-            </span>
-          </div>
+        {quickFacts.length > 0 && (
+          <p className="text-xs text-white/60 leading-relaxed">
+            {quickFacts.join(' • ')}
+          </p>
         )}
       </div>
     )
@@ -117,10 +237,15 @@ const SmartDeviceCard = ({ connected, deviceUpdates, compact = false }) => {
   return (
     <div className="liquid-glass-card p-6">
       <div className="pb-3 flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-          <Fan className="w-5 h-5" />
-          Smart Fan
-        </h2>
+        <div>
+          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+            <Fan className={`w-5 h-5 ${summary.state === 'on' ? 'text-emerald-300 animate-spin' : ''}`} />
+            {device?.device_name || 'Smart Fan'}
+          </h2>
+          <p className="text-xs text-white/50 mt-1">
+            Runtime controls from the ESP32 device
+          </p>
+        </div>
         <Button
           size="icon"
           variant="ghost"
@@ -131,9 +256,8 @@ const SmartDeviceCard = ({ connected, deviceUpdates, compact = false }) => {
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
         </Button>
       </div>
-      
+
       <div className="space-y-4">
-        {/* Connection Status */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 text-sm">
             {isDeviceConnected ? (
@@ -141,86 +265,37 @@ const SmartDeviceCard = ({ connected, deviceUpdates, compact = false }) => {
             ) : (
               <WifiOff className="w-4 h-4 text-red-400" />
             )}
-            <span className="text-white/70">
-              {deviceStatus?.ip_address || '192.168.1.180'}
-            </span>
+            <span className="text-white/70">{deviceStatus?.ip_address || '192.168.1.180'}</span>
           </div>
-          <Badge 
-            variant={isDeviceConnected ? "default" : "destructive"}
+          <Badge
+            variant={isDeviceConnected ? 'default' : 'destructive'}
             className="bg-white/10 border-white/20 text-white"
           >
             {isDeviceConnected ? 'Connected' : 'Offline'}
           </Badge>
         </div>
 
-        {/* Device State */}
-        {isDeviceConnected && deviceState && (
-          <>
-            <div className="h-px bg-white/10" />
-            
-            <div className="flex items-center justify-between p-3 bg-white/5 border border-white/10">
-              <div>
-                <p className="text-sm font-medium text-white/80">Current State</p>
-                <p className="text-xs text-white/60 capitalize">
-                  {deviceState.state || 'Unknown'}
-                  {deviceState.speed && ` • Speed: ${deviceState.speed}`}
-                </p>
-              </div>
-              <Fan
-                className={`w-6 h-6 ${
-                  deviceState.state === 'on' ? 'text-emerald-400 animate-spin' : 'text-white/50'
-                }`}
-              />
+        <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+          <p className="text-sm font-medium text-white/80">Current Runtime State</p>
+          <p className="text-xs text-white/60 mt-1">
+            {quickFacts.length > 0 ? quickFacts.join(' • ') : 'No live state available'}
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          {controls.length > 0 ? (
+            controls.map(renderControl)
+          ) : (
+            <div className="rounded-xl border border-dashed border-white/10 bg-white/5 p-4 text-sm text-white/60">
+              {isDeviceConnected
+                ? 'No runtime controls were returned by the ESP32.'
+                : 'ESP32 fan is offline. Once it reconnects, the live controls will appear here.'}
             </div>
-          </>
-        )}
-
-        <div className="h-px bg-white/10" />
-
-        {/* Controls */}
-        <div className="grid grid-cols-2 gap-2">
-          <Button
-            onClick={() => handleControl('turn_on')}
-            disabled={!isDeviceConnected || actionLoading !== null}
-            className="bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/30 text-emerald-300"
-          >
-            {actionLoading === 'turn_on' ? (
-              <RefreshCw className="w-4 h-4 animate-spin mr-2" />
-            ) : (
-              <Power className="w-4 h-4 mr-2" />
-            )}
-            Turn On
-          </Button>
-
-          <Button
-            onClick={() => handleControl('turn_off')}
-            disabled={!isDeviceConnected || actionLoading !== null}
-            className="bg-red-500/20 hover:bg-red-500/30 border border-red-400/30 text-red-300"
-          >
-            {actionLoading === 'turn_off' ? (
-              <RefreshCw className="w-4 h-4 animate-spin mr-2" />
-            ) : (
-              <PowerOff className="w-4 h-4 mr-2" />
-            )}
-            Turn Off
-          </Button>
-
-          <Button
-            onClick={() => handleControl('change_mode')}
-            disabled={!isDeviceConnected || actionLoading !== null}
-            className="col-span-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white/80"
-          >
-            {actionLoading === 'change_mode' ? (
-              <RefreshCw className="w-4 h-4 animate-spin mr-2" />
-            ) : (
-              <RefreshCw className="w-4 h-4 mr-2" />
-            )}
-            Change Mode
-          </Button>
+          )}
         </div>
 
         <p className="text-xs text-white/50 text-center">
-          Voice: "turn on the fan" or "change fan mode"
+          Voice: “set fan timer to 3.5 hours”, “set speed to 2”, or “turn oscillation on”
         </p>
       </div>
     </div>
@@ -228,6 +303,3 @@ const SmartDeviceCard = ({ connected, deviceUpdates, compact = false }) => {
 }
 
 export default SmartDeviceCard
-
-
-

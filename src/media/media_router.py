@@ -61,13 +61,17 @@ class MediaRouter:
 
         try:
             if self.spotify_client.is_enabled():
-                playback = await self.spotify_client.get_current_playback()
-                if playback and playback.get("is_playing"):
-                    device = playback.get("device") or {}
-                    state["spotify_was_playing"] = True
-                    state["spotify_device_id"] = device.get("id")
-                    await self.spotify_client.pause(device_id=device.get("id"))
-                    logger.info("Paused Spotify for STT listening window.")
+                if not self.spotify_client.has_fresh_token():
+                    self.spotify_client.refresh_token_in_background()
+                    logger.debug("Spotify token refresh started in background; skipping Spotify duck for this listen.")
+                else:
+                    playback = await self.spotify_client.get_current_playback()
+                    if playback and playback.get("is_playing"):
+                        device = playback.get("device") or {}
+                        state["spotify_was_playing"] = True
+                        state["spotify_device_id"] = device.get("id")
+                        await self.spotify_client.pause(device_id=device.get("id"))
+                        logger.info("Paused Spotify for STT listening window.")
         except Exception as exc:
             logger.debug(f"Spotify ducking skipped: {exc}")
 

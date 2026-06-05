@@ -25,11 +25,25 @@ from src.core.hotkey_listener import get_hotkey_listener, HotkeyListener
 from src.core.wake_word_manager import get_wake_word_manager
 from src.speech.wake_word import get_wake_word_detector
 from src.speech.porcupine_wake import get_porcupine_detector
+from src.speech.openwakeword_wake import OpenWakeWordDetector
 from src.tray.tray_app import run_tray_app
 from src.utils.config import get_settings
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+_DEBUG_ARGS = {"--debug", "-debug"}
+
+
+def _apply_cli_overrides() -> None:
+    """Apply simple CLI overrides before config loads."""
+    for arg in list(sys.argv):
+        if arg in _DEBUG_ARGS:
+            os.environ["APP_DEBUG"] = "true"
+            sys.argv.remove(arg)
+
+
+_apply_cli_overrides()
 
 # Global state
 assistant: Optional[object] = None
@@ -77,30 +91,36 @@ def handle_activation(from_hotkey: bool = False):
             result = future.result(timeout=60)  # 60 second timeout (allows auto-listen)
         except TimeoutError:
             logger.error("Voice activation timed out after 60 seconds")
+        except asyncio.CancelledError:
+            logger.info("[VOICE] Activation coroutine was cancelled")
         except Exception as e:
             logger.error(f"Error in voice activation: {e}", exc_info=True)
         
     except Exception as e:
         logger.error(f"Error handling activation: {e}", exc_info=True)
     finally:
-        # GUARANTEED resume — no matter what exception path we took
-        if wake_word_detector and wake_word_manager:
-            if wake_word_manager.is_enabled:
-                wake_word_detector.resume()
-                _resumed = True
-                logger.debug("[VOICE] Wake word detector resumed after activation")
-            else:
-                logger.debug("[VOICE] Wake word detector not resumed because wake word listening is disabled")
-        elif wake_word_detector and not wake_word_manager:
-            # Safety: if manager isn't initialized yet, still resume
+        # GUARANTEED resume — always re-enable detection unless the user
+        # intentionally disabled it via toggle (is_enabled == False).
+        #
+        # BUG FIX: previously this block only resumed if wake_word_manager existed
+        # AND is_enabled was truthy at callback time.  If wake_word_manager hadn't
+        # finished initializing, the detector would be left permanently paused and
+        # every subsequent wake word would be silently ignored.
+        _should_resume = True
+        if wake_word_manager is not None:
+            # Only skip resume when the user deliberately disabled listening.
+            _should_resume = bool(getattr(wake_word_manager, "is_enabled", True))
+
+        if wake_word_detector and _should_resume:
             wake_word_detector.resume()
             _resumed = True
-            logger.debug("[VOICE] Wake word detector resumed (no manager)")
+            logger.debug("[VOICE] Wake word detector resumed after activation")
+        elif not _should_resume:
+            logger.debug("[VOICE] Wake word detector not resumed — listening disabled by user toggle")
         else:
             logger.warning(
-                "[VOICE] Wake word detector was NOT resumed because the detector is missing "
-                f"(from_hotkey={from_hotkey}, manager_present={wake_word_manager is not None}, "
-                f"manager_enabled={getattr(wake_word_manager, 'is_enabled', None)})"
+                "[VOICE] Wake word detector was NOT resumed — detector object is missing "
+                f"(from_hotkey={from_hotkey})"
             )
 
 
@@ -151,18 +171,27 @@ def handle_stop_listening():
             logger.error("Assistant not initialized!")
             return
 
+        # Stop playback/STT immediately from the hotkey thread. The async
+        # coroutine below still cancels request tasks and broadcasts state, but
+        # it may have to wait if an LLM call is in progress.
+        cancelled_now = assistant.request_immediate_stop()
+
         future = asyncio.run_coroutine_threadsafe(
             assistant.cancel_active_listening(),
             main_loop
         )
 
-        try:
-            cancelled = future.result(timeout=5)
-            logger.info(f"[STOP] Active listening cancel result: {cancelled}")
-        except TimeoutError:
-            logger.error("Stop-listening hotkey timed out")
-        except Exception as e:
-            logger.error(f"Error stopping active listening: {e}", exc_info=True)
+        def _log_stop_result(done_future):
+            try:
+                cancelled = done_future.result()
+                logger.info(
+                    f"[STOP] Active listening cancel result: {cancelled} "
+                    f"(immediate={cancelled_now})"
+                )
+            except Exception as e:
+                logger.error(f"Error stopping active listening: {e}", exc_info=True)
+
+        future.add_done_callback(_log_stop_result)
 
     except Exception as e:
         logger.error(f"Error handling stop-listening hotkey: {e}", exc_info=True)
@@ -212,7 +241,9 @@ async def initialize_services():
         logger.info("WebSocket broadcast callback set")
         
         api_server_task = asyncio.create_task(start_api_server())
-        await asyncio.sleep(3)  # Give server time to start (including DB/Redis/Groq init)
+        # Reduced from 3 s → 1 s: the API server, DB, and Redis connections
+        # initialize asynchronously and don't actually need 3 s of busy-wait.
+        await asyncio.sleep(1)
         
         # 3. Initialize wake word detector
         logger.info("Initializing wake word detector...")
@@ -232,8 +263,21 @@ async def initialize_services():
             except Exception as vosk_err:
                 logger.error(f"Vosk fallback also failed: {vosk_err}", exc_info=True)
         
-        # Try Porcupine first (if enabled), fallback to Vosk
-        if settings.speech.use_porcupine and settings.speech.porcupine_access_key:
+        # Priority: openWakeWord → Porcupine → Vosk
+        oww_model = getattr(settings.speech, "oww_model_path", "")
+        use_oww = getattr(settings.speech, "use_openwakeword", False)
+
+        if use_oww:
+            try:
+                logger.info("Using openWakeWord detector (low false-positive, open-source)")
+                wake_word_detector = OpenWakeWordDetector(callback=handle_activation)
+                wake_word_detector.start()
+                logger.info("✅ openWakeWord detector started successfully")
+            except Exception as e:
+                logger.error(f"Failed to start openWakeWord detector: {e} — falling back to Vosk")
+                _fallback_to_vosk()
+
+        elif settings.speech.use_porcupine and settings.speech.porcupine_access_key:
             try:
                 logger.info("Using Porcupine wake word detector")
                 wake_word_detector = get_porcupine_detector(
@@ -274,45 +318,43 @@ async def initialize_services():
         executor.set_wake_word_manager(wake_word_manager)
         logger.info("Wake word manager injected into command executor")
         
-        # 4. Initialize hotkey listener
-        logger.info("Initializing hotkey listener...")
+        # 4. Initialize hotkey listeners
         hotkey_listener = get_hotkey_listener(
             on_activation=lambda: handle_activation(from_hotkey=True),
             hotkey_override=settings.app.hotkey,
         )
         hotkey_listener.start()
-        logger.info(f"✅ Voice hotkey: {settings.app.hotkey}")
+        logger.info(f"✅ Voice activation hotkey: {hotkey_listener.hotkey_combo['str']}")
         
-        # 4.5. Initialize toggle hotkey listener
-        logger.info("Initializing toggle hotkey listener...")
         toggle_hotkey_listener = HotkeyListener(
             on_activation=handle_toggle_wake_word,
             hotkey_override=settings.app.toggle_hotkey,
         )
         toggle_hotkey_listener.start()
-        logger.info(f"✅ Toggle hotkey: {settings.app.toggle_hotkey}")
+        logger.info(f"✅ Toggle wake-word hotkey: {toggle_hotkey_listener.hotkey_combo['str']}")
 
-        # 4.6. Initialize stop-listening hotkey listener
-        logger.info("Initializing stop-listening hotkey listener...")
         stop_listening_hotkey_listener = HotkeyListener(
             on_activation=handle_stop_listening,
             hotkey_override=settings.app.stop_listening_hotkey,
         )
         stop_listening_hotkey_listener.start()
-        logger.info(f"✅ Stop-listening hotkey: {settings.app.stop_listening_hotkey}")
+        logger.info(f"✅ Stop-listening hotkey: {stop_listening_hotkey_listener.hotkey_combo['str']}")
         
         # 5. Start overlay (if built)
-        logger.info("Starting overlay...")
-        try:
-            from src.utils.overlay_launcher import get_overlay_launcher
-            overlay_launcher = get_overlay_launcher()
-            if overlay_launcher.is_overlay_built():
-                overlay_launcher.start()
-                logger.info("✅ Overlay started")
-            else:
-                logger.warning("⚠️ Overlay not built - skipping. Run 'npm run build' in overlay directory to enable.")
-        except Exception as e:
-            logger.warning(f"Could not start overlay: {e}")
+        if os.getenv("AIDEN_EMBEDDED_OVERLAY") == "1":
+            logger.info("Overlay is embedded in the installer; skipping auto-launch.")
+        else:
+            logger.info("Starting overlay...")
+            try:
+                from src.utils.overlay_launcher import get_overlay_launcher
+                overlay_launcher = get_overlay_launcher()
+                if overlay_launcher.is_overlay_built():
+                    overlay_launcher.start()
+                    logger.info("✅ Overlay started")
+                else:
+                    logger.warning("⚠️ Overlay not built - skipping. Run 'npm run build' in overlay directory to enable.")
+            except Exception as e:
+                logger.warning(f"Could not start overlay: {e}")
         
         # 5.5. Start UPS monitoring (if enabled)
         if settings.ups.enabled:
@@ -332,6 +374,7 @@ async def initialize_services():
                     shutdown_threshold=settings.ups.shutdown_threshold,
                     polling_interval=settings.ups.polling_interval,
                     on_power_lost=ups_handler.handle_power_lost,
+                    on_power_restored=ups_handler.handle_power_restored,
                     on_battery_alert=ups_handler.handle_battery_alert,
                     on_battery_critical=ups_handler.handle_battery_critical,
                     on_shutdown_request=ups_handler.handle_shutdown_request,
@@ -350,13 +393,13 @@ async def initialize_services():
         
         logger.info("=" * 70)
         logger.info("AIDEN IS READY!")
-        logger.info(f"Wake word: '{settings.app.wake_word}'")
-        logger.info(f"Hotkey: {settings.app.hotkey}")
-        logger.info(f"Toggle hotkey: {settings.app.toggle_hotkey}")
-        logger.info(f"Stop-listening hotkey: {settings.app.stop_listening_hotkey}")
-        logger.info(f"Dashboard: http://{settings.api.host}:{settings.api.port}")
-        logger.info(f"Overlay: {'Running' if overlay_launcher and overlay_launcher.process else 'Not running'}")
-        logger.info(f"UPS Monitor: {'Running' if ups_monitor and ups_monitor.running else 'Not running'}")
+        logger.info(f"  Wake word       : '{settings.app.wake_word}'")
+        logger.info(f"  Activate        : {hotkey_listener.hotkey_combo['str'] if hotkey_listener else settings.app.hotkey}")
+        logger.info(f"  Toggle wake-word: {toggle_hotkey_listener.hotkey_combo['str'] if toggle_hotkey_listener else settings.app.toggle_hotkey}")
+        logger.info(f"  Stop listening  : {stop_listening_hotkey_listener.hotkey_combo['str'] if stop_listening_hotkey_listener else settings.app.stop_listening_hotkey}")
+        logger.info(f"  Dashboard       : http://{settings.api.host}:{settings.api.port}")
+        logger.info(f"  Overlay         : {'Running' if overlay_launcher and overlay_launcher.process else 'Not running'}")
+        logger.info(f"  UPS Monitor     : {'Running' if ups_monitor and ups_monitor.running else 'Not running'}")
         logger.info("=" * 70)
         
         return True

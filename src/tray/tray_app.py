@@ -51,11 +51,13 @@ class AidenTrayApp:
     
     def create_icon(self) -> Image.Image:
         """Load the Aiden icon for the tray"""
-        # Try to load the icon from overlay/public or dashboard/public
-        project_root = Path(__file__).parent.parent.parent
+        from src.utils.paths import app_root
+
+        root = app_root()
         icon_paths = [
-            project_root / "overlay" / "public" / "icon.png",
-            project_root / "dashboard" / "public" / "icon.png"
+            root / "overlay" / "public" / "icon.png",
+            root / "dashboard" / "public" / "icon.png",
+            root / "dashboard" / "build" / "icon.png",
         ]
         
         for icon_path in icon_paths:

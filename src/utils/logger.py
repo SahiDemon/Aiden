@@ -58,12 +58,14 @@ def setup_logger(
     file_handler.setLevel(level)
     
     # Console handler with colors
-    # Set encoding to utf-8 for Windows console compatibility
-    if sys.platform == "win32":
+    # Set encoding to utf-8 for Windows console compatibility when stdout is available.
+    stream = sys.stdout if sys.stdout is not None else sys.stderr
+    if sys.platform == "win32" and stream is not None and hasattr(stream, "buffer"):
         import io
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+        stream = io.TextIOWrapper(stream.buffer, encoding="utf-8", errors="replace")
+        sys.stdout = stream
     
-    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler = logging.StreamHandler(stream)
     if ColoredFormatter:
         console_formatter = ColoredFormatter(
             "%(log_color)s%(levelname)-8s%(reset)s | %(cyan)s%(name)s%(reset)s | %(message)s",

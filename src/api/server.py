@@ -60,7 +60,9 @@ class SettingsUpdateRequest(BaseModel):
     settings: Dict[str, Any]
 
 class ESP32ControlRequest(BaseModel):
-    action: str  # turn_on, turn_off, toggle, change_mode
+    control_id: Optional[str] = None
+    target: Optional[str] = None
+    action: Optional[str] = None
 
 class TimerCreateRequest(BaseModel):
     action: str  # shutdown, hibernate, restart, sleep, lock
@@ -400,9 +402,28 @@ async def update_config(request: ConfigUpdateRequest):
         logger.error(f"Error updating config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+async def _get_esp32_runtime_payload(esp32) -> Dict[str, Any]:
+    connected = await esp32.check_connection()
+    device = await esp32.get_device_snapshot() if connected else {
+        "device_name": "ESP32 Device",
+        "ip_address": esp32.ip_address,
+        "controls": [],
+        "summary": {"state": "unknown", "speed": None, "timer": None, "mode": None, "osc": None},
+        "raw_state": {},
+        "raw_config": {},
+    }
+    return {
+        "success": True,
+        "connected": connected,
+        "ip_address": esp32.ip_address,
+        "device": device,
+        "status": device.get("summary", {}),
+    }
+
 @app.get("/api/v1/esp32/status")
 async def get_esp32_status():
-    """Get ESP32 device status"""
+    """Get ESP32 device status."""
     try:
         esp32 = await get_esp32_client()
         
@@ -412,59 +433,70 @@ async def get_esp32_status():
                 "error": "ESP32 is disabled in configuration"
             }
         
-        status = await esp32.get_status()
-        connected = await esp32.check_connection()
-        
-        return {
-            "success": True,
-            "connected": connected,
-            "status": status,
-            "ip_address": esp32.ip_address
-        }
+        payload = await _get_esp32_runtime_payload(esp32)
+        return payload
     except Exception as e:
         logger.error(f"Error getting ESP32 status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.get("/api/v1/esp32/device")
+async def get_esp32_device():
+    """Get the canonical normalized ESP32 runtime payload."""
+    try:
+        esp32 = await get_esp32_client()
+
+        if not esp32.enabled:
+            return {
+                "success": False,
+                "error": "ESP32 is disabled in configuration",
+            }
+
+        return await _get_esp32_runtime_payload(esp32)
+    except Exception as e:
+        logger.error(f"Error getting ESP32 device payload: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/v1/esp32/control")
 async def control_esp32(request: ESP32ControlRequest):
-    """Control ESP32 device"""
+    """Control ESP32 device using exact targets or relative actions."""
     try:
         esp32 = await get_esp32_client()
         
         if not esp32.enabled:
             raise HTTPException(status_code=400, detail="ESP32 is disabled")
-        
-        result = False
-        message = ""
-        
-        match request.action:
-            case "turn_on":
-                result = await esp32.turn_on()
-                message = "Fan turned on"
-            case "turn_off":
-                result = await esp32.turn_off()
-                message = "Fan turned off"
-            case "toggle":
-                result = await esp32.toggle()
-                message = "Fan toggled"
-            case "change_mode":
-                result = await esp32.change_mode()
-                message = "Fan mode changed"
-            case _:
-                raise HTTPException(status_code=400, detail="Invalid action")
-        
-        # Broadcast to WebSocket clients
+
+        legacy_action = request.action if not request.control_id else None
+        result = await esp32.execute_control_request(
+            control_id=request.control_id,
+            target=request.target,
+            action=request.action if request.control_id else None,
+            legacy_action=legacy_action,
+        )
+
+        if not result.get("success"):
+            detail = result.get("error") or "Failed to control ESP32 device"
+            raise HTTPException(status_code=400, detail=detail)
+
+        payload = await _get_esp32_runtime_payload(esp32)
         await manager.broadcast({
             "type": "esp32_update",
-            "action": request.action,
-            "success": result,
-            "message": message,
+            "data": {
+                "control_id": result.get("control_id") or request.control_id,
+                "target": result.get("target") or request.target,
+                "action": request.action,
+                "message": result.get("message"),
+                "device": payload.get("device"),
+                "connected": payload.get("connected"),
+            },
             "timestamp": datetime.now().isoformat()
         })
-        
+
         return {
-            "success": result,
-            "message": message
+            "success": True,
+            "message": result.get("message"),
+            "device": payload.get("device"),
+            "connected": payload.get("connected"),
         }
     except HTTPException:
         raise
@@ -835,12 +867,15 @@ async def websocket_endpoint(websocket: WebSocket):
 
 # Serve React dashboard (if built)
 try:
-    app.mount("/static", StaticFiles(directory="dashboard/build/static"), name="static")
+    from src.utils.paths import resource_path
+
+    dashboard_build = resource_path("dashboard", "build")
+    app.mount("/static", StaticFiles(directory=str(dashboard_build / "static")), name="static")
     
     @app.get("/")
     async def serve_dashboard_root():
         """Serve React dashboard at root"""
-        return FileResponse("dashboard/build/index.html")
+        return FileResponse(str(dashboard_build / "index.html"))
     
     # Catch-all route for React Router (must be last)
     @app.get("/{full_path:path}")
@@ -849,7 +884,7 @@ try:
         # Don't catch API routes
         if full_path.startswith("api/"):
             return {"error": "Not found"}
-        return FileResponse("dashboard/build/index.html")
+        return FileResponse(str(dashboard_build / "index.html"))
 except:
     logger.warning("Dashboard build not found - dashboard will not be served")
     

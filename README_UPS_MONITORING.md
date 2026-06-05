@@ -28,6 +28,13 @@ When power goes off, Aiden asks immediately:
 - **"Yes" / "Shutdown"** → Graceful shutdown begins immediately
 - **"No" / "I need time"** → Continues monitoring, will check in at 2 minutes
 
+### Power Restore Recovery ⚡
+When mains power returns, Aiden immediately stands down:
+
+> **Aiden:** "Power is back online, Sir. Abort sequence confirmed."
+
+If the Windows 30-second shutdown countdown had already started, Aiden aborts it with `shutdown /a`.
+
 ### 2. **First Check-in** (2 minutes) ⚠️
 After 2 minutes on battery:
 
@@ -184,7 +191,7 @@ logs/aiden.log
 🔒 **Shutdown Protection:**
 - Forced shutdown uses Windows `shutdown /s` command
 - Gives 30-second grace period for saving work
-- Cannot be cancelled once initiated
+- If power returns during that 30-second countdown, Aiden aborts the pending shutdown automatically
 - **Save your work regularly when on battery power!**
 
 ## Advanced Usage
@@ -214,6 +221,7 @@ message = (
 The UPS monitor fires callbacks that you can hook into:
 
 - `on_power_lost` - AC power lost
+- `on_power_restored` - AC power restored
 - `on_battery_alert` - Battery at alert threshold
 - `on_battery_critical` - Battery at critical threshold
 - `on_shutdown_request` - Shutdown requested

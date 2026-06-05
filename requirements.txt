@@ -41,7 +41,18 @@ pygame>=2.5.2
 vosk>=0.3.45
 sounddevice>=0.4.6
 numpy>=1.24.0
-pvporcupine==3.0.5  # Pin to 3.0.5 for stability (if model is v4, upgrade to pvporcupine==3.0.5 or get v3 model)
+pvporcupine>=4.0.0          # Must match the .ppn model version (Hey-Hayden_en_windows_v4_0_0.ppn requires v4)
+
+# Silero VAD (optional but recommended — more accurate than WebRTC VAD)
+# If not installed, Aiden automatically falls back to webrtcvad.
+# Install separately due to size: pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+torch>=2.0.0
+torchaudio>=2.0.0
+
+# openWakeWord — open-source wake word (lower false positives than Porcupine, no API key)
+# Activate by setting SPEECH_USE_OPENWAKEWORD=true in .env
+# Train custom model: https://colab.research.google.com/drive/1q1oe2zOyZp7UsB3jJiQ1IFn8z5YfjwEb
+openwakeword>=0.6.0
 
 # System Tray
 pystray>=0.19.5

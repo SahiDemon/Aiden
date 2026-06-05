@@ -42,6 +42,7 @@ class UPSMonitor:
         shutdown_threshold: int = 50,
         polling_interval: float = 1.0,
         on_power_lost: Optional[Callable] = None,
+        on_power_restored: Optional[Callable] = None,
         on_battery_alert: Optional[Callable] = None,
         on_battery_critical: Optional[Callable] = None,
         on_shutdown_request: Optional[Callable] = None,
@@ -57,6 +58,7 @@ class UPSMonitor:
             shutdown_threshold: Battery % to force shutdown (default: 50%)
             polling_interval: Seconds between log checks
             on_power_lost: Callback when switching to battery
+            on_power_restored: Callback when mains power returns
             on_battery_alert: Callback at alert threshold
             on_battery_critical: Callback at critical threshold
             on_shutdown_request: Callback to perform shutdown
@@ -69,6 +71,7 @@ class UPSMonitor:
         
         # Callbacks
         self.on_power_lost = on_power_lost
+        self.on_power_restored = on_power_restored
         self.on_battery_alert = on_battery_alert
         self.on_battery_critical = on_battery_critical
         self.on_shutdown_request = on_shutdown_request
@@ -225,6 +228,9 @@ class UPSMonitor:
             # Reset flags
             self.first_alert_sent = False
             self.shutdown_confirmed = False
+
+            if self.on_power_restored:
+                self._call_async_callback(self.on_power_restored)
     
     def _check_battery_levels(self):
         """Check time-based alerts and critical battery voltage"""

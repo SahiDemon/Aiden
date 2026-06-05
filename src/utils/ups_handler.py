@@ -3,8 +3,11 @@ UPS Event Handler - Integrates UPS monitoring with Aiden's voice system
 Handles power loss alerts, battery warnings, and shutdown coordination
 """
 import asyncio
+import platform
+import subprocess
 from typing import Optional
 
+from src.speech.stt import get_stt_engine
 from src.speech.tts import get_tts_engine
 from src.utils.config import get_settings
 from src.utils.logger import get_logger
@@ -37,13 +40,13 @@ class UPSEventHandler:
         
         # Play warning sound before speaking
         await self.tts.play_sound("warning")
-        
+
         # Immediate engagement - ask right away
         message = (
             f"Sir, we've lost power. We're running on UPS battery. "
             f"Should I shut down the system now to be safe, or do you need time to save your work?"
         )
-        
+
         await self.tts.speak(message)
         
         # Mark waiting for response
@@ -53,8 +56,8 @@ class UPSEventHandler:
         from src.core.context_manager import get_context_manager
         ctx = get_context_manager()
         await ctx.inject_assistant_message(message, expecting_followup=True)
-        
-        # Trigger auto-listen for user response
+
+        # Open follow-up listening after the warning finishes speaking
         asyncio.create_task(self._trigger_auto_listen())
         
         # Start timeout for no response (30 seconds)
@@ -75,12 +78,12 @@ class UPSEventHandler:
         
         # Play warning sound before speaking
         await self.tts.play_sound("warning")
-        
+
         message = (
             f"Sir, you've had {elapsed_minutes} minutes on battery. "
             f"I need to know - should I shut down now?"
         )
-        
+
         await self.tts.speak(message)
         
         # Mark that we're waiting for response
@@ -90,8 +93,8 @@ class UPSEventHandler:
         from src.core.context_manager import get_context_manager
         ctx = get_context_manager()
         await ctx.inject_assistant_message(message, expecting_followup=True)
-        
-        # Trigger auto-listen for user response
+
+        # Open follow-up listening after the warning finishes speaking
         asyncio.create_task(self._trigger_auto_listen())
         
         logger.info("Waiting for user response (2 minutes until force shutdown)")
@@ -126,13 +129,13 @@ class UPSEventHandler:
         if self.shutdown_task:
             self.shutdown_task.cancel()
             self.shutdown_task = None
-        
+
         # Play error sound for forced shutdown, success for user-confirmed
         if force:
             await self.tts.play_sound("error")
         else:
             await self.tts.play_sound("success")
-        
+
         # Cool shutdown message
         if force and reason == "critical_voltage":
             message = (
@@ -158,7 +161,7 @@ class UPSEventHandler:
                 "Initiating graceful shutdown. "
                 "See you on the other side."
             )
-        
+
         await self.tts.speak(message)
         
         # Give TTS time to finish
@@ -166,24 +169,113 @@ class UPSEventHandler:
         
         # Execute shutdown
         await self._execute_shutdown()
+
+    async def handle_power_restored(self):
+        """Handle mains power returning while UPS protection is active."""
+        logger.info("⚡ Power restored callback received - clearing UPS shutdown state")
+
+        self._clear_waiting_state()
+
+        abort_result = self._abort_pending_shutdown()
+        if abort_result is True:
+            logger.info("✅ Pending Windows shutdown aborted after power restore")
+        elif abort_result is False:
+            logger.info("No pending Windows shutdown to abort after power restore")
+
+        await self.tts.play_sound("success")
+
+        message = "Power is back online, Sir. Abort sequence confirmed."
+        await self.tts.speak(message)
+
+        try:
+            from src.core.context_manager import get_context_manager
+
+            ctx = get_context_manager()
+            await ctx.inject_assistant_message(message, expecting_followup=False)
+        except Exception as e:
+            logger.error(f"Failed to inject power restore context: {e}", exc_info=True)
     
     async def _trigger_auto_listen(self):
         """
         Trigger the assistant to listen for user response after asking a question
         """
         try:
-            # Import here to avoid circular imports
-            from src.core.assistant import get_assistant
-            
-            # Get assistant instance
-            assistant = await get_assistant()
-            
-            # Use the assistant's auto-listen functionality
-            # This will wait for TTS to finish, then start listening
-            await assistant._auto_listen_for_followup()
-            
+            # Wait for the question to finish speaking before listening
+            await self.tts.wait_until_done(timeout=10.0)
+            await asyncio.sleep(0.3)
+
+            stt = get_stt_engine()
+            success, user_text, error = await stt.transcribe(play_activation_sound=True)
+
+            if not success:
+                if error == "timeout":
+                    logger.info("No UPS follow-up response detected before listen timeout")
+                else:
+                    logger.warning(f"UPS follow-up STT failed: {error}")
+                return
+
+            transcript = (user_text or "").strip()
+            if not transcript:
+                logger.info("UPS follow-up produced an empty transcript")
+                return
+
+            logger.info(f"UPS follow-up transcript: '{transcript}'")
+
+            decision = self._interpret_shutdown_response(transcript)
+            if decision is None:
+                logger.warning(f"Ignoring unrelated UPS follow-up transcript: '{transcript}'")
+                return
+
+            self.user_confirmed_shutdown(decision)
+        
         except Exception as e:
             logger.error(f"Failed to trigger auto-listen: {e}", exc_info=True)
+
+    def _interpret_shutdown_response(self, transcript: str) -> Optional[bool]:
+        """Interpret a UPS shutdown follow-up as yes or no."""
+        normalized = " ".join((transcript or "").lower().split())
+        if not normalized:
+            return None
+
+        positive_phrases = (
+            "yes",
+            "yeah",
+            "yep",
+            "sure",
+            "do it",
+            "go ahead",
+            "shut down",
+            "shutdown",
+            "turn it off",
+            "power it off",
+            "proceed",
+            "confirm",
+            "okay shut down",
+            "ok shut down",
+        )
+        negative_phrases = (
+            "no",
+            "nope",
+            "don't",
+            "do not",
+            "not now",
+            "wait",
+            "cancel",
+            "abort",
+            "keep running",
+            "keep it on",
+            "stay on",
+            "i need time",
+            "give me time",
+        )
+
+        if any(phrase in normalized for phrase in negative_phrases):
+            return False
+
+        if any(phrase in normalized for phrase in positive_phrases):
+            return True
+
+        return None
     
     async def _shutdown_timeout(self, timeout_seconds: int):
         """
@@ -207,18 +299,61 @@ class UPSEventHandler:
         
         except asyncio.CancelledError:
             logger.info("Initial timeout cancelled (user responded)")
+
+    def _clear_waiting_state(self):
+        """Clear any in-memory UPS response state."""
+        self.waiting_for_response = False
+
+        if self.shutdown_task:
+            self.shutdown_task.cancel()
+            self.shutdown_task = None
+
+    def _abort_pending_shutdown(self) -> Optional[bool]:
+        """
+        Abort a pending Windows shutdown countdown.
+
+        Returns:
+            True if a shutdown countdown was aborted,
+            False if no shutdown was pending,
+            None if shutdown abort is unsupported on this platform.
+        """
+        if platform.system() != "Windows":
+            logger.info("Shutdown abort skipped - only supported on Windows")
+            return None
+
+        try:
+            result = subprocess.run(
+                ["shutdown", "/a"],
+                capture_output=True,
+                text=True
+            )
+        except Exception as e:
+            logger.error(f"Failed to abort pending shutdown: {e}", exc_info=True)
+            return False
+
+        stdout = (result.stdout or "").strip()
+        stderr = (result.stderr or "").strip()
+        output = stdout or stderr
+
+        if result.returncode == 0:
+            logger.info("Windows shutdown abort command completed successfully")
+            return True
+
+        lowered_output = output.lower()
+        if "no shutdown was in progress" in lowered_output:
+            logger.info("Windows reported no shutdown was in progress")
+            return False
+
+        logger.warning(f"Shutdown abort command returned {result.returncode}: {output or 'no output'}")
+        return False
     
     async def _execute_shutdown(self):
         """Execute system shutdown"""
-        import platform
-        
         try:
             logger.critical("🔌 EXECUTING SYSTEM SHUTDOWN")
             
             # Windows shutdown command
             if platform.system() == "Windows":
-                import subprocess
-                
                 # Forced shutdown with 30 second warning so it still works from a locked session
                 # Note: /c comment must be the last parameter
                 result = subprocess.run(
@@ -241,7 +376,6 @@ class UPSEventHandler:
             logger.error(f"Failed to execute shutdown: {e}", exc_info=True)
             # Last resort - immediate shutdown without comment
             try:
-                import subprocess
                 logger.warning("Attempting immediate shutdown as fallback...")
                 subprocess.run(["shutdown", "/s", "/f", "/t", "0"], check=False)
             except Exception as fallback_error:
@@ -258,12 +392,7 @@ class UPSEventHandler:
             logger.warning("Not waiting for shutdown confirmation")
             return
         
-        self.waiting_for_response = False
-        
-        # Cancel timeout
-        if self.shutdown_task:
-            self.shutdown_task.cancel()
-            self.shutdown_task = None
+        self._clear_waiting_state()
         
         if confirmed:
             logger.info("✅ User confirmed shutdown")

@@ -80,11 +80,17 @@ class HotkeyListener:
         self.listener = None
         self.is_running = False
         
-        logger.info(f"Hotkey listener initialized: {self.hotkey_combo}")
+        logger.debug(f"Hotkey listener parsed combo: {self.hotkey_combo}")
     
     def _parse_hotkey(self) -> dict:
         """Parse hotkey string into key dict"""
         hotkey_str = self.hotkey_override or self.settings.app.hotkey
+        if hotkey_str.strip() == "":
+            logger.warning(
+                "Empty hotkey detected; falling back to ctrl+shift+space",
+            )
+            hotkey_str = "ctrl+shift+space"
+
         result = {
             'modifiers': set(),
             'key': None,
@@ -106,6 +112,11 @@ class HotkeyListener:
                 result['modifiers'].add('alt')
             elif part == 'space':
                 result['key'] = keyboard.Key.space
+            elif part == '*':
+                # Numpad * and Shift+8 both produce char '*'.
+                # Only accept '*', NOT plain '8'.
+                result['key'] = keyboard.KeyCode.from_char('*')
+                result['accepted_chars'] = {'*'}
             elif part == 'enter' or part == 'return':
                 result['key'] = keyboard.Key.enter
             elif part == 'tab':
@@ -147,7 +158,7 @@ class HotkeyListener:
             logger.warning("Hotkey listener already running")
             return
         
-        logger.info("Starting hotkey listener...")
+        logger.debug("Starting hotkey listener...")
         self.is_running = True
         
         # Track pressed modifiers
@@ -171,8 +182,9 @@ class HotkeyListener:
             required_key = self.hotkey_combo['key']
             accepted_chars = self.hotkey_combo.get('accepted_chars', set())
             
-            # Check both modifiers and key
-            if required_mods == self.pressed_modifiers and self._key_matches(key, required_key, accepted_chars):
+            # Check both modifiers and key (issubset allows extra modifiers
+            # like Shift held to produce '*' on a regular keyboard)
+            if required_mods.issubset(self.pressed_modifiers) and self._key_matches(key, required_key, accepted_chars):
                 logger.info("Hotkey activated!")
                 self._trigger_activation()
         
@@ -193,7 +205,7 @@ class HotkeyListener:
         )
         self.listener.start()
         
-        logger.info("Hotkey listener started")
+        logger.debug("Hotkey listener started")
     
     def stop(self):
         """Stop listening"""
