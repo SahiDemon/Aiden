@@ -118,6 +118,15 @@ class MediaIdleMonitor:
         if not PYCAW_AVAILABLE or not AudioUtilities:
             return sessions
 
+        enumerator = None
+        devices = None
+        dev = None
+        mgr = None
+        mgr2 = None
+        session_enum = None
+        ctl = None
+        ctl2 = None
+
         try:
             from pycaw.constants import EDataFlow, DEVICE_STATE
             from pycaw.api.audiopolicy import IAudioSessionManager2, IAudioSessionControl2
@@ -133,17 +142,32 @@ class MediaIdleMonitor:
                     mgr2 = cast(mgr, POINTER(IAudioSessionManager2))
                     session_enum = mgr2.GetSessionEnumerator()
                     for j in range(session_enum.GetCount()):
-                        ctl = session_enum.GetSession(j)
-                        ctl2 = cast(ctl, POINTER(IAudioSessionControl2))
-                        sessions.append(AudioSession(ctl2))
+                        try:
+                            ctl = session_enum.GetSession(j)
+                            ctl2 = cast(ctl, POINTER(IAudioSessionControl2))
+                            sessions.append(AudioSession(ctl2))
+                        except Exception:
+                            pass
+                        finally:
+                            ctl = None
+                            ctl2 = None
                 except Exception:
                     continue
+                finally:
+                    dev = None
+                    mgr = None
+                    mgr2 = None
+                    session_enum = None
         except Exception as e:
             logger.debug(f"Error enumerating all device sessions, falling back to default: {e}")
             try:
                 sessions = AudioUtilities.GetAllSessions()
             except Exception:
                 pass
+        finally:
+            enumerator = None
+            devices = None
+
         return sessions
 
     def is_media_playing(self) -> bool:
@@ -154,6 +178,15 @@ class MediaIdleMonitor:
 
         if not PYCAW_AVAILABLE or not AudioUtilities:
             return False
+
+        import comtypes
+        try:
+            comtypes.CoInitialize()
+        except Exception:
+            pass
+
+        sessions = []
+        result = False
 
         # Lowercase process names to ignore (non-media or background apps)
         IGNORE_PROCESSES = {
@@ -206,11 +239,11 @@ class MediaIdleMonitor:
         )
 
         try:
-            for session in self._get_all_audio_sessions():
+            sessions = self._get_all_audio_sessions()
+            for session in sessions:
                 process = session.Process
                 if not process:
                     continue
-
 
                 try:
                     proc_name = process.name().lower()
@@ -228,22 +261,43 @@ class MediaIdleMonitor:
                     if session.State == AudioSessionState.Active:
                         simple_volume = session.SimpleAudioVolume
                         if not simple_volume.GetMute() and simple_volume.GetMasterVolume() > 0.001:
-                            return True
+                            result = True
+                            break
 
                     # Check IAudioMeterInformation peak level (catches direct streams or apps with State=0)
                     if IAudioMeterInformation:
                         try:
                             meter = session._ctl.QueryInterface(IAudioMeterInformation)
                             if meter.GetPeakValue() > 0.0001:
-                                return True
+                                result = True
+                                break
                         except Exception:
                             pass
                 except Exception:
                     continue
         except Exception as e:
             logger.debug(f"Error checking active audio sessions: {e}")
+        finally:
+            # Cleanly release all COM interface references in returned objects
+            for s in sessions:
+                try:
+                    s._ctl = None
+                except Exception:
+                    pass
+            sessions = []
+            
+            # Clean up local references to prevent GC errors after CoUninitialize
+            session = None
+            process = None
+            simple_volume = None
+            meter = None
 
-        return False
+            try:
+                comtypes.CoUninitialize()
+            except Exception:
+                pass
+
+        return result
 
     async def _monitor_loop(self):
         """Main background checking loop."""

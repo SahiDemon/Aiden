@@ -248,17 +248,30 @@ class OpenWakeWordDetector:
         logger.info("OpenWakeWord: listening for wake word…")
 
         while self._running:
-            # Respect pause — but DRAIN frames from the stream while paused
-            # so the PyAudio buffer doesn't fill with audio that would be
-            # replayed as a burst of high-confidence frames on resume.
             with self._lock:
                 paused = self._paused
+            
             if paused:
-                try:
-                    self._stream.read(_FRAME_SAMPLES, exception_on_overflow=False)
-                except Exception:
-                    pass
+                if self._stream is not None:
+                    logger.info("OpenWakeWord: detector paused — releasing microphone resources")
+                    self._cleanup()
+                time.sleep(0.1)
                 continue
+
+            if self._stream is None:
+                logger.info("OpenWakeWord: detector resumed — opening microphone stream")
+                try:
+                    self._open_stream()
+                    if self._oww_model is not None:
+                        try:
+                            self._oww_model.reset()
+                        except Exception:
+                            pass
+                    self._last_trigger_time = time.monotonic()
+                except Exception as exc:
+                    logger.error("OpenWakeWord: failed to re-open stream on resume: %s", exc)
+                    time.sleep(1.0)
+                    continue
 
             try:
                 raw = self._stream.read(_FRAME_SAMPLES, exception_on_overflow=False)
