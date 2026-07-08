@@ -24,10 +24,10 @@ function resolveBackendExecutable() {
     if (!electron_1.app.isPackaged) {
         return null;
     }
-    const backendRoot = path_1.default.join(process.resourcesPath, 'backend', isDebugMode ? 'AidenConsole' : 'Aiden');
-    const exeName = isDebugMode ? 'AidenConsole.exe' : 'Aiden.exe';
+    const backendRoot = path_1.default.join(process.resourcesPath, 'backend', 'Aiden');
     return {
-        exePath: path_1.default.join(backendRoot, exeName),
+        exePath: path_1.default.join(backendRoot, 'Aiden.exe'),
+        exeArgs: isDebugMode ? ['--debug'] : [],
         cwd: backendRoot,
     };
 }
@@ -46,7 +46,7 @@ function startBackend() {
     if (isDebugMode) {
         env.APP_DEBUG = 'true';
     }
-    backendProcess = (0, child_process_1.spawn)(backend.exePath, [], {
+    backendProcess = (0, child_process_1.spawn)(backend.exePath, backend.exeArgs, {
         cwd: backend.cwd,
         env,
         stdio: isDebugMode ? 'inherit' : 'ignore',
@@ -69,7 +69,10 @@ function hideOverlay() {
     if (!win || win.isDestroyed()) {
         return;
     }
-    win.hide();
+    // Do not call win.hide() to prevent dropping the Chromium GPU context.
+    // The React app handles the opacity and animations, so it will be visually hidden.
+    // Ensure mouse events pass through the invisible window.
+    win.setIgnoreMouseEvents(true, { forward: true });
 }
 function createWindow() {
     const { width: screenWidth } = electron_1.screen.getPrimaryDisplay().workAreaSize;
@@ -106,6 +109,9 @@ function createWindow() {
     win.webContents.on('did-finish-load', () => {
         win?.webContents.send('main-process-message', (new Date).toLocaleString());
     });
+    if (isDebugMode) {
+        win.webContents.openDevTools({ mode: 'detach' });
+    }
     if (VITE_DEV_SERVER_URL) {
         win.loadURL(VITE_DEV_SERVER_URL);
     }

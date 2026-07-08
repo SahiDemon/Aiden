@@ -351,45 +351,43 @@ _client_lock = threading.Lock()
 
 
 async def get_redis_client() -> RedisClient:
-    """Get or create Redis client for current event loop"""
+    """Get or create Redis client for current event loop without deadlocking."""
     try:
-        # Get current event loop ID
         loop = asyncio.get_running_loop()
         loop_id = id(loop)
         
+        # Fast path without lock
         with _client_lock:
-            if loop_id not in _redis_clients:
-                # Create new client for this event loop
-                client = RedisClient()
-                await client.connect()
+            if loop_id in _redis_clients:
+                return _redis_clients[loop_id]
+        
+        # Client not found, create it OUTSIDE the lock to prevent deadlocks
+        # if connect() yields to the event loop.
+        client = RedisClient()
+        await client.connect()
+        
+        # Store the connected client safely
+        with _client_lock:
+            # Check if another task created it while we were connecting
+            if loop_id in _redis_clients:
+                # Another task beat us to it; close ours and return theirs
+                asyncio.create_task(client.disconnect())
+                return _redis_clients[loop_id]
+            else:
                 _redis_clients[loop_id] = client
                 logger.debug(f"Created Redis client for event loop {loop_id}")
-            
-            return _redis_clients[loop_id]
-    
+                return client
+                
     except Exception as e:
         logger.error(f"Error getting Redis client: {e}", exc_info=True)
-        
-        # Fallback: create and store temporary client for this event loop
-        # This prevents creating multiple unmanaged clients on repeated errors
+        # Fallback: create an unmanaged client so the app doesn't crash
         try:
-            loop = asyncio.get_running_loop()
-            loop_id = id(loop)
-            
-            with _client_lock:
-                # Check again if another call already created it
-                if loop_id in _redis_clients:
-                    return _redis_clients[loop_id]
-                
-                # Create fallback client and store it
-                logger.warning(f"Creating fallback Redis client for event loop {loop_id}")
-                client = RedisClient()
-                await client.connect()
-                _redis_clients[loop_id] = client
-                return client
+            logger.warning("Creating fallback unmanaged Redis client due to error")
+            client = RedisClient()
+            await client.connect()
+            return client
         except Exception as fallback_error:
-            logger.critical(f"Failed to create fallback Redis client: {fallback_error}", exc_info=True)
-            # Re-raise to make the issue visible rather than silently failing
+            logger.critical(f"Failed to create fallback Redis client: {fallback_error}")
             raise RuntimeError(f"Redis client unavailable: {fallback_error}") from fallback_error
 
 

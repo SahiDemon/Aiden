@@ -21,15 +21,17 @@ class OverlayLauncher:
         self.overlay_dir = self._find_overlay_directory()
         
     def _find_overlay_directory(self) -> Optional[Path]:
-        """Find the overlay directory in the project"""
-        # Get project root (parent of src/)
-        project_root = Path(__file__).parent.parent.parent
-        overlay_path = project_root / "overlay"
+        """Find the overlay directory in the project by walking up parent directories."""
+        current = Path(__file__).resolve().parent
+        for _ in range(7):
+            overlay_path = current / "overlay"
+            if overlay_path.exists() and overlay_path.is_dir():
+                return overlay_path
+            if current.parent == current:
+                break
+            current = current.parent
         
-        if overlay_path.exists() and overlay_path.is_dir():
-            return overlay_path
-        
-        logger.warning(f"Overlay directory not found at {overlay_path}")
+        logger.warning("Overlay directory not found in any parent directories")
         return None
     
     def is_overlay_built(self) -> bool:

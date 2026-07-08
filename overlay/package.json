@@ -59,10 +59,6 @@
       {
         "from": "../dist/Aiden",
         "to": "backend/Aiden"
-      },
-      {
-        "from": "../dist/AidenConsole",
-        "to": "backend/AidenConsole"
       }
     ],
     "files": [

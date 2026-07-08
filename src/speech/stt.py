@@ -148,7 +148,7 @@ class STTEngine:
         # --- VAD selection ---
         self._silero: Optional[_SileroVAD] = None
         use_silero = getattr(self.settings.speech, "stt_use_silero_vad", True)
-        silero_threshold = getattr(self.settings.speech, "stt_silero_threshold", 0.5)
+        silero_threshold = getattr(self.settings.speech, "stt_silero_threshold", 0.28)
 
         if use_silero:
             try:
@@ -175,26 +175,26 @@ class STTEngine:
 
         # WebRTC VAD aggressiveness (0=sensitive … 3=strict); used only as fallback
         self.vad_aggressiveness: int = getattr(
-            self.settings.speech, "stt_vad_aggressiveness", 2
+            self.settings.speech, "stt_vad_aggressiveness", 1
         )
 
         self.frame_size = int(self.sample_rate * self.frame_duration_ms / 1000)
         self.frame_bytes = self.frame_size * _SAMPLE_WIDTH
 
-        # Pre-speech ring buffer — 300 ms so word starts aren't clipped
-        self._ring_buffer_size = int(300 / self.frame_duration_ms)          # ~9–10 frames
+        # Pre-speech ring buffer — 500 ms so word starts aren't clipped
+        self._ring_buffer_size = int(500 / self.frame_duration_ms)          # ~15–16 frames
         self._trailing_window_frames = max(3, int(240 / self.frame_duration_ms))
 
         # Safety cap on recording length
         self.max_speech_duration = 30.0  # seconds
 
         # Speech-start threshold: fraction of ring buffer that must be speech.
-        # Raised from 0.40 → 0.55 — harder for noise bursts to trigger recording.
-        self.speech_start_ratio = 0.55
+        # Lowered to 0.35 — allows normal/distant conversational speech without shouting.
+        self.speech_start_ratio = 0.35
 
         # Minimum ring-buffer frames before we can accept "speech started".
         # Prevents 2-frame noise bursts from triggering at the very beginning.
-        self.speech_start_min_frames = 4
+        self.speech_start_min_frames = 3
 
         # Minimum recorded speech duration (seconds) before sending to Groq.
         # Anything shorter is almost certainly noise or a cough.
@@ -208,12 +208,38 @@ class STTEngine:
             f"frame={self.frame_duration_ms}ms, "
             f"pause_threshold={self.pause_threshold}s, "
             f"non_speaking={self.non_speaking_duration}s, "
-            f"pre_buffer=300ms"
+            f"pre_buffer=500ms"
         )
         logger.info(
             "STT input device: %s",
             selected_device_name or "system default microphone"
         )
+
+        # Initialize persistent microphone to eliminate startup latency
+        self._persistent_mic = None
+        self._init_persistent_mic()
+
+    def _init_persistent_mic(self):
+        """Pre-warm the PyAudio stream to eliminate 500ms+ startup latency."""
+        try:
+            mic_kwargs = {"sample_rate": self.sample_rate}
+            if self.device_index is not None:
+                mic_kwargs["device_index"] = self.device_index
+            self._persistent_mic = sr.Microphone(**mic_kwargs)
+            # Enter the context to open the PyAudio stream and keep it open
+            self._persistent_mic.__enter__()
+            logger.info("STT: Persistent microphone initialized and pre-warmed")
+        except Exception as e:
+            logger.error(f"STT: Failed to initialize persistent microphone: {e}")
+            self._persistent_mic = None
+
+    def _ensure_mic(self) -> sr.Microphone:
+        """Ensure persistent microphone is ready."""
+        if not self._persistent_mic:
+            self._init_persistent_mic()
+        if not self._persistent_mic:
+            raise RuntimeError("Could not initialize microphone")
+        return self._persistent_mic
 
     def _get_selected_device_name(self) -> Optional[str]:
         """Resolve the configured microphone name for logging/debugging."""
@@ -487,35 +513,81 @@ class STTEngine:
             raise sr.WaitTimeoutError("recording too short (noise/cough gate)")
 
         audio_bytes = b"".join(audio_chunks)
+        audio_bytes = self._normalize_pcm_gain(audio_bytes)
         logger.debug(f"STT VAD: Captured {len(audio_bytes)} bytes ({speech_duration:.1f}s of audio)")
 
         return sr.AudioData(audio_bytes, self.sample_rate, _SAMPLE_WIDTH)
 
+    def _normalize_pcm_gain(self, audio_bytes: bytes) -> bytes:
+        """
+        Automatic Gain Control (AGC) for PCM16 audio.
+        Smoothly boosts low-volume/distant speech waveforms to optimal levels
+        for Whisper transcription without clipping or blowing up silence.
+        """
+        try:
+            if not audio_bytes:
+                return audio_bytes
+            audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
+            if len(audio_array) == 0:
+                return audio_bytes
+            
+            peak_amp = np.max(np.abs(audio_array))
+            if peak_amp == 0 or peak_amp >= 22000:
+                return audio_bytes
+                
+            target_peak = 22000.0
+            gain = min(4.0, target_peak / float(peak_amp))
+            if gain <= 1.1:
+                return audio_bytes
+                
+            logger.debug(f"STT AGC: Boosting distant speech gain by {gain:.2f}x (peak {peak_amp} -> {int(peak_amp * gain)})")
+            normalized = np.clip(audio_array.astype(np.float32) * gain, -32768, 32767).astype(np.int16)
+            return normalized.tobytes()
+        except Exception as e:
+            logger.warning(f"STT AGC: Failed to normalize audio gain: {e}")
+            return audio_bytes
+
     def _listen_sync(self) -> Tuple[bool, Optional[sr.AudioData], Optional[str]]:
         """Synchronous listen operation (runs in thread pool)"""
         try:
-            mic_kwargs = {"sample_rate": self.sample_rate}
-            if self.device_index is not None:
-                mic_kwargs["device_index"] = self.device_index
-                logger.debug(f"STT: Using microphone device index {self.device_index}")
+            source = self._ensure_mic()
+            logger.debug(f"STT: Persistent microphone ready ({self.sample_rate}Hz)")
 
-            with sr.Microphone(**mic_kwargs) as source:
-                logger.debug(f"STT: Microphone ready ({self.sample_rate}Hz)")
-
+            try:
+                # Carefully flush stale PyAudio buffer (>500ms old) so we don't catch ancient noise,
+                # while preserving the most recent ~400ms of audio in case user started speaking during the cue.
                 try:
-                    audio = self._listen_with_vad(source)
-                    logger.debug("STT: Audio captured via VAD")
-                    return True, audio, None
-                except sr.WaitTimeoutError as e:
-                    logger.info(f"STT: Timeout/gate — {e}")
-                    return False, None, "timeout"
-                except InterruptedError:
-                    logger.info("STT: Listening cancelled")
-                    return False, None, "cancelled"
+                    if hasattr(source.stream, 'read'):
+                        avail = source.stream.get_read_available()
+                        max_keep_samples = int(self.sample_rate * 0.4)  # 400ms = 6400 samples @ 16kHz
+                        if avail > max_keep_samples:
+                            to_discard = avail - max_keep_samples
+                            source.stream.read(to_discard, exception_on_overflow=False)
+                            logger.debug(f"STT: Discarded {to_discard} stale stream samples, preserved {avail - to_discard} recent samples")
+                except Exception as e:
+                    logger.debug(f"STT: Could not flush stream: {e}")
+
+                audio = self._listen_with_vad(source)
+                logger.debug("STT: Audio captured via VAD")
+                return True, audio, None
+            except sr.WaitTimeoutError as e:
+                logger.info(f"STT: Timeout/gate — {e}")
+                return False, None, "timeout"
+            except InterruptedError:
+                logger.info("STT: Listening cancelled")
+                return False, None, "cancelled"
 
         except Exception as e:
             logger.error(f"STT: Exception: {e}")
+            # If the persistent mic failed (e.g. unplugged), reset it
+            if self._persistent_mic:
+                try:
+                    self._persistent_mic.__exit__(None, None, None)
+                except Exception:
+                    pass
+                self._persistent_mic = None
             return False, None, str(e)
+
 
     # ------------------------------------------------------------------
     # Control

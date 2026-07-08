@@ -4,12 +4,13 @@ from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
 vosk_binaries = collect_dynamic_libs('vosk')
 pvporcupine_data = collect_data_files('pvporcupine')
+openwakeword_data = collect_data_files('openwakeword')  # bundles silero_vad.onnx + model resources
 
 a = Analysis(
     ['src\\main.py'],
     pathex=[],
     binaries=vosk_binaries,
-    datas=[('config', 'config'), ('dashboard/build', 'dashboard/build'), ('sounds', 'sounds'), ('vosk_models', 'vosk_models'), ('tools', 'tools')] + pvporcupine_data,
+    datas=[('config', 'config'), ('dashboard/build', 'dashboard/build'), ('sounds', 'sounds'), ('vosk_models', 'vosk_models'), ('tools', 'tools')] + pvporcupine_data + openwakeword_data,
     hiddenimports=['engineio.async_drivers.threading'],
     hookspath=[],
     hooksconfig={},

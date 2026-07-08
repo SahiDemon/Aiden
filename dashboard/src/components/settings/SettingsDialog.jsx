@@ -33,6 +33,7 @@ const sections = [
   { id: 'speech', label: 'Speech' },
   { id: 'wake', label: 'Wake Word' },
   { id: 'system', label: 'System' },
+  { id: 'auto_shutdown', label: 'Auto Shutdown' },
   { id: 'esp32', label: 'ESP32' },
   { id: 'spotify', label: 'Spotify' },
   { id: 'cache', label: 'Cache' },
@@ -418,11 +419,33 @@ const SettingsDialog = ({ open, onOpenChange }) => {
                         <SettingRow key={path} label={path.split('.').slice(1).join('_')}>
                           {typeof getIn(settings, path) === 'boolean' ? (
                             <div className="flex justify-end"><Switch checked={getIn(settings, path, false)} onCheckedChange={(value) => updateField(path, value)} /></div>
+                          ) : typeof getIn(settings, path) === 'number' ? (
+                            <TextInput type="number" value={getIn(settings, path, 0)} onChange={(value) => updateField(path, value)} />
                           ) : (
                             <TextInput value={getIn(settings, path, '')} onChange={(value) => updateField(path, value)} placeholder="Enter value" />
                           )}
                         </SettingRow>
                       ))}
+                    </div>
+                  )}
+
+                  {activeSection === 'auto_shutdown' && (
+                    <div className="space-y-5">
+                      <SettingRow label="Enable Auto Shutdown" hint="Initiates system shutdown if PC is idle and no media is playing">
+                        <div className="flex justify-end">
+                          <Switch
+                            checked={getIn(settings, 'app.media_idle_shutdown_enabled', false)}
+                            onCheckedChange={(value) => updateField('app.media_idle_shutdown_enabled', value)}
+                          />
+                        </div>
+                      </SettingRow>
+                      <SettingRow label="Auto Shutdown Timeout (Minutes)" hint="Minutes of inactivity before automatic shutdown triggers">
+                        <TextInput
+                          type="number"
+                          value={getIn(settings, 'app.media_idle_timeout_minutes', 15)}
+                          onChange={(value) => updateField('app.media_idle_timeout_minutes', value)}
+                        />
+                      </SettingRow>
                     </div>
                   )}
 

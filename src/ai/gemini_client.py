@@ -209,10 +209,19 @@ class GeminiClient:
                 # Combine all system prompts
                 full_system_prompt = "\n\n".join(system_prompts)
                 
+                # Build history string
+                history_text = ""
+                if len(conversation) > 1:
+                    history_text = "Conversation History:\n"
+                    for msg in conversation[:-1]:
+                        prefix = "User" if msg["role"] == "user" else "Assistant"
+                        history_text += f"{prefix}: {msg['parts'][0]}\n"
+                    history_text += "\n"
+                
                 if use_json_format:
-                    full_prompt = f"{full_system_prompt}\n\nUser: {user_message}\n\nRespond with valid JSON only."
+                    full_prompt = f"{full_system_prompt}\n\n{history_text}User: {user_message}\n\nRespond with valid JSON only."
                 else:
-                    full_prompt = f"{full_system_prompt}\n\nUser: {user_message}"
+                    full_prompt = f"{full_system_prompt}\n\n{history_text}User: {user_message}"
                 
                 response = await asyncio.to_thread(model.generate_content, full_prompt)
                 
@@ -269,48 +278,79 @@ class GeminiClient:
         return None
     
     def _parse_json_response(self, response_text: str) -> Optional[Dict[str, Any]]:
-        """Parse JSON response from Gemini"""
-        try:
-            # Clean the response text
-            text = response_text.strip()
-            
-            # Remove markdown code blocks if present
-            if text.startswith("```json"):
-                text = text[7:]  # Remove ```json
-            if text.startswith("```"):
-                text = text[3:]  # Remove ```
-            if text.endswith("```"):
-                text = text[:-3]  # Remove ```
-            
+        """Parse JSON response from Gemini — robust against common model quirks.
+
+        Handles:
+        - Markdown code fences (```json ... ```)
+        - JSON arrays wrapping a single object  ([{...}])
+        - JSON blob embedded inside surrounding prose
+        - Missing fields (filled with safe defaults)
+        """
+        if not response_text:
+            logger.error("Gemini returned an empty response body")
+            return None
+
+        def _extract_dict(text: str) -> Optional[Dict[str, Any]]:
+            """Try to parse text as JSON and return the first dict found."""
             text = text.strip()
-            
-            # Parse JSON
-            parsed = json.loads(text)
-            
-            # Validate required fields
-            if not isinstance(parsed, dict):
-                logger.error("Response is not a JSON object")
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
                 return None
-            
-            # Ensure all required fields exist
-            response = {
-                "intent": parsed.get("intent", "unknown"),
-                "commands": parsed.get("commands", []),
-                "response": parsed.get("response", "Done"),
-                "update_context": parsed.get("update_context", True),
-                "expecting_followup": parsed.get("expecting_followup", False),
-                "needs_context": parsed.get("needs_context", [])
-            }
-            
-            return response
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON from Gemini: {e}")
-            logger.error(f"Response text: {response_text[:500]}")
+
+            if isinstance(parsed, dict):
+                return parsed
+            # Gemini sometimes wraps its response in a list
+            if isinstance(parsed, list):
+                for item in parsed:
+                    if isinstance(item, dict):
+                        logger.debug("Gemini returned a JSON array — using first dict element")
+                        return item
+            logger.error(f"Parsed JSON is neither dict nor list-of-dicts: {type(parsed)}")
             return None
-        except Exception as e:
-            logger.error(f"Error parsing Gemini response: {e}")
+
+        # ── Strategy 1: strip markdown fences then parse ──────────────────────
+        text = response_text.strip()
+        if text.startswith("```"):
+            # Remove opening fence (```json or just ```)
+            text = text.split("\n", 1)[-1]
+        if text.endswith("```"):
+            text = text.rsplit("```", 1)[0]
+        text = text.strip()
+
+        parsed = _extract_dict(text)
+
+        # ── Strategy 2: find the first {...} block in the raw text ────────────
+        if parsed is None:
+            import re
+            # Find the outermost { ... } in the response
+            match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if match:
+                logger.debug("Extracting embedded JSON object from Gemini prose response")
+                parsed = _extract_dict(match.group(0))
+
+        # ── Strategy 3: find the first [...] block ────────────────────────────
+        if parsed is None:
+            import re
+            match = re.search(r'\[.*\]', response_text, re.DOTALL)
+            if match:
+                logger.debug("Extracting embedded JSON array from Gemini prose response")
+                parsed = _extract_dict(match.group(0))
+
+        if parsed is None:
+            logger.error("Failed to parse Gemini response as JSON after all strategies")
+            logger.error(f"Raw Gemini response (first 800 chars): {response_text[:800]}")
             return None
+
+        # ── Normalise to expected schema ──────────────────────────────────────
+        return {
+            "intent":            parsed.get("intent", "unknown"),
+            "commands":          parsed.get("commands", []),
+            "response":          parsed.get("response", "Done"),
+            "update_context":    parsed.get("update_context", True),
+            "expecting_followup": parsed.get("expecting_followup", False),
+            "needs_context":     parsed.get("needs_context", []),
+        }
 
 
 # Global instance

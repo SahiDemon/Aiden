@@ -66,6 +66,28 @@ class TTSEngine:
         
         logger.info(f"TTS Engine initialized: provider={self.provider}, voice={self.voice_id if self.provider == 'edge' else self.google_voice}")
 
+        # Pre-load commonly used sound effects for zero-latency playback
+        self._preloaded_sounds: dict[str, pygame.mixer.Sound] = {}
+        self._preload_common_sounds()
+
+    def _preload_common_sounds(self):
+        """Pre-load frequently used sound effects into memory for instant playback."""
+        if not PYGAME_AVAILABLE:
+            return
+        common_sounds = ["activation", "mmm1", "mmm2", "error", "success"]
+        for name in common_sounds:
+            try:
+                sound_path = resource_path("sounds", f"{name}.mp3")
+                if not sound_path.exists():
+                    sound_path = resource_path("sounds", f"{name}.MP3")
+                if sound_path.exists():
+                    sound = pygame.mixer.Sound(str(sound_path))
+                    sound.set_volume(0.6)
+                    self._preloaded_sounds[name.lower()] = sound
+            except Exception as e:
+                logger.debug(f"TTS: Could not pre-load sound {name}: {e}")
+        logger.info(f"TTS: Pre-loaded {len(self._preloaded_sounds)} sound effects into memory")
+
     def _pause_wake_word_detection(self) -> bool:
         """Pause wake-word detection while TTS audio is playing."""
         try:
@@ -482,12 +504,23 @@ class TTSEngine:
     async def play_sound_now(self, sound_name: str):
         """Play a sound effect immediately and wait for it to finish."""
         try:
+            # Use pre-loaded sound for zero-latency playback
+            preloaded = self._preloaded_sounds.get(sound_name.lower())
+            if preloaded:
+                logger.debug(f"TTS: Playing pre-loaded sound: {sound_name}")
+                channel = preloaded.play()
+                if channel:
+                    while channel.get_busy():
+                        await asyncio.sleep(0.05)
+                return
+
+            # Fallback to disk loading for non-preloaded sounds
             sound_path = resource_path("sounds", f"{sound_name}.mp3")
             if not sound_path.exists():
                 sound_path = resource_path("sounds", f"{sound_name}.MP3")
 
             if sound_path.exists():
-                logger.debug(f"TTS: Playing sound now: {sound_name}")
+                logger.debug(f"TTS: Playing sound now (from disk): {sound_name}")
                 await self._play_sound_file(str(sound_path))
             else:
                 logger.warning(f"TTS: Sound not found: {sound_name}")
@@ -500,17 +533,21 @@ class TTSEngine:
             return
             
         try:
-            sound = pygame.mixer.Sound(sound_path)
-            sound.set_volume(0.6)
+            # Check preloaded cache by filename stem
+            stem = os.path.splitext(os.path.basename(sound_path))[0].lower()
+            sound = self._preloaded_sounds.get(stem)
+
+            if not sound:
+                sound = pygame.mixer.Sound(sound_path)
+                sound.set_volume(0.6)
             
             # Sound.play returns a Channel
             channel = sound.play()
             
-            # Wait for channel to finish (this task is now backgrounded by the queue processor,
-            # so this await only blocks this specific sound task, not the main queue)
+            # Wait for channel to finish (reduced from 100ms to 50ms for snappier response)
             if channel:
                 while channel.get_busy():
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(0.05)
         except Exception as e:
             logger.error(f"Error playing sound file: {e}")
             

@@ -7,11 +7,35 @@ overrides managed by the settings service. Runtime components can call
 """
 from __future__ import annotations
 
+import sys
+import os
+from pathlib import Path
 from copy import deepcopy
 from typing import Any, Dict, Optional
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _resolve_env_file() -> str:
+    """Return the absolute path to the .env file.
+
+    When running as a PyInstaller frozen EXE the CWD is wherever the user
+    launched the process from (e.g. Desktop, Start Menu shortcut).  We
+    therefore resolve .env relative to the EXE's own directory so that
+    the correct .env is always loaded regardless of the CWD.
+
+    When running from source the .env sits in the project root, which is
+    two levels above this file (src/utils/config.py → src/ → project root).
+    """
+    if getattr(sys, "frozen", False):
+        # PyInstaller EXE: .env is next to the EXE
+        return str(Path(sys.executable).parent / ".env")
+    # Development: project root
+    return str(Path(__file__).resolve().parents[2] / ".env")
+
+
+_ENV_FILE = _resolve_env_file()
 
 
 def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
@@ -27,7 +51,7 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
 class GeminiConfig(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="GEMINI_",
-        env_file=".env",
+        env_file=_ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -45,7 +69,7 @@ class GeminiConfig(BaseSettings):
 class GroqConfig(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="GROQ_",
-        env_file=".env",
+        env_file=_ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -60,7 +84,7 @@ class GroqConfig(BaseSettings):
 class OllamaConfig(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="OLLAMA_",
-        env_file=".env",
+        env_file=_ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -75,7 +99,7 @@ class OllamaConfig(BaseSettings):
 class DatabaseConfig(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="NEON_",
-        env_file=".env",
+        env_file=_ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -89,7 +113,7 @@ class DatabaseConfig(BaseSettings):
 class RedisConfig(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="REDIS_",
-        env_file=".env",
+        env_file=_ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -103,7 +127,7 @@ class RedisConfig(BaseSettings):
 class AppConfig(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="APP_",
-        env_file=".env",
+        env_file=_ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
         populate_by_name=True,
@@ -128,6 +152,19 @@ class AppConfig(BaseSettings):
     )
     llm_provider: str = Field(default="gemini", validation_alias=AliasChoices("llm_provider", "LLM_PROVIDER"))
     settings_encryption_key: str = Field(default="", validation_alias=AliasChoices("settings_encryption_key", "SETTINGS_ENCRYPTION_KEY"))
+    media_idle_shutdown_enabled: bool = Field(
+        default=False, validation_alias=AliasChoices("media_idle_shutdown_enabled", "MEDIA_IDLE_SHUTDOWN_ENABLED")
+    )
+    media_idle_timeout_minutes: int = Field(
+        default=15, validation_alias=AliasChoices("media_idle_timeout_minutes", "MEDIA_IDLE_TIMEOUT_MINUTES")
+    )
+    jellyfin_url: str = Field(
+        default="http://localhost:8096", validation_alias=AliasChoices("jellyfin_url", "JELLYFIN_URL")
+    )
+    jellyfin_api_key: str = Field(
+        default="", validation_alias=AliasChoices("jellyfin_api_key", "JELLYFIN_API_KEY")
+    )
+
 
     @field_validator("debug", mode="before")
     @classmethod
@@ -161,7 +198,7 @@ class AppConfig(BaseSettings):
 class APIConfig(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="API_",
-        env_file=".env",
+        env_file=_ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -174,7 +211,7 @@ class APIConfig(BaseSettings):
 class ESP32Config(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="ESP32_",
-        env_file=".env",
+        env_file=_ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -188,7 +225,7 @@ class ESP32Config(BaseSettings):
 class SpeechConfig(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="SPEECH_",
-        env_file=".env",
+        env_file=_ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -226,9 +263,9 @@ class SpeechConfig(BaseSettings):
     oww_vad_threshold: float = Field(default=0.3)     # Silero VAD gate; 0=disabled, higher=stricter
     # Silero VAD — more accurate than WebRTC VAD (requires torch)
     stt_use_silero_vad: bool = Field(default=True)
-    stt_silero_threshold: float = Field(default=0.5)
+    stt_silero_threshold: float = Field(default=0.28)
     # VAD aggressiveness for WebRTC fallback (0=sensitive, 3=strict)
-    stt_vad_aggressiveness: int = Field(default=2)
+    stt_vad_aggressiveness: int = Field(default=1)
 
     @field_validator("stt_device_index", mode="before")
     @classmethod
@@ -241,7 +278,7 @@ class SpeechConfig(BaseSettings):
 class CacheConfig(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="CACHE_",
-        env_file=".env",
+        env_file=_ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
         populate_by_name=True,
@@ -257,7 +294,7 @@ class CacheConfig(BaseSettings):
 class SpotifyConfig(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="SPOTIFY_",
-        env_file=".env",
+        env_file=_ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -272,7 +309,7 @@ class SpotifyConfig(BaseSettings):
 class UPSConfig(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="UPS_",
-        env_file=".env",
+        env_file=_ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -288,7 +325,7 @@ class UPSConfig(BaseSettings):
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_ENV_FILE,
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",

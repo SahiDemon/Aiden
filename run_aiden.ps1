@@ -1,4 +1,4 @@
-﻿param([switch]$Debug)
+param([switch]$Debug)
 
 # Use script directory as working directory
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
@@ -53,26 +53,35 @@ if (-not (Test-Path $dashboardIndex)) {
         exit 1
     }
     Pop-Location
-    Write-Host "[] Dashboard build complete" -ForegroundColor Green
+    Write-Host "[OK] Dashboard build complete" -ForegroundColor Green
 }
 
 Write-Host "Dashboard will be served from http://localhost:5000" -ForegroundColor Cyan
 
-# Launch Aiden
-$scriptEntry = Join-Path $ScriptDir "src\main.py"
-if (-not (Test-Path $scriptEntry)) {
-    Write-Host "ERROR: Entry script not found at src\main.py" -ForegroundColor Red
+# Guardian entry point (auto-restarts Aiden if it dies unexpectedly)
+$guardianEntry = Join-Path $ScriptDir "src\utils\guardian.py"
+if (-not (Test-Path $guardianEntry)) {
+    Write-Host "ERROR: Guardian script not found at src\utils\guardian.py" -ForegroundColor Red
     if ($hasHandle) { $mutex.ReleaseMutex() }
     exit 1
 }
 
+# Clean up any leftover sentinel from a previous session so a fresh start
+# is never blocked by a stale stop-file.
+$sentinelPath = Join-Path $ScriptDir "src\temp\.guardian_stop"
+if (Test-Path $sentinelPath) {
+    Remove-Item $sentinelPath -Force -ErrorAction SilentlyContinue
+    Write-Host "Cleared stale guardian sentinel." -ForegroundColor DarkGray
+}
+
 if ($Debug) {
     Write-Host "Running in DEBUG mode (console visible)..." -ForegroundColor Yellow
-    & $pythonPath $scriptEntry
+    & $pythonPath $guardianEntry --debug
     $exitCode = $LASTEXITCODE
 } else {
-    Write-Host "Running in NORMAL mode (hidden)..." -ForegroundColor Green
-    Start-Process -FilePath $pythonPath -ArgumentList $scriptEntry -WorkingDirectory $ScriptDir -WindowStyle Hidden
+    Write-Host "Running in NORMAL mode (hidden, guardian active)..." -ForegroundColor Green
+    # Launch the guardian hidden; it will in turn launch Aiden hidden.
+    Start-Process -FilePath $pythonPath -ArgumentList $guardianEntry -WorkingDirectory $ScriptDir -WindowStyle Hidden
     $exitCode = 0
 }
 

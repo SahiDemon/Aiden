@@ -20,19 +20,15 @@ app.setPath('sessionData', path.join(userDataDir, 'Session'));
 app.commandLine.appendSwitch('disk-cache-dir', path.join(userDataDir, 'Cache'));
 app.commandLine.appendSwitch('media-cache-dir', path.join(userDataDir, 'Cache', 'Media'));
 
-function resolveBackendExecutable(): { exePath: string; cwd: string } | null {
+function resolveBackendExecutable(): { exePath: string; exeArgs: string[]; cwd: string } | null {
     if (!app.isPackaged) {
         return null;
     }
 
-    const backendRoot = path.join(
-        process.resourcesPath,
-        'backend',
-        isDebugMode ? 'AidenConsole' : 'Aiden'
-    );
-    const exeName = isDebugMode ? 'AidenConsole.exe' : 'Aiden.exe';
+    const backendRoot = path.join(process.resourcesPath, 'backend', 'Aiden');
     return {
-        exePath: path.join(backendRoot, exeName),
+        exePath: path.join(backendRoot, 'Aiden.exe'),
+        exeArgs: isDebugMode ? ['--debug'] : [],
         cwd: backendRoot,
     };
 }
@@ -56,7 +52,7 @@ function startBackend() {
         env.APP_DEBUG = 'true';
     }
 
-    backendProcess = spawn(backend.exePath, [], {
+    backendProcess = spawn(backend.exePath, backend.exeArgs, {
         cwd: backend.cwd,
         env,
         stdio: isDebugMode ? 'inherit' : 'ignore',
@@ -84,7 +80,10 @@ function hideOverlay() {
         return;
     }
 
-    win.hide();
+    // Do not call win.hide() to prevent dropping the Chromium GPU context.
+    // The React app handles the opacity and animations, so it will be visually hidden.
+    // Ensure mouse events pass through the invisible window.
+    win.setIgnoreMouseEvents(true, { forward: true });
 }
 
 function createWindow() {
@@ -125,6 +124,10 @@ function createWindow() {
     win.webContents.on('did-finish-load', () => {
         win?.webContents.send('main-process-message', (new Date).toLocaleString());
     });
+
+    if (isDebugMode) {
+        win.webContents.openDevTools({ mode: 'detach' });
+    }
 
     if (VITE_DEV_SERVER_URL) {
         win.loadURL(VITE_DEV_SERVER_URL);

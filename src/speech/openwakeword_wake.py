@@ -18,6 +18,7 @@ Architecture:
 import logging
 import threading
 import time
+from pathlib import Path
 from typing import Callable, Optional
 
 import numpy as np
@@ -25,6 +26,7 @@ import pyaudio
 
 from src.utils.config import get_settings
 from src.utils.logger import get_logger
+from src.utils.paths import resource_path
 
 logger = get_logger(__name__)
 
@@ -57,7 +59,17 @@ class OpenWakeWordDetector:
         self.callback = callback
         cfg = get_settings().speech
 
-        self.model_path: str = getattr(cfg, "oww_model_path", "")
+        # Resolve the model path via resource_path() so it works correctly
+        # both when running from source AND from a PyInstaller EXE bundle
+        # (where the CWD may differ from the EXE's directory).
+        raw_model_path: str = getattr(cfg, "oww_model_path", "")
+        if raw_model_path:
+            p = Path(raw_model_path)
+            self.model_path = str(
+                p if p.is_absolute() else resource_path(*p.parts)
+            )
+        else:
+            self.model_path = ""
         self.threshold: float = getattr(cfg, "oww_threshold", 0.5)
         self.vad_threshold: float = getattr(cfg, "oww_vad_threshold", 0.3)
         self.debounce: float = cfg.porcupine_debounce_seconds

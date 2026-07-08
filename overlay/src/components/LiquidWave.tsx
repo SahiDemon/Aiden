@@ -54,6 +54,22 @@ const LiquidWave: React.FC<LiquidWaveProps> = ({ state, displayText }) => {
     const isLongText = textToDisplay.length > 95;
     const isExtraLongText = textToDisplay.length > 150;
 
+    // Dynamically expand wave width for longer text so it stays in the deep center of the wave
+    const getDynamicWidth = () => {
+        const baseWidth = config.width;
+        const textLen = textToDisplay.length;
+        if (textLen <= 40) return baseWidth;
+
+        const expandedWidth = baseWidth + (textLen - 40) * 10;
+        const maxAvailableWidth = typeof window !== 'undefined'
+            ? Math.min(1800, window.innerWidth - 40)
+            : 1800;
+
+        return Math.min(Math.max(baseWidth, expandedWidth), maxAvailableWidth);
+    };
+
+    const dynamicWidth = getDynamicWidth();
+
     // Listening: Gentle, organic ripple - CENTERED
     const listeningPath = [
         `M0,0 C${viewBoxWidth * 0.25},${config.amplitude * 0.3} ${viewBoxWidth * 0.4},${config.amplitude} ${viewBoxWidth * 0.5},${config.amplitude} C${viewBoxWidth * 0.6},${config.amplitude} ${viewBoxWidth * 0.75},${config.amplitude * 0.3} ${viewBoxWidth},0 Z`,
@@ -92,7 +108,7 @@ const LiquidWave: React.FC<LiquidWaveProps> = ({ state, displayText }) => {
 
     return (
         <motion.div
-            animate={{ width: config.width, height: config.height }}
+            animate={{ width: dynamicWidth, height: config.height }}
             transition={{ duration: 0.5, ease: "easeInOut" }}
             style={{
                 display: 'flex',
@@ -191,7 +207,7 @@ const LiquidWave: React.FC<LiquidWaveProps> = ({ state, displayText }) => {
                         position: 'relative',
                         overflow: 'visible',
                         minWidth: 0,
-                        maxWidth: 'min(1120px, calc(100vw - 78px))'
+                        maxWidth: `min(${dynamicWidth * 0.75}px, calc(100vw - 100px))`
                     }}
                 >
                     {/* Background Glow */}

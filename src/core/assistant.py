@@ -665,6 +665,13 @@ class AidenAssistant:
         # BARGE-IN: Stop any currently playing audio instantly
         self.tts.stop()
 
+        self.is_processing = True
+
+        # Broadcast listening status IMMEDIATELY so the overlay starts
+        # appearing while media ducking and sounds play concurrently.
+        from src.utils.websocket_broadcast import broadcast_voice_status
+        await broadcast_voice_status("listening", speaking=False, active=True)
+
         duck_state = None
         duck_state_consumed = False
 
@@ -676,23 +683,19 @@ class AidenAssistant:
         except Exception as exc:
             logger.debug(f"STT media ducking unavailable before activation cue: {exc}")
 
-        # For voice wake, acknowledge first. For hotkey activation, skip the
-        # conversational acknowledgement and only play the mic-open cue.
+        # For voice wake, cleanly play the vocal acknowledgement ("mmm?").
+        # For hotkey, play the standard activation beep.
+        # This prevents overlapping audio cues from echoing into STT.
         if not from_hotkey:
             await self._play_wake_acknowledgement()
-
-        # Play the mic-open cue, then immediately enter STT.
-        await self.tts.play_sound_now("activation")
-        
-        self.is_processing = True
+        else:
+            await self.tts.play_sound_now("activation")
         
         import time as _time
         _t0 = _time.monotonic()
 
         try:
-            # Broadcast listening status
-            from src.utils.websocket_broadcast import broadcast_voice_status
-            await broadcast_voice_status("listening", speaking=False, active=True)
+            # (listening status already broadcast above)
             
             # ── Step 1: STT ──────────────────────────────────────────────
             _t_stt_start = _time.monotonic()

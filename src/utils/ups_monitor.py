@@ -184,8 +184,7 @@ class UPSMonitor:
                 # First bit: 1 = On Battery, 0 = On AC
                 on_battery = status_bits[0] == '1'
                 new_mode = PowerMode.BATTERY if on_battery else PowerMode.AC_ONLINE
-                
-                # Check for power mode change
+                               # Check for power mode change
                 if new_mode != self.current_mode and self.current_mode != PowerMode.UNKNOWN:
                     self._handle_power_mode_change(new_mode)
                 
@@ -231,7 +230,7 @@ class UPSMonitor:
 
             if self.on_power_restored:
                 self._call_async_callback(self.on_power_restored)
-    
+
     def _check_battery_levels(self):
         """Check time-based alerts and critical battery voltage"""
         if not self.power_lost_time or self.shutdown_confirmed:
@@ -241,7 +240,6 @@ class UPSMonitor:
         elapsed = time.time() - self.power_lost_time
         
         # Critical battery voltage check (independent of time)
-        # 22V is dangerously low for 24V system - force shutdown
         if self.battery_voltage > 0 and self.battery_voltage < 22.0:
             logger.error(f"🚨 CRITICAL BATTERY VOLTAGE: {self.battery_voltage:.1f}V - Forcing emergency shutdown!")
             
@@ -254,7 +252,6 @@ class UPSMonitor:
             return
         
         # Time-based alerts
-        # 4 minutes: Absolute deadline - force shutdown if user hasn't responded
         if elapsed >= self.absolute_deadline:
             logger.error(f"🚨 4 MINUTES ON BATTERY - No response from user, forcing shutdown!")
             
@@ -265,9 +262,9 @@ class UPSMonitor:
                     reason="timeout"
                 )
         
-        # 2 minutes: Check-in with user
+        # 2 minutes: Second attempt - execute mandatory shutdown without asking again
         elif elapsed >= self.first_alert_delay and not self.first_alert_sent:
-            logger.warning(f"⚠️ 2 MINUTES ON BATTERY - Checking in with user!")
+            logger.warning(f"⚠️ 2 MINUTES ON BATTERY - Second attempt reached! Triggering sure shutdown without re-asking.")
             self.first_alert_sent = True
             
             if self.on_battery_alert:
@@ -275,7 +272,7 @@ class UPSMonitor:
                     self.on_battery_alert,
                     elapsed_minutes=int(elapsed / 60)
                 )
-    
+
     def _call_async_callback(self, callback: Callable, **kwargs):
         """Call async callback from sync thread"""
         try:
@@ -286,15 +283,13 @@ class UPSMonitor:
             # Schedule callback in the main loop
             if asyncio.iscoroutinefunction(callback):
                 future = asyncio.run_coroutine_threadsafe(callback(**kwargs), self.main_event_loop)
-                # Wait for completion (with timeout)
                 future.result(timeout=30)
             else:
-                # Sync callback
                 callback(**kwargs)
         
         except Exception as e:
             logger.error(f"Error calling UPS callback: {e}", exc_info=True)
-    
+
     def confirm_shutdown(self, confirmed: bool):
         """
         User confirmation for shutdown
@@ -320,14 +315,13 @@ class UPSMonitor:
                 )
         else:
             logger.info("User cancelled shutdown - will wait for critical battery level")
-    
+
     def get_status(self) -> dict:
         """Get current UPS status"""
-        # Calculate time on battery if applicable
         time_on_battery = None
         if self.power_lost_time:
             elapsed = (datetime.now() - self.power_lost_time).total_seconds()
-            time_on_battery = int(elapsed / 60)  # minutes
+            time_on_battery = int(elapsed / 60)
         
         return {
             "mode": self.current_mode.value,

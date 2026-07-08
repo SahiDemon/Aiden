@@ -2,11 +2,87 @@
 Aiden AI Assistant - Main Entry Point
 Unified application with hidden tray + optional web dashboard
 """
+# -----------------------------------------------------------------------
+# MUST be the very first code that runs — before ANY other import.
+#
+# When Aiden.exe is launched with --debug from a PowerShell / cmd window,
+# we attach to that parent console so all logging appears in the caller's
+# terminal.  If there is no parent console (double-click), AttachConsole
+# fails silently and the process stays hidden (tray-only).
+# -----------------------------------------------------------------------
+import sys
+import os
+
+class DummyStream:
+    """A dummy stream that does nothing but prevents NoneType AttributeError for GUI processes."""
+    def write(self, data: str) -> int:
+        return len(data)
+    def flush(self) -> None:
+        pass
+    def isatty(self) -> bool:
+        return False
+    def fileno(self) -> int:
+        return -1
+
+# CRITICAL: Prevent uvicorn/click/logging from crashing when run in windowed GUI mode without console.
+if sys.stdout is None:
+    sys.stdout = DummyStream()
+if sys.stderr is None:
+    sys.stderr = DummyStream()
+if sys.stdin is None:
+    sys.stdin = DummyStream()
+
+def _attach_debug_console() -> None:
+    """Attach stdout/stderr to the parent console when --debug is passed.
+
+    Only does anything when:
+    - running as a frozen PyInstaller exe (sys.frozen is set)
+    - --debug or -debug is in argv (case-insensitive)
+    - on Windows
+    Does nothing (and never raises) in all other cases.
+    """
+    _debug_args = {"--debug", "-debug"}
+    if not (
+        sys.platform == "win32"
+        and getattr(sys, "frozen", False)
+        and any(a.lower() in _debug_args for a in sys.argv)
+    ):
+        return
+
+    try:
+        import ctypes
+        import io
+
+        ATTACH_PARENT_PROCESS = -1  # type: ignore[assignment]
+        attached = ctypes.windll.kernel32.AttachConsole(ATTACH_PARENT_PROCESS)
+
+        if attached:
+            # Re-open the C-level stdout / stderr so print() and logging work.
+            sys.stdout = io.TextIOWrapper(
+                open("CONOUT$", "wb", buffering=0),  # noqa: WPS515
+                encoding="utf-8",
+                errors="replace",
+                line_buffering=True,
+            )
+            sys.stderr = sys.stdout
+            # Also redirect stdin so input() doesn't hang if ever called.
+            try:
+                sys.stdin = io.TextIOWrapper(
+                    open("CONIN$", "rb", buffering=0),
+                    encoding="utf-8",
+                    errors="replace",
+                )
+            except OSError:
+                pass  # stdin not critical
+    except Exception:
+        pass  # Never crash on console setup
+
+
+_attach_debug_console()
+
 import asyncio
 import logging
-import os
 import signal
-import sys
 import threading
 from typing import Optional
 import platform
@@ -38,7 +114,7 @@ _DEBUG_ARGS = {"--debug", "-debug"}
 def _apply_cli_overrides() -> None:
     """Apply simple CLI overrides before config loads."""
     for arg in list(sys.argv):
-        if arg in _DEBUG_ARGS:
+        if arg.lower() in _DEBUG_ARGS:
             os.environ["APP_DEBUG"] = "true"
             sys.argv.remove(arg)
 
@@ -55,9 +131,28 @@ stop_listening_hotkey_listener: Optional[object] = None
 api_server_task: Optional[asyncio.Task] = None
 overlay_launcher: Optional[object] = None
 ups_monitor: Optional[object] = None
+media_idle_monitor: Optional[object] = None
 shutdown_event = threading.Event()
 restart_event = threading.Event()
 main_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
+def _set_high_priority():
+    """Set process priority to HIGH_PRIORITY_CLASS on Windows.
+
+    Ensures Aiden's audio capture, wake-word, and AI threads are
+    scheduled ahead of background apps for responsive interaction.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        handle = ctypes.windll.kernel32.GetCurrentProcess()
+        # HIGH_PRIORITY_CLASS = 0x00000080
+        ctypes.windll.kernel32.SetPriorityClass(handle, 0x00000080)
+        logger.info("✅ Process priority set to HIGH_PRIORITY_CLASS")
+    except Exception as e:
+        logger.warning(f"Could not set process priority: {e}")
 
 
 def handle_activation(from_hotkey: bool = False):
@@ -199,7 +294,7 @@ def handle_stop_listening():
 
 async def initialize_services():
     """Initialize all Aiden services"""
-    global assistant, wake_word_detector, wake_word_manager, hotkey_listener, toggle_hotkey_listener, stop_listening_hotkey_listener, api_server_task, overlay_launcher, ups_monitor, main_loop
+    global assistant, wake_word_detector, wake_word_manager, hotkey_listener, toggle_hotkey_listener, stop_listening_hotkey_listener, api_server_task, overlay_launcher, ups_monitor, media_idle_monitor, main_loop
     
     # Store the main event loop for thread-safe async calls
     main_loop = asyncio.get_event_loop()
@@ -209,6 +304,9 @@ async def initialize_services():
         logger.info("=" * 70)
         logger.info("AIDEN AI ASSISTANT - STARTING UP")
         logger.info("=" * 70)
+        
+        # Set high process priority for responsive audio processing
+        _set_high_priority()
         
         settings = get_settings()
         
@@ -241,9 +339,22 @@ async def initialize_services():
         logger.info("WebSocket broadcast callback set")
         
         api_server_task = asyncio.create_task(start_api_server())
-        # Reduced from 3 s → 1 s: the API server, DB, and Redis connections
-        # initialize asynchronously and don't actually need 3 s of busy-wait.
-        await asyncio.sleep(1)
+        # Reduced from 1 s → 0.3 s: the API server starts asynchronously
+        # and is typically ready in ~100ms.
+        await asyncio.sleep(0.3)
+        
+        # Pre-warm the LLM client in the background so startup isn't blocked.
+        # Delay 3s to let the API server finish initializing Redis first
+        # (Gemini's initialize() loads the working API key index from Redis).
+        async def _prewarm_llm():
+            try:
+                await asyncio.sleep(3)
+                await assistant._ensure_llm_client()
+                logger.info("✅ LLM client pre-warmed")
+            except Exception as e:
+                logger.warning(f"⚠️ LLM client pre-warm failed (will init on first use): {e}")
+        asyncio.create_task(_prewarm_llm())
+        logger.info("LLM client pre-warm scheduled in background")
         
         # 3. Initialize wake word detector
         logger.info("Initializing wake word detector...")
@@ -305,8 +416,7 @@ async def initialize_services():
             wake_word_detector = get_wake_word_detector(on_wake_word=handle_activation)
             wake_word_detector.start()
         
-        # Give wake word detector a moment to start
-        await asyncio.sleep(0.5)
+        # Wake word detector signals readiness via wait_until_ready() — no sleep needed
         
         # 3.5. Initialize wake word manager
         logger.info("Initializing wake word manager...")
@@ -387,6 +497,14 @@ async def initialize_services():
                 logger.warning(f"Could not start UPS monitoring: {e}")
         else:
             logger.info("UPS monitoring disabled in config")
+
+        # 5.6. Start Media Idle monitoring
+        try:
+            from src.utils.media_idle_monitor import get_media_idle_monitor
+            media_idle_monitor = get_media_idle_monitor()
+            media_idle_monitor.start()
+        except Exception as e:
+            logger.warning(f"Could not start Media Idle monitoring: {e}")
         
         # 6. Greet user
         await assistant.greet_user()
@@ -400,6 +518,7 @@ async def initialize_services():
         logger.info(f"  Dashboard       : http://{settings.api.host}:{settings.api.port}")
         logger.info(f"  Overlay         : {'Running' if overlay_launcher and overlay_launcher.process else 'Not running'}")
         logger.info(f"  UPS Monitor     : {'Running' if ups_monitor and ups_monitor.running else 'Not running'}")
+        logger.info(f"  Media Idle Mon  : {'Running' if media_idle_monitor and media_idle_monitor.running else 'Not running'}")
         logger.info("=" * 70)
         
         return True
@@ -411,7 +530,7 @@ async def initialize_services():
 
 async def cleanup():
     """Cleanup all services"""
-    global wake_word_detector, hotkey_listener, toggle_hotkey_listener, stop_listening_hotkey_listener, api_server_task, overlay_launcher, ups_monitor
+    global wake_word_detector, hotkey_listener, toggle_hotkey_listener, stop_listening_hotkey_listener, api_server_task, overlay_launcher, ups_monitor, media_idle_monitor
     
     logger.info("=" * 70)
     logger.info("SHUTTING DOWN AIDEN")
@@ -451,6 +570,14 @@ async def cleanup():
                 await api_server_task
             except asyncio.CancelledError:
                 pass
+
+        if ups_monitor:
+            logger.info("Stopping UPS monitor...")
+            ups_monitor.stop()
+
+        if media_idle_monitor:
+            logger.info("Stopping Media Idle monitor...")
+            media_idle_monitor.stop()
         
         logger.info("Cleanup complete")
         

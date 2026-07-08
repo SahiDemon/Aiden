@@ -184,7 +184,17 @@ class ContextManager:
             
             # Update history and apply summarization when long
             context["history"].append({"role": "user", "content": user_message})
-            context["history"].append({"role": "assistant", "content": ai_response.get("response", "")})
+            
+            import json
+            assistant_payload = {
+                "intent": ai_response.get("intent", "unknown"),
+                "commands": ai_response.get("commands", []),
+                "response": ai_response.get("response", "")
+            }
+            if ai_response.get("expecting_followup"):
+                assistant_payload["expecting_followup"] = True
+                
+            context["history"].append({"role": "assistant", "content": json.dumps(assistant_payload)})
 
             # If history exceeds threshold, summarize older part and keep recent tail
             if len(context["history"]) >= self._summary_after_messages:
@@ -281,7 +291,16 @@ class ContextManager:
             context = await self.get_context(conversation_id)
             
             # Append message to history
-            context["history"].append({"role": "assistant", "content": message})
+            import json
+            assistant_payload = {
+                "intent": "system_alert",
+                "commands": [],
+                "response": message
+            }
+            if expecting_followup:
+                assistant_payload["expecting_followup"] = True
+                
+            context["history"].append({"role": "assistant", "content": json.dumps(assistant_payload)})
             
             # Apply summarization if needed
             if len(context["history"]) >= self._summary_after_messages:
@@ -696,7 +715,12 @@ class ContextManager:
                 highlights.append(f"User: {content}")
             elif role == "assistant":
                 # If assistant follows a user, capture action intent
-                summary_line = content
+                try:
+                    import json
+                    parsed = json.loads(content)
+                    summary_line = parsed.get("response", content)
+                except Exception:
+                    summary_line = content
                 if len(summary_line) > 180:
                     summary_line = summary_line[:177] + "..."
                 highlights.append(f"Assistant: {summary_line}")
@@ -745,7 +769,15 @@ class ContextManager:
         slice_messages = messages[-12:]  # last up to 12 items of head
         for msg in slice_messages:
             role = msg.get("role", "user")
-            content = clip(msg.get("content", ""), 300)
+            content = msg.get("content", "")
+            if role == "assistant":
+                try:
+                    import json
+                    parsed = json.loads(content)
+                    content = parsed.get("response", content)
+                except Exception:
+                    pass
+            content = clip(content, 300)
             if not content:
                 continue
             prefix = "User" if role == "user" else "Assistant"

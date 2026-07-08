@@ -433,6 +433,16 @@ class BrowserMediaController:
         except Exception:
             pass
 
+        # Track COM interface references so we can explicitly release them
+        # before CoUninitialize() — otherwise Python's GC may call Release()
+        # on dead COM pointers after the apartment is torn down, causing:
+        # "ValueError: COM method call without VTable"
+        enumerator = None
+        device = None
+        session_manager_unknown = None
+        session_manager = None
+        session_enum = None
+
         try:
             enumerator = comtypes.CoCreateInstance(
                 CLSID_MMDeviceEnumerator,
@@ -450,6 +460,9 @@ class BrowserMediaController:
             session_count = session_enum.GetCount()
 
             for index in range(session_count):
+                session = None
+                session_control = None
+                meter = None
                 try:
                     session = session_enum.GetSession(index)
                     session_control = session.QueryInterface(IAudioSessionControl2)
@@ -480,10 +493,22 @@ class BrowserMediaController:
                         active_pids.add(pid)
                 except Exception as exc:
                     logger.debug(f"Skipping browser audio session during inspection: {exc}")
+                finally:
+                    # Release per-session COM references while apartment is alive
+                    meter = None
+                    session_control = None
+                    session = None
         except Exception as exc:
             logger.debug(f"Browser audio session inspection failed: {exc}")
             return set()
         finally:
+            # Explicitly release all COM interfaces before CoUninitialize()
+            # to prevent GC from calling Release() after the apartment is gone.
+            session_enum = None
+            session_manager = None
+            session_manager_unknown = None
+            device = None
+            enumerator = None
             try:
                 comtypes.CoUninitialize()
             except Exception:

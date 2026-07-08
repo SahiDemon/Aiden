@@ -18,6 +18,20 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# Sentinel file path — when this file exists the guardian will NOT restart Aiden.
+# Written here (tray exit) so intentional shutdowns are respected.
+_GUARDIAN_SENTINEL = Path(__file__).resolve().parent.parent / "temp" / ".guardian_stop"
+
+
+def _signal_guardian_stop() -> None:
+    """Write the guardian sentinel file to prevent auto-restart on clean exit."""
+    try:
+        _GUARDIAN_SENTINEL.parent.mkdir(parents=True, exist_ok=True)
+        _GUARDIAN_SENTINEL.touch()
+        logger.info(f"Guardian sentinel written: {_GUARDIAN_SENTINEL}")
+    except Exception as exc:
+        logger.warning(f"Could not write guardian sentinel: {exc}")
+
 
 class AidenTrayApp:
     """
@@ -179,7 +193,10 @@ class AidenTrayApp:
     def exit_app(self, icon, item):
         """Exit the application"""
         logger.info("Exit requested from tray")
-        
+
+        # Tell the guardian this is an intentional exit — do NOT restart.
+        _signal_guardian_stop()
+
         # Stop the icon
         icon.stop()
         

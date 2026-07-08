@@ -69,35 +69,13 @@ class UPSEventHandler:
     
     async def handle_battery_alert(self, elapsed_minutes: int):
         """
-        Handle 2-minute alert
+        Handle second attempt alert - sure shutdown without re-asking
         
         Args:
             elapsed_minutes: Minutes elapsed on battery power
         """
-        logger.info(f"⚠️ 2-minute alert: {elapsed_minutes} minutes on battery")
-        
-        # Play warning sound before speaking
-        await self.tts.play_sound("warning")
-
-        message = (
-            f"Sir, you've had {elapsed_minutes} minutes on battery. "
-            f"I need to know - should I shut down now?"
-        )
-
-        await self.tts.speak(message)
-        
-        # Mark that we're waiting for response
-        self.waiting_for_response = True
-        
-        # Inject context so the LLM knows what we just asked
-        from src.core.context_manager import get_context_manager
-        ctx = get_context_manager()
-        await ctx.inject_assistant_message(message, expecting_followup=True)
-
-        # Open follow-up listening after the warning finishes speaking
-        asyncio.create_task(self._trigger_auto_listen())
-        
-        logger.info("Waiting for user response (2 minutes until force shutdown)")
+        logger.info(f"⚠️ Second attempt alert: {elapsed_minutes} minutes on battery. Shutting down surely without asking.")
+        await self.handle_shutdown_request(force=True, reason="second_attempt_timeout")
     
     async def handle_battery_critical(self, elapsed_minutes: int):
         """
@@ -143,11 +121,10 @@ class UPSEventHandler:
                 "I'm forcing an emergency shutdown to protect the system. "
                 "Initiating shutdown now."
             )
-        elif force and reason == "timeout":
+        elif force and (reason == "timeout" or reason == "second_attempt_timeout"):
             message = (
-                "Sir, it's been 4 minutes on battery with no response. "
-                "Forcing shutdown to protect your data. "
-                "Goodbye, Sir."
+                "Sir, our UPS battery check threshold has been reached. "
+                "Initiating mandatory automatic shutdown now. Goodbye, Sir."
             )
         elif force and reason == "critical_battery":
             message = (
@@ -158,7 +135,7 @@ class UPSEventHandler:
         else:
             message = (
                 "Understood, Sir. "
-                "Initiating graceful shutdown. "
+                "Initiating immediate shutdown. "
                 "See you on the other side."
             )
 
@@ -167,8 +144,8 @@ class UPSEventHandler:
         # Give TTS time to finish
         await asyncio.sleep(1)
         
-        # Execute shutdown
-        await self._execute_shutdown()
+        # Execute shutdown immediately with 0 delay
+        await self._execute_shutdown(delay=0)
 
     async def handle_power_restored(self):
         """Handle mains power returning while UPS protection is active."""
@@ -347,17 +324,18 @@ class UPSEventHandler:
         logger.warning(f"Shutdown abort command returned {result.returncode}: {output or 'no output'}")
         return False
     
-    async def _execute_shutdown(self):
+    async def _execute_shutdown(self, delay: int = 0):
         """Execute system shutdown"""
         try:
-            logger.critical("🔌 EXECUTING SYSTEM SHUTDOWN")
+            logger.critical(f"🔌 EXECUTING SYSTEM SHUTDOWN (delay={delay}s)")
             
             # Windows shutdown command
             if platform.system() == "Windows":
-                # Forced shutdown with 30 second warning so it still works from a locked session
-                # Note: /c comment must be the last parameter
+                cmd = ["shutdown", "/s", "/f", "/t", str(delay)]
+                if delay > 0:
+                    cmd.extend(["/c", "Aiden: UPS battery low - shutting down to protect data"])
                 result = subprocess.run(
-                    ["shutdown", "/s", "/f", "/t", "30", "/c", "Aiden: UPS battery low - shutting down to protect data"],
+                    cmd,
                     capture_output=True,
                     text=True
                 )
@@ -366,15 +344,13 @@ class UPSEventHandler:
                     logger.info("✅ Shutdown command executed successfully")
                 else:
                     logger.error(f"Shutdown command failed: {result.stderr}")
-                    # Try simpler command without comment
                     logger.info("Retrying shutdown without comment...")
-                    subprocess.run(["shutdown", "/s", "/f", "/t", "30"], check=True)
+                    subprocess.run(["shutdown", "/s", "/f", "/t", str(delay)], check=True)
             else:
                 logger.error("Shutdown only supported on Windows")
         
         except Exception as e:
             logger.error(f"Failed to execute shutdown: {e}", exc_info=True)
-            # Last resort - immediate shutdown without comment
             try:
                 logger.warning("Attempting immediate shutdown as fallback...")
                 subprocess.run(["shutdown", "/s", "/f", "/t", "0"], check=False)
@@ -400,8 +376,11 @@ class UPSEventHandler:
                 self.handle_shutdown_request(force=False, reason="user_confirmed")
             )
         else:
-            logger.info("❌ User cancelled shutdown - will monitor battery and force shutdown at critical level")
-    
+            logger.info("❌ User cancelled shutdown - will wait until second attempt to force shutdown without asking again")
+            asyncio.create_task(
+                self.tts.speak("Understood, Sir. I will give you time. When our battery check threshold is reached, I will shut down automatically without asking.")
+            )
+
     def is_waiting_for_response(self) -> bool:
         """Check if handler is waiting for user response"""
         return self.waiting_for_response
