@@ -41,7 +41,7 @@ async def broadcast_message(message_type: str, data: Dict[str, Any]):
     """Broadcast generic message to dashboard"""
     if _broadcast_callback:
         try:
-            logger.info(f"Broadcasting message: type={message_type}, data={data}")
+            logger.debug(f"Broadcasting message: type={message_type}, data={data}")
             await _broadcast_callback(message_type, data)
         except Exception as e:
             logger.error(f"Failed to broadcast message: {e}")

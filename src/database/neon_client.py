@@ -55,7 +55,7 @@ class NeonDBClient:
                 max_overflow=5,
                 pool_pre_ping=True,
                 pool_recycle=300,
-                echo=self.settings.app.debug,
+                echo=False,  # Keep console clean; avoid verbose raw SQL dump
                 connect_args=connect_args
             )
             

@@ -909,7 +909,7 @@ async def broadcast_update(update_type: str, data: Dict[str, Any]):
         "data": data,
         "timestamp": datetime.now().isoformat()
     }
-    logger.info(f"Broadcasting to {len(manager.active_connections)} clients: type={update_type}")
+    logger.debug(f"Broadcasting to {len(manager.active_connections)} clients: type={update_type}")
     logger.debug(f"Broadcast data: {data}")
     await manager.broadcast(message)
 
