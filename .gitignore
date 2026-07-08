@@ -4,9 +4,7 @@ __pycache__/
 *$py.class
 *.so
 .Python
-build/
 develop-eggs/
-dist/
 downloads/
 eggs/
 .eggs/
@@ -24,7 +22,7 @@ wheels/
 venv/
 env/
 ENV/
-.venv/Scripts/
+.venv/
 
 # IDE
 .idea/
@@ -37,9 +35,15 @@ ENV/
 *.log
 logs/
 
-# Local configuration
-config.json
+# Local configuration — NEVER commit these
 .env
+config.json
+
+# Google Cloud / service account credentials — NEVER commit these
+gen-lang-client-*.json
+*-credentials.json
+*service-account*.json
+service_account*.json
 
 # ESP32 related
 esp32_firmware/
@@ -47,8 +51,8 @@ esp32_firmware/
 
 # Project specific
 node_modules/
-logs/
 dist/
+build/
 coverage/
 .env.local
 .env.development.local
@@ -66,7 +70,8 @@ coverage/
 .cache/
 .build-tmp/
 .electron-builder-cache/
+
+# Model / cache files (large, auto-generated)
 vosk_models/
-.venv/Scripts/
 app_cache.json
 system_context_cache.json
