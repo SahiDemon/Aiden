@@ -22,7 +22,7 @@ logger = get_logger(__name__)
 class SystemContextProvider:
     """Provides system context (apps, processes) to AI for better decision making"""
     
-    CACHE_FILE = "system_context_cache.json"
+    CACHE_FILE = str(Path(__file__).resolve().parent.parent / "temp" / "system_context_cache.json")
     CACHE_TTL = 3600  # 1 hour in seconds
     
     def __init__(self):
@@ -63,7 +63,7 @@ class SystemContextProvider:
                         try:
                             redis = await get_redis_client()
                             await redis.set("system:installed_apps", json.dumps(cached_data), ex=self.CACHE_TTL)
-                        except:
+                        except Exception:
                             pass
                         return cached_data
             except Exception as e:
@@ -76,16 +76,18 @@ class SystemContextProvider:
         # 1. Built-in Windows apps
         apps.update(self._get_builtin_apps())
         
-        # 2. Registry-based apps
-        apps.update(self._get_registry_apps())
+        import asyncio
+        # 2. Registry-based apps (run in thread to prevent blocking event loop)
+        apps.update(await asyncio.to_thread(self._get_registry_apps))
         
-        # 3. Start menu shortcuts
-        apps.update(self._get_startmenu_apps())
+        # 3. Start menu shortcuts (run in thread to prevent blocking event loop)
+        apps.update(await asyncio.to_thread(self._get_startmenu_apps))
         
         logger.info(f"Found {len(apps)} installed applications")
         
         # Cache results
         try:
+            os.makedirs(os.path.dirname(self.CACHE_FILE), exist_ok=True)
             with open(self.CACHE_FILE, 'w', encoding='utf-8') as f:
                 json.dump(apps, f, indent=2)
         except Exception as e:

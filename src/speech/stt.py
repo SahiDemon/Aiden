@@ -310,8 +310,7 @@ class STTEngine:
                 self._silero.reset()
 
             # Run blocking listen operation in thread pool
-            loop = asyncio.get_event_loop()
-            success, audio, error = await loop.run_in_executor(None, self._listen_sync)
+            success, audio, error = await asyncio.to_thread(self._listen_sync)
 
             if self._stop_requested.is_set():
                 logger.info("STT: Stop requested after audio capture — treating listen as cancelled")
@@ -605,6 +604,17 @@ class STTEngine:
         """No-op: neural VAD doesn't use calibration."""
         logger.info("STT: Neural VAD doesn't use calibration — nothing to reset")
 
+    def close(self):
+        """Release persistent microphone resources."""
+        if self._persistent_mic:
+            try:
+                self._persistent_mic.__exit__(None, None, None)
+                logger.info("STT: Persistent microphone released")
+            except Exception as e:
+                logger.warning(f"STT: Error releasing persistent microphone: {e}")
+            finally:
+                self._persistent_mic = None
+
 
 # Global instance
 _stt_engine: Optional[STTEngine] = None
@@ -620,4 +630,6 @@ def get_stt_engine() -> STTEngine:
 
 def reset_stt_engine() -> None:
     global _stt_engine
+    if _stt_engine is not None:
+        _stt_engine.close()
     _stt_engine = None

@@ -152,51 +152,46 @@ class TTSEngine:
             try:
                 task = await self.audio_queue.get()
                 self.is_processing = True
-                
-                task_type = task.get("type")
-                
-                if task_type == "speak":
-                    audio_data = task.get("data")
-                    text = task.get("text")
+                try:
+                    task_type = task.get("type")
                     
-                    # Broadcast speaking status
-                    from src.utils.websocket_broadcast import broadcast_voice_status, broadcast_message
-                    await broadcast_voice_status("speaking", speaking=True)
-                    if text:
-                        await broadcast_message("assistant_speaking", {"text": text})
+                    if task_type == "speak":
+                        audio_data = task.get("data")
+                        text = task.get("text")
+                        
+                        # Broadcast speaking status
+                        from src.utils.websocket_broadcast import broadcast_voice_status, broadcast_message
+                        await broadcast_voice_status("speaking", speaking=True)
+                        if text:
+                            await broadcast_message("assistant_speaking", {"text": text})
 
-                    wake_word_paused = self._pause_wake_word_detection()
-                    try:
-                        # Play
-                        await self._play_audio_data(audio_data)
-                    finally:
-                        self._resume_wake_word_detection(wake_word_paused)
-                    
-                    # Broadcast idle status
-                    await broadcast_voice_status("idle", speaking=False)
-                    
-                elif task_type == "sound":
-                    sound_path = task.get("path")
-                    wake_word_paused = self._pause_wake_word_detection()
-
-                    async def _play_sound_and_resume():
+                        wake_word_paused = self._pause_wake_word_detection()
                         try:
-                            await self._play_sound_file(sound_path)
+                            # Play
+                            await self._play_audio_data(audio_data)
                         finally:
                             self._resume_wake_word_detection(wake_word_paused)
+                        
+                        # Broadcast idle status
+                        await broadcast_voice_status("idle", speaking=False)
+                        
+                    elif task_type == "sound":
+                        sound_path = task.get("path")
+                        wake_word_paused = self._pause_wake_word_detection()
 
-                    # Play sound NON-BLOCKING (fire and forget task)
-                    asyncio.create_task(_play_sound_and_resume())
-                    # DO NOT wait here, immediately process next item in queue (which might be speech)
+                        async def _play_sound_and_resume():
+                            try:
+                                await self._play_sound_file(sound_path)
+                            finally:
+                                self._resume_wake_word_detection(wake_word_paused)
+
+                        # Play sound NON-BLOCKING (fire and forget task)
+                        asyncio.create_task(_play_sound_and_resume())
+                finally:
                     self.audio_queue.task_done()
-                    continue
-                
-                self.audio_queue.task_done()
-                
+                    self.is_processing = False
             except Exception as e:
                 logger.error(f"Error in TTS queue processor: {e}")
-            finally:
-                self.is_processing = False
     
     async def speak(self, text: str):
         """
@@ -353,10 +348,8 @@ class TTSEngine:
                 pitch=self.google_pitch
             )
             
-            # Run the synchronous API call in an executor to avoid blocking
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
+            # Run the synchronous API call in a thread to avoid blocking
+            response = await asyncio.to_thread(
                 lambda: self.google_client.synthesize_speech(
                     input=synthesis_input,
                     voice=voice,
@@ -395,11 +388,7 @@ class TTSEngine:
                  # Fallback path if running from root
                  script_path = os.path.abspath("src/speech/offline_tts_generator.py")
             
-            # Windows: Use ProactorEventLoop for subprocess support
-            # Run in executor to avoid event loop issues
-            loop = asyncio.get_event_loop()
-            
-            # Run the generator script using subprocess.run in executor
+            # Windows: Run subprocess in thread
             def run_subprocess():
                 result = subprocess.run(
                     [sys.executable, script_path, text, output_file],
@@ -409,7 +398,7 @@ class TTSEngine:
                 )
                 return result
             
-            result = await loop.run_in_executor(None, run_subprocess)
+            result = await asyncio.to_thread(run_subprocess)
             
             if result.stdout:
                 logger.debug(f"Offline TTS stdout: {result.stdout.decode()}")
@@ -592,14 +581,15 @@ class TTSEngine:
     
     async def wait_until_done(self, timeout: float = 10.0):
         """Wait for all queued audio to finish playing"""
-        start = asyncio.get_event_loop().time()
+        loop = asyncio.get_running_loop()
+        start = loop.time()
         while True:
             # Check if queue is empty and not processing
             if self.audio_queue.empty() and not self.is_processing:
                 return True
             
             # Check timeout
-            if asyncio.get_event_loop().time() - start > timeout:
+            if loop.time() - start > timeout:
                 logger.warning(f"TTS wait timed out after {timeout}s")
                 return False
             

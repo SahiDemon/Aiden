@@ -223,7 +223,7 @@ class BrowserMediaController:
     """Controls media playback for YouTube / YouTube Music in Chromium browsers."""
 
     def __init__(self):
-        self._loop = asyncio.get_event_loop()
+        pass
 
     async def control(self, action: str, target: Optional[str] = None, query: Optional[str] = None) -> Tuple[bool, dict]:
         """Execute a media action (play/pause/etc.) for the target browser tab."""
@@ -502,17 +502,11 @@ class BrowserMediaController:
             logger.debug(f"Browser audio session inspection failed: {exc}")
             return set()
         finally:
-            # Explicitly release all COM interfaces before CoUninitialize()
-            # to prevent GC from calling Release() after the apartment is gone.
             session_enum = None
             session_manager = None
             session_manager_unknown = None
             device = None
             enumerator = None
-            try:
-                comtypes.CoUninitialize()
-            except Exception:
-                pass
 
         return active_pids
 

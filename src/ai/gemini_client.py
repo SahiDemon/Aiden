@@ -154,8 +154,9 @@ class GeminiClient:
             logger.debug(f"Could not save working key index to Redis: {e}")
     
     async def _announce_key_rotation(self):
-        """Announce API key rotation via TTS"""
+        """Announce API key rotation via TTS after main response completes"""
         try:
+            await asyncio.sleep(6)  # Give main response time to speak first
             from src.speech.tts import get_tts_engine
             tts = get_tts_engine()
             message = "Sir! I detected an issue with my backend server API, so I've automatically switched to a new one to keep things running smoothly."

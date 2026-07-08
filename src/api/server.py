@@ -271,25 +271,25 @@ async def health_check():
     try:
         db = await get_db_client()
         services_health["database"] = True
-    except:
+    except Exception:
         pass
     
     try:
         redis = await get_redis_client()
         services_health["redis"] = True
-    except:
+    except Exception:
         pass
     
     try:
         groq = await get_groq_client()
         services_health["ai"] = True
-    except:
+    except Exception:
         pass
     
     try:
         esp32 = await get_esp32_client()
         services_health["esp32"] = settings.esp32.enabled
-    except:
+    except Exception:
         pass
     
     # Determine overall status
@@ -311,16 +311,17 @@ async def send_message(request: MessageRequest):
     This will be the main entry point for command processing
     """
     try:
-        # This will be implemented with the main orchestrator
-        # For now, return a placeholder
+        from src.core.assistant import get_assistant
+        assistant = await get_assistant()
+        response_text = await assistant.handle_text_message(request.message)
         return {
             "success": True,
-            "message": "Message received",
+            "message": "Message processed",
             "input": request.message,
-            "response": "Processing not yet implemented - orchestrator needed"
+            "response": response_text
         }
     except Exception as e:
-        logger.error(f"Error processing message: {e}")
+        logger.error(f"Error processing message: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/v1/conversation/history")
@@ -350,8 +351,8 @@ async def get_system_status():
     try:
         import psutil
         
-        # System stats
-        cpu_percent = psutil.cpu_percent(interval=1)
+        # System stats (interval=None prevents blocking the async event loop)
+        cpu_percent = psutil.cpu_percent(interval=None)
         memory = psutil.virtual_memory()
         
         # Redis stats
@@ -641,18 +642,16 @@ async def get_dashboard_stats():
     try:
         db = await get_db_client()
         
-        # Get conversation count
-        conversations = await db.get_conversations(limit=1000)
-        
-        # Get command history
-        commands = await db.get_command_history(limit=1000)
+        # Get fast SQL counts
+        total_conversations = await db.count_conversations()
+        total_commands = await db.count_commands()
         
         return {
             "success": True,
             "stats": {
-                "total_conversations": len(conversations),
-                "total_commands": len(commands),
-                "uptime": "N/A",  # Would need to track this
+                "total_conversations": total_conversations,
+                "total_commands": total_commands,
+                "uptime": "N/A",
             }
         }
     except Exception as e:
@@ -885,7 +884,7 @@ try:
         if full_path.startswith("api/"):
             return {"error": "Not found"}
         return FileResponse(str(dashboard_build / "index.html"))
-except:
+except Exception:
     logger.warning("Dashboard build not found - dashboard will not be served")
     
     @app.get("/")

@@ -171,7 +171,7 @@ class AppLauncher:
             subprocess.Popen(app_name, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             logger.info(f"Launched {app_name} from PATH")
             return True
-        except:
+        except Exception:
             pass
         
         # Try with .exe extension
@@ -180,7 +180,7 @@ class AppLauncher:
                 subprocess.Popen(f"{app_name}.exe", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 logger.info(f"Launched {app_name}.exe from PATH")
                 return True
-            except:
+            except Exception:
                 pass
         
         return False

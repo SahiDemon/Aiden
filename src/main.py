@@ -297,7 +297,7 @@ async def initialize_services():
     global assistant, wake_word_detector, wake_word_manager, hotkey_listener, toggle_hotkey_listener, stop_listening_hotkey_listener, api_server_task, overlay_launcher, ups_monitor, media_idle_monitor, main_loop
     
     # Store the main event loop for thread-safe async calls
-    main_loop = asyncio.get_event_loop()
+    main_loop = asyncio.get_running_loop()
     logger.info(f"Main event loop set: {main_loop}")
     
     try:
@@ -578,6 +578,10 @@ async def cleanup():
         if media_idle_monitor:
             logger.info("Stopping Media Idle monitor...")
             media_idle_monitor.stop()
+
+        logger.info("Closing STT engine...")
+        from src.speech.stt import reset_stt_engine
+        reset_stt_engine()
         
         logger.info("Cleanup complete")
         

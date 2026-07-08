@@ -107,8 +107,15 @@ class MediaRouter:
     async def _spotify_is_active(self) -> bool:
         if not self.spotify_client.is_enabled():
             return False
+        import time
+        now = time.time()
+        if hasattr(self, "_cached_spotify_active") and (now - getattr(self, "_cached_spotify_active_time", 0)) < 5.0:
+            return self._cached_spotify_active
         playback = await self.spotify_client.get_current_playback()
-        return bool(playback and playback.get("is_playing"))
+        active = bool(playback and playback.get("is_playing"))
+        self._cached_spotify_active = active
+        self._cached_spotify_active_time = now
+        return active
 
     async def _handle_spotify(
         self,
@@ -301,88 +308,6 @@ class MediaRouter:
                 "error_detail": error_text,
             }
 
-    async def _play_track_by_query(self, query: str, device_id: Optional[str]):
-        results = await self.spotify_client.search(query, ["track"])
-        tracks = (results or {}).get("tracks", {}).get("items", [])
-        if not tracks:
-            raise SpotifyError("No matching track found.")
-        uri = tracks[0]["uri"]
-        await self.spotify_client.play(uris=[uri], device_id=device_id)
-
-    async def _play_playlist_by_query(self, query: str, device_id: Optional[str]):
-        results = await self.spotify_client.search(query, ["playlist"])
-        playlists = (results or {}).get("playlists", {}).get("items", [])
-        if not playlists:
-            raise SpotifyError("No matching playlist found.")
-        uri = playlists[0]["uri"]
-        await self.spotify_client.play(context_uri=uri, device_id=device_id)
-
-    async def _ensure_computer_device(self) -> Tuple[Optional[dict], Optional[dict]]:
-        """
-        Ensure a Computer-type device is available, launching Spotify on PC if needed.
-        Only looks for Computer devices, ignoring mobile/tv devices.
-        """
-        devices = await self.spotify_client.get_devices()
-        computer_devices = [d for d in devices if str(d.get("type", "")).lower() == "computer"]
-        
-        if computer_devices:
-            device = next((d for d in computer_devices if d.get("is_active")), computer_devices[0])
-            return device, None
-        
-        # No computer device found - launch Spotify desktop
-        logger.info("No computer device available; attempting to launch Spotify desktop.")
-        if not await self._maybe_launch_spotify_desktop():
-            return None, {
-                "type": "spotify",
-                "message": "Spotify desktop is not running and could not be launched automatically.",
-            }
-        
-        # Wait for Computer device to appear (up to 12 seconds)
-        for attempt in range(6):
-            await asyncio.sleep(2)
-            devices = await self.spotify_client.get_devices()
-            computer_devices = [d for d in devices if str(d.get("type", "")).lower() == "computer"]
-            
-            if computer_devices:
-                device = next((d for d in computer_devices if d.get("is_active")), computer_devices[0])
-                logger.info(f"Computer device '{device['name']}' became available after auto-launch.")
-                return device, None
-        
-        return None, {
-            "type": "spotify",
-            "message": "Spotify started, but PC device not available yet. Please try again.",
-        }
-    
-    async def _ensure_spotify_device(self, requested_device: Optional[str]) -> Tuple[Optional[dict], Optional[dict]]:
-        # Prefer requested device, then default from config, then None (which prioritizes Computer)
-        preference = requested_device or self.settings.spotify.default_device_name
-        devices = await self.spotify_client.get_devices()
-        device = find_best_device(devices, preference)
-        if device:
-            return device, None
-
-        # No devices available - launch Spotify desktop
-        logger.info("No Spotify devices available; attempting to launch Spotify desktop.")
-        if not await self._maybe_launch_spotify_desktop():
-            return None, {
-                "type": "spotify",
-                "message": "Spotify desktop is not running and could not be launched automatically.",
-            }
-
-        # Wait for Spotify to become available (up to 12 seconds)
-        for attempt in range(6):
-            await asyncio.sleep(2)
-            devices = await self.spotify_client.get_devices()
-            device = find_best_device(devices, preference)
-            if device:
-                logger.info(f"Spotify device '{device['name']}' became available after auto-launch.")
-                return device, None
-
-        return None, {
-            "type": "spotify",
-            "message": "Spotify started, but no playback devices are available yet. Please open Spotify and try again.",
-        }
-
     async def _maybe_launch_spotify_desktop(self) -> bool:
         try:
             launched = await self.app_launcher.launch_app("spotify")
@@ -399,40 +324,30 @@ class MediaRouter:
         Returns the device ID if one is active/activated, or None.
         """
         if device:
-            # If we already have a device, just transfer playback if needed
             if not device.get("is_active"):
                 await self.spotify_client.transfer_playback(device["id"], play=play)
-                # Allow some time for the transfer to propagate
                 await asyncio.sleep(0.5)
             return device["id"]
 
-        # No device provided, try to find one with retries
         logger.info("No active device found. Attempting to find or launch Spotify...")
-        
-        for attempt in range(1, 6):
+        for attempt in range(1, 4):
             devices = await self.spotify_client.get_devices()
             if devices:
-                # Pick the first available device
                 target_device = devices[0]
                 logger.info(f"Found device '{target_device['name']}' on attempt {attempt}.")
                 await self.spotify_client.transfer_playback(target_device["id"], play=play)
-                # Allow time for the device to become ready
                 await asyncio.sleep(1.5)
                 return target_device["id"]
-            
             logger.info(f"No devices found on attempt {attempt}. Waiting...")
             if attempt == 1:
-                # On first failure, try to launch Spotify via app launcher if possible
                 try:
                     logger.info("Launching Spotify application...")
                     await self.app_launcher.launch_app("spotify")
                 except Exception as e:
                     logger.warning(f"Failed to launch Spotify: {e}")
+            await asyncio.sleep(1.5)
             
-            # Wait with exponential backoff: 2, 4, 6, 8, 10 seconds
-            await asyncio.sleep(attempt * 2)
-            
-        logger.error("Failed to find any Spotify devices after multiple attempts.")
+        logger.error("Failed to find any Spotify devices after 3 attempts.")
         return None
 
 

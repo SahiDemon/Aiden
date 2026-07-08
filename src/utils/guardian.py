@@ -59,6 +59,17 @@ SENTINEL_PATH = PROJECT_ROOT / "src" / "temp" / ".guardian_stop"
 # ---------------------------------------------------------------------------
 PID_FILE = PROJECT_ROOT / "src" / "temp" / ".aiden.pid"
 
+
+def signal_guardian_stop() -> None:
+    """Write the guardian sentinel file to prevent auto-restart on intentional exit."""
+    try:
+        SENTINEL_PATH.parent.mkdir(parents=True, exist_ok=True)
+        SENTINEL_PATH.touch()
+        log.info(f"Guardian sentinel written: {SENTINEL_PATH}")
+    except Exception as exc:
+        log.warning(f"Could not write guardian sentinel: {exc}")
+
+
 # ---------------------------------------------------------------------------
 # Restart policy
 # ---------------------------------------------------------------------------

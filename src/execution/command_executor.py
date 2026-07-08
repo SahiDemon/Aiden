@@ -630,6 +630,11 @@ class CommandExecutor:
             # Wait for sound (11s) + TTS overlap
             await asyncio.sleep(12)  
             logger.info("👋 Terminating process now.")
+            try:
+                from src.utils.guardian import signal_guardian_stop
+                signal_guardian_stop()
+            except Exception as e:
+                logger.warning(f"Could not write guardian stop sentinel: {e}")
             os._exit(0)  # Force exit
             
         asyncio.create_task(delayed_exit())

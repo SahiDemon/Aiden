@@ -134,17 +134,33 @@ class MediaIdleMonitor:
             from comtypes import CLSCTX_ALL, cast, POINTER
 
             enumerator = AudioUtilities.GetDeviceEnumerator()
+            if not enumerator:
+                return sessions
             devices = enumerator.EnumAudioEndpoints(EDataFlow.eRender.value, DEVICE_STATE.ACTIVE.value)
+            if not devices:
+                return sessions
             for i in range(devices.GetCount()):
                 try:
                     dev = devices.Item(i)
+                    if not dev:
+                        continue
                     mgr = dev.Activate(IAudioSessionManager2._iid_, CLSCTX_ALL, None)
+                    if not mgr:
+                        continue
                     mgr2 = cast(mgr, POINTER(IAudioSessionManager2))
+                    if not mgr2:
+                        continue
                     session_enum = mgr2.GetSessionEnumerator()
+                    if not session_enum:
+                        continue
                     for j in range(session_enum.GetCount()):
                         try:
                             ctl = session_enum.GetSession(j)
+                            if not ctl:
+                                continue
                             ctl2 = cast(ctl, POINTER(IAudioSessionControl2))
+                            if not ctl2:
+                                continue
                             sessions.append(AudioSession(ctl2))
                         except Exception:
                             pass
@@ -286,16 +302,11 @@ class MediaIdleMonitor:
                     pass
             sessions = []
             
-            # Clean up local references to prevent GC errors after CoUninitialize
+            # Clean up local references
             session = None
             process = None
             simple_volume = None
             meter = None
-
-            try:
-                comtypes.CoUninitialize()
-            except Exception:
-                pass
 
         return result
 

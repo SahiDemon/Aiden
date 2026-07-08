@@ -9,7 +9,7 @@ from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.future import select
-from sqlalchemy import text
+from sqlalchemy import text, func
 from sqlalchemy.exc import IntegrityError
 
 # CRITICAL: Import event loop policy FIRST
@@ -46,13 +46,15 @@ class NeonDBClient:
                 connect_args["statement_cache_size"] = 0
             
             logger.info("Creating Neon DB engine with asyncpg (native async)...")
-            # Create async engine with asyncpg (true async driver)
-            # Use NullPool to avoid cross-thread connection issues
-            from sqlalchemy.pool import NullPool
+            from sqlalchemy.pool import AsyncAdaptedQueuePool
             
             self.engine = create_async_engine(
                 db_url,
-                poolclass=NullPool,  # No connection pooling - creates new connection each time
+                poolclass=AsyncAdaptedQueuePool,
+                pool_size=3,
+                max_overflow=5,
+                pool_pre_ping=True,
+                pool_recycle=300,
                 echo=self.settings.app.debug,
                 connect_args=connect_args
             )
@@ -210,7 +212,7 @@ class NeonDBClient:
                 # Another task created the same conversation concurrently.
                 await session.rollback()
             return True
-    
+
     async def end_conversation(self, conversation_id: str):
         """Mark conversation as ended"""
         async with self.session() as session:
@@ -221,7 +223,7 @@ class NeonDBClient:
             if conversation:
                 from datetime import datetime
                 conversation.ended_at = datetime.utcnow()
-    
+
     async def get_active_conversation(self, user_id: str = "default") -> Optional[Conversation]:
         """Get active (not ended) conversation for user"""
         async with self.session() as session:
@@ -232,7 +234,42 @@ class NeonDBClient:
                 .order_by(Conversation.created_at.desc())
             )
             return result.scalar_one_or_none()
-    
+
+    async def count_conversations(self) -> int:
+        """Get total number of conversations."""
+        async with self.session() as session:
+            result = await session.execute(select(func.count(Conversation.id)))
+            return result.scalar() or 0
+
+    async def count_commands(self) -> int:
+        """Get total number of commands."""
+        async with self.session() as session:
+            result = await session.execute(select(func.count(CommandHistory.id)))
+            return result.scalar() or 0
+
+    async def get_conversations(self, limit: int = 50) -> List[Conversation]:
+        """Get list of conversations."""
+        async with self.session() as session:
+            result = await session.execute(
+                select(Conversation).order_by(Conversation.created_at.desc()).limit(limit)
+            )
+            return result.scalars().all()
+
+    async def get_conversation(self, conversation_id: str) -> Optional[Conversation]:
+        """Get conversation by ID."""
+        async with self.session() as session:
+            result = await session.execute(
+                select(Conversation).where(Conversation.id == conversation_id)
+            )
+            return result.scalar_one_or_none()
+
+    async def delete_conversation(self, conversation_id: str) -> None:
+        """Delete a conversation by ID."""
+        async with self.session() as session:
+            conv = await session.get(Conversation, conversation_id)
+            if conv:
+                await session.delete(conv)
+
     # Message operations
     async def add_message(
         self,
@@ -255,7 +292,7 @@ class NeonDBClient:
             await session.flush()
             await session.refresh(message)
             return message
-    
+
     async def get_conversation_messages(
         self,
         conversation_id: str,
