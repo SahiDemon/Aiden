@@ -923,7 +923,6 @@ async def start_api_server():
     """Start the FastAPI server in background"""
     global _server, _server_config
     import uvicorn
-    import threading
     
     settings = get_settings()
     _server_config = uvicorn.Config(
@@ -935,20 +934,8 @@ async def start_api_server():
         loop="asyncio"
     )
     
-    def run_server():
-        """Run uvicorn server in a thread with correct event loop policy"""
-        global _server
-        # Import the event loop policy in this thread
-        from src.utils.event_loop import ensure_selector_event_loop
-        ensure_selector_event_loop()
-        
-        # Create server instance that we can control
-        _server = uvicorn.Server(_server_config)
-        _server.run()
-    
-    # Start server in a daemon thread
-    server_thread = threading.Thread(target=run_server, daemon=True)
-    server_thread.start()
+    _server = uvicorn.Server(_server_config)
+    asyncio.create_task(_server.serve())
     
     logger.info(f"API server starting on {settings.api.host}:{settings.api.port}")
     

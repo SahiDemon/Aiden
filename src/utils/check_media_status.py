@@ -82,42 +82,11 @@ def inspect_audio_devices() -> Tuple[bool, List[str], List[str]]:
             "nvsphelper64.exe",
             "nvidia share.exe",
             "nvcontainer.exe",
+            "cortana.exe",
+            "searchapp.exe",
+            "shellexperiencehost.exe",
+            "systemsettings.exe",
         }
-        IGNORE_KEYWORDS = (
-            "nvcontainer",
-            "nvdisplay",
-            "nvsphelper",
-            "nvidia",
-            "geforce",
-            "steam",
-            "discord",
-            "signalrgb",
-            "wallpaper",
-            "obs",
-            "python",
-            "audiodg",
-            "voicemeeter",
-            "fxsound",
-            "steelseries",
-            "sonar",
-            "icue",
-            "razer",
-            "logioptions",
-            "lghub",
-            "epicgames",
-            "ubisoft",
-            "eadesktop",
-            "battle.net",
-            "cortana",
-            "searchapp",
-            "explorer",
-            "shellexperiencehost",
-            "startmenuexperiencehost",
-            "textinputhost",
-            "systemsettings",
-            "taskmgr",
-            "svchost",
-        )
 
         enumerator = AudioUtilities.GetDeviceEnumerator()
         devices = enumerator.EnumAudioEndpoints(EDataFlow.eRender.value, DEVICE_STATE.ACTIVE.value)
@@ -166,7 +135,7 @@ def inspect_audio_devices() -> Tuple[bool, List[str], List[str]]:
                             pass
 
                     proc_lower = proc_name.lower()
-                    is_ignored = proc_lower in IGNORE_PROCESSES or any(kw in proc_lower for kw in IGNORE_KEYWORDS)
+                    is_ignored = proc_lower in IGNORE_PROCESSES
                     
                     # Evaluate if this session counts as playing media
                     session_triggered = False

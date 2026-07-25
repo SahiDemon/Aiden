@@ -703,8 +703,13 @@ class CommandExecutor:
             return False, "No action specified"
         
         if duration_seconds <= 0:
-            logger.error(f"Invalid duration: {duration_seconds}")
-            return False, "Invalid duration"
+            logger.warning(
+                f"scheduled_command received duration_seconds={duration_seconds} for action='{action}'. "
+                "Treating as immediate system_command."
+            )
+            # Treat as an immediate action — just run it now
+            return await self._handle_system_command({"action": action}), None
+
         
         # Validate action
         valid_actions = ["shutdown", "restart", "sleep", "hibernate", "lock"]

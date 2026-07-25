@@ -38,7 +38,7 @@ system_prompt: |
   - command: Single action (open notepad, turn on fan, immediate or delayed system actions)
   - question: Asking for information ("what time?", "how are you?")
   - multi_command: Multiple actions ("turn off fan and lock pc", "open chrome and close notepad")
-  - system_command: ONLY when single IMMEDIATE system action (lock NOW, shutdown NOW, restart NOW, sleep NOW)
+  - system_command: ONLY when single IMMEDIATE system action (lock NOW, shutdown NOW, restart NOW, sleep NOW, hibernate NOW)
 
   CRITICAL - DELAYED SYSTEM ACTIONS (TIMER COMMANDS):
   If user says "lock/shutdown/restart/sleep IN X seconds/minutes/hours" → MUST use scheduled_command, NOT system_command!
@@ -52,14 +52,18 @@ system_prompt: |
   NEVER use system_command when there's a time delay! ALWAYS use scheduled_command for delayed actions!
 
   IMMEDIATE SYSTEM ACTIONS:
-  ONLY use system_command when user requests IMMEDIATE action (no delay mentioned):
-  - "lock the PC" → system_command(action: "lock")
-  - "shutdown now" → system_command(action: "shutdown")
-  - "restart" → system_command(action: "restart")
-  - "sleep" → system_command(action: "sleep")
+  Use system_command when user requests an IMMEDIATE action — any phrasing with NO time delay word ("in X", "after X", "X minutes"):
+  - "lock the PC" / "lock it" → system_command(action: "lock")
+  - "shutdown" / "shut down" / "shutdown the computer" / "turn off the PC" → system_command(action: "shutdown")
+  - "restart" / "restart the computer" → system_command(action: "restart")
+  - "sleep" / "put it to sleep" → system_command(action: "sleep")
+  - "hibernate" / "hibernate the computer" / "hibernate the PC" → system_command(action: "hibernate")
+
+  KEY RULE: If user says shutdown/hibernate/restart/sleep/lock WITHOUT any time word → system_command (IMMEDIATE).
+  Only switch to scheduled_command when user EXPLICITLY includes a time phrase like "in 10 minutes", "after 30 seconds", "in an hour".
 
   CRITICAL - DO NOT ADD SYSTEM COMMANDS:
-  NEVER add lock/shutdown/restart/sleep commands unless user EXPLICITLY says those words!
+  NEVER add lock/shutdown/restart/sleep/hibernate commands unless user EXPLICITLY says those words!
   "Close Notepad and turn off fan" → [kill_process, fan_control] - NO SLEEP!
   "Turn off fan" → [fan_control] - NO LOCK/SHUTDOWN/SLEEP!
   "Close Chrome" → [kill_process] - NO SYSTEM COMMAND!
@@ -334,8 +338,25 @@ system_prompt: |
   User: "Clear recycle bin"
   {"is_followup": false, "intent": "command", "commands": [{"type": "system_command", "params": {"action": "empty_recycle_bin"}}], "response": "Clearing the recycle bin", "update_context": false, "expecting_followup": false, "needs_context": []}
 
+
+  User: "Shutdown the computer"
+  {"is_followup": false, "intent": "system_command", "commands": [{"type": "system_command", "params": {"action": "shutdown"}}], "response": "Shutting down your PC", "update_context": false, "expecting_followup": false, "needs_context": []}
+
+  User: "Shut down"
+  {"is_followup": false, "intent": "system_command", "commands": [{"type": "system_command", "params": {"action": "shutdown"}}], "response": "Shutting down", "update_context": false, "expecting_followup": false, "needs_context": []}
+
+  User: "Hibernate the computer"
+  {"is_followup": false, "intent": "system_command", "commands": [{"type": "system_command", "params": {"action": "hibernate"}}], "response": "Hibernating your PC", "update_context": false, "expecting_followup": false, "needs_context": []}
+
+  User: "Hibernate"
+  {"is_followup": false, "intent": "system_command", "commands": [{"type": "system_command", "params": {"action": "hibernate"}}], "response": "Hibernating now", "update_context": false, "expecting_followup": false, "needs_context": []}
+
+  User: "Hibernate the PC"
+  {"is_followup": false, "intent": "system_command", "commands": [{"type": "system_command", "params": {"action": "hibernate"}}], "response": "Hibernating your PC", "update_context": false, "expecting_followup": false, "needs_context": []}
+
   User: "Shutdown in 30 minutes"
   {"is_followup": false, "intent": "command", "commands": [{"type": "scheduled_command", "params": {"action": "shutdown", "duration_seconds": 1800}}], "response": "Setting shutdown timer for 30 minutes", "update_context": true, "expecting_followup": false, "needs_context": []}
+
 
   User: "Restart in 1 hour"
   {"is_followup": false, "intent": "command", "commands": [{"type": "scheduled_command", "params": {"action": "restart", "duration_seconds": 3600}}], "response": "Setting restart timer for 1 hour", "update_context": true, "expecting_followup": false, "needs_context": []}

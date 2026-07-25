@@ -76,9 +76,7 @@ class MediaRouter:
             logger.debug(f"Spotify ducking skipped: {exc}")
 
         try:
-            state["muted_app_sessions"] = await asyncio.to_thread(
-                get_audio_session_ducker().duck_for_listening
-            )
+            state["muted_app_sessions"] = get_audio_session_ducker().duck_for_listening()
         except Exception as exc:
             logger.debug(f"App-session ducking skipped: {exc}")
 
@@ -90,9 +88,8 @@ class MediaRouter:
             return
 
         try:
-            await asyncio.to_thread(
-                get_audio_session_ducker().restore_after_listening,
-                state.get("muted_app_sessions") or {},
+            get_audio_session_ducker().restore_after_listening(
+                state.get("muted_app_sessions") or {}
             )
         except Exception as exc:
             logger.debug(f"App-session restore skipped: {exc}")
@@ -349,6 +346,69 @@ class MediaRouter:
             
         logger.error("Failed to find any Spotify devices after 3 attempts.")
         return None
+
+    async def _ensure_computer_device(self) -> Tuple[Optional[dict], Optional[dict]]:
+        """
+        Launch Spotify on PC if needed and wait for a Computer-type device to register.
+        Returns (device, error_dict).
+        """
+        logger.info("Attempting to launch Spotify desktop to ensure a Computer device is available...")
+        launched = await self._maybe_launch_spotify_desktop()
+        if not launched:
+            logger.warning("Failed to launch Spotify desktop application.")
+            return None, {"type": "spotify", "message": "Could not launch Spotify on PC."}
+
+        for attempt in range(1, 6):
+            await asyncio.sleep(2.0)
+            devices = await self.spotify_client.get_devices()
+            computer_devices = [d for d in devices if str(d.get("type", "")).lower() == "computer"]
+            if computer_devices:
+                device = next((d for d in computer_devices if d.get("is_active")), computer_devices[0])
+                logger.info(f"Found computer device on attempt {attempt}: {device['name']}")
+                return device, None
+            logger.info(f"Waiting for Spotify PC device to register (attempt {attempt}/5)...")
+
+        return None, {"type": "spotify", "message": "Spotify launched on PC, but could not connect to desktop player yet."}
+
+    async def _ensure_spotify_device(self, device_name: str) -> Tuple[Optional[dict], Optional[dict]]:
+        """
+        Ensure a specific requested device is found or launched if it is a PC/desktop device.
+        Returns (device, error_dict).
+        """
+        target_lower = device_name.lower()
+        is_pc_request = any(kw in target_lower for kw in ("pc", "desktop", "computer", "laptop"))
+
+        if is_pc_request:
+            logger.info(f"Requested device '{device_name}' appears to be a PC/computer. Launching Spotify desktop...")
+            await self._maybe_launch_spotify_desktop()
+
+        for attempt in range(1, 6):
+            await asyncio.sleep(1.5)
+            devices = await self.spotify_client.get_devices()
+            device = find_best_device(devices, device_name)
+            if device:
+                logger.info(f"Found device '{device['name']}' matching '{device_name}' on attempt {attempt}.")
+                return device, None
+            if not is_pc_request:
+                break
+
+        return None, {"type": "spotify", "message": f"Could not find Spotify device matching '{device_name}'."}
+
+    async def _play_track_by_query(self, query: str, device_id: Optional[str]) -> None:
+        """Search and play a track on Spotify."""
+        results = await self.spotify_client.search(query, types=["track"], limit=1)
+        tracks = results.get("tracks", {}).get("items", [])
+        if not tracks:
+            raise SpotifyError("No matching track found.")
+        await self.spotify_client.play(uris=[tracks[0]["uri"]], device_id=device_id)
+
+    async def _play_playlist_by_query(self, query: str, device_id: Optional[str]) -> None:
+        """Search and play a playlist on Spotify."""
+        results = await self.spotify_client.search(query, types=["playlist"], limit=1)
+        playlists = results.get("playlists", {}).get("items", [])
+        if not playlists:
+            raise SpotifyError("No matching playlist found.")
+        await self.spotify_client.play(context_uri=playlists[0]["uri"], device_id=device_id)
 
 
 def action_alias(action: str) -> str:

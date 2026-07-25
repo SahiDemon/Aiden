@@ -113,78 +113,14 @@ class MediaIdleMonitor:
         except Exception as e:
             logger.debug(f"Error checking Jellyfin API: {e}")
     def _get_all_audio_sessions(self) -> list:
-        """Enumerate audio sessions across ALL active sound output devices (speakers, headphones, DACs, HDMI, etc.)."""
-        sessions = []
+        """Enumerate audio sessions safely via pycaw."""
         if not PYCAW_AVAILABLE or not AudioUtilities:
-            return sessions
-
-        enumerator = None
-        devices = None
-        dev = None
-        mgr = None
-        mgr2 = None
-        session_enum = None
-        ctl = None
-        ctl2 = None
-
+            return []
         try:
-            from pycaw.constants import EDataFlow, DEVICE_STATE
-            from pycaw.api.audiopolicy import IAudioSessionManager2, IAudioSessionControl2
-            from pycaw.pycaw import AudioSession
-            from comtypes import CLSCTX_ALL, cast, POINTER
-
-            enumerator = AudioUtilities.GetDeviceEnumerator()
-            if not enumerator:
-                return sessions
-            devices = enumerator.EnumAudioEndpoints(EDataFlow.eRender.value, DEVICE_STATE.ACTIVE.value)
-            if not devices:
-                return sessions
-            for i in range(devices.GetCount()):
-                try:
-                    dev = devices.Item(i)
-                    if not dev:
-                        continue
-                    mgr = dev.Activate(IAudioSessionManager2._iid_, CLSCTX_ALL, None)
-                    if not mgr:
-                        continue
-                    mgr2 = cast(mgr, POINTER(IAudioSessionManager2))
-                    if not mgr2:
-                        continue
-                    session_enum = mgr2.GetSessionEnumerator()
-                    if not session_enum:
-                        continue
-                    for j in range(session_enum.GetCount()):
-                        try:
-                            ctl = session_enum.GetSession(j)
-                            if not ctl:
-                                continue
-                            ctl2 = cast(ctl, POINTER(IAudioSessionControl2))
-                            if not ctl2:
-                                continue
-                            sessions.append(AudioSession(ctl2))
-                        except Exception:
-                            pass
-                        finally:
-                            ctl = None
-                            ctl2 = None
-                except Exception:
-                    continue
-                finally:
-                    dev = None
-                    mgr = None
-                    mgr2 = None
-                    session_enum = None
+            return AudioUtilities.GetAllSessions()
         except Exception as e:
-            logger.debug(f"Error enumerating all device sessions, falling back to default: {e}")
-            try:
-                sessions = AudioUtilities.GetAllSessions()
-            except Exception:
-                pass
-        finally:
-            enumerator = None
-            devices = None
-
-        return sessions
+            logger.debug(f"Error enumerating audio sessions: {e}")
+            return []
 
     def is_media_playing(self) -> bool:
         """Check if any application (VLC, Jellyfin, browser, etc.) is currently playing audio/video."""
@@ -194,15 +130,6 @@ class MediaIdleMonitor:
 
         if not PYCAW_AVAILABLE or not AudioUtilities:
             return False
-
-        import comtypes
-        try:
-            comtypes.CoInitialize()
-        except Exception:
-            pass
-
-        sessions = []
-        result = False
 
         # Lowercase process names to ignore (non-media or background apps)
         IGNORE_PROCESSES = {
@@ -217,53 +144,22 @@ class MediaIdleMonitor:
             "nvsphelper64.exe",
             "nvidia share.exe",
             "nvcontainer.exe",
+            "cortana.exe",
+            "searchapp.exe",
+            "shellexperiencehost.exe",
+            "systemsettings.exe",
         }
-        IGNORE_KEYWORDS = (
-            "nvcontainer",
-            "nvdisplay",
-            "nvsphelper",
-            "nvidia",
-            "geforce",
-            "steam",
-            "discord",
-            "signalrgb",
-            "wallpaper",
-            "obs",
-            "python",
-            "audiodg",
-            "voicemeeter",
-            "fxsound",
-            "steelseries",
-            "sonar",
-            "icue",
-            "razer",
-            "logioptions",
-            "lghub",
-            "epicgames",
-            "ubisoft",
-            "eadesktop",
-            "battle.net",
-            "cortana",
-            "searchapp",
-            "explorer",
-            "shellexperiencehost",
-            "startmenuexperiencehost",
-            "textinputhost",
-            "systemsettings",
-            "taskmgr",
-            "svchost",
-        )
 
         try:
-            sessions = self._get_all_audio_sessions()
-            for session in sessions:
+            for session in self._get_all_audio_sessions():
                 process = session.Process
                 if not process:
                     continue
 
+
                 try:
                     proc_name = process.name().lower()
-                    if proc_name in IGNORE_PROCESSES or any(kw in proc_name for kw in IGNORE_KEYWORDS):
+                    if proc_name in IGNORE_PROCESSES:
                         continue
 
                     pid = int(process.pid)
@@ -277,38 +173,22 @@ class MediaIdleMonitor:
                     if session.State == AudioSessionState.Active:
                         simple_volume = session.SimpleAudioVolume
                         if not simple_volume.GetMute() and simple_volume.GetMasterVolume() > 0.001:
-                            result = True
-                            break
+                            return True
 
                     # Check IAudioMeterInformation peak level (catches direct streams or apps with State=0)
                     if IAudioMeterInformation:
                         try:
                             meter = session._ctl.QueryInterface(IAudioMeterInformation)
                             if meter.GetPeakValue() > 0.0001:
-                                result = True
-                                break
+                                return True
                         except Exception:
                             pass
                 except Exception:
                     continue
         except Exception as e:
             logger.debug(f"Error checking active audio sessions: {e}")
-        finally:
-            # Cleanly release all COM interface references in returned objects
-            for s in sessions:
-                try:
-                    s._ctl = None
-                except Exception:
-                    pass
-            sessions = []
-            
-            # Clean up local references
-            session = None
-            process = None
-            simple_volume = None
-            meter = None
 
-        return result
+        return False
 
     async def _monitor_loop(self):
         """Main background checking loop."""

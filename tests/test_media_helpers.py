@@ -33,10 +33,20 @@ class SpotifyDeviceSelectionTests(unittest.TestCase):
         device = find_best_device(devices, "office")
         self.assertEqual(device["id"], "2")
 
-    def test_prefers_active_device(self):
+    def test_prefers_computer_over_active_phone(self):
+        # Computer-type is preferred over any active non-computer when no target given
         devices = [
             {"name": "Desktop", "id": "1", "type": "Computer", "is_active": False},
             {"name": "Phones", "id": "2", "type": "Smartphone", "is_active": True},
+        ]
+        device = find_best_device(devices, None)
+        self.assertEqual(device["id"], "1")
+
+    def test_prefers_active_computer(self):
+        # When there are multiple computers, prefer the active one
+        devices = [
+            {"name": "Desktop", "id": "1", "type": "Computer", "is_active": False},
+            {"name": "Laptop", "id": "2", "type": "Computer", "is_active": True},
         ]
         device = find_best_device(devices, None)
         self.assertEqual(device["id"], "2")

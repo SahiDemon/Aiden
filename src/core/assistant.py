@@ -771,6 +771,18 @@ class AidenAssistant:
             # Broadcast idle status when conversation ends
             await broadcast_voice_status("idle", speaking=False, active=False)
             logger.info("=" * 60)
+            
+            # CRITICAL: Resume wake word detector at the end of voice activation
+            # ONLY if no TTS speech is currently playing or queued (if queued, TTS queue will handle resume)
+            try:
+                if self.tts.audio_queue.empty() and not getattr(self.tts, "is_processing", False):
+                    from src.core.wake_word_manager import get_wake_word_manager
+                    ww_manager = get_wake_word_manager()
+                    if ww_manager and ww_manager.get_state():
+                        if ww_manager.detector:
+                            ww_manager.detector.resume()
+            except Exception as e:
+                logger.debug(f"Could not resume wake word detector: {e}")
 
     def request_immediate_stop(self) -> bool:
         """Best-effort synchronous stop for hotkey threads."""

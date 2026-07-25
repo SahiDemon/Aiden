@@ -95,6 +95,39 @@ sys.path.insert(0, project_root)
 # This sets the correct event loop policy for Windows/psycopg compatibility
 from src.utils.event_loop import ensure_selector_event_loop
 
+# CRITICAL: Initialize COM on the main thread immediately at startup and harden comtypes GC
+try:
+    import comtypes
+    comtypes.CoInitialize()
+    try:
+        from comtypes._post_coinit.unknwn import _compointer_base
+        _orig_compointer_del = _compointer_base.__del__
+        def _safe_compointer_del(self, *args, **kwargs):
+            try:
+                _orig_compointer_del(self, *args, **kwargs)
+            except Exception:
+                pass
+        _compointer_base.__del__ = _safe_compointer_del
+    except Exception:
+        pass
+except Exception:
+    pass
+
+# CRITICAL: Initialize pygame mixer on the main thread at startup.
+# If this is deferred to the first TTS call, it may be called from an async
+# task or thread context that doesn't match the mixer's expected thread,
+# leading to segfaults when stop() is called before any sound plays.
+try:
+    import pygame
+    if not pygame.mixer.get_init():
+        pygame.mixer.init()
+    from src.speech import tts as _tts_module
+    _tts_module._MIXER_INITIALIZED = True
+    _tts_module.PYGAME_AVAILABLE = True
+except Exception as _pg_exc:
+    import logging as _logging
+    _logging.getLogger(__name__).warning(f"Pygame mixer init at startup failed: {_pg_exc}")
+
 from src.api.server import start_api_server, stop_api_server
 from src.core.assistant import get_assistant
 from src.core.hotkey_listener import get_hotkey_listener, HotkeyListener
@@ -156,12 +189,7 @@ def _set_high_priority():
 
 
 def handle_activation(from_hotkey: bool = False):
-    """Handle voice activation (from wake word or hotkey).
-    
-    The outermost try/finally guarantees the wake word detector
-    is ALWAYS resumed, even if an unexpected error type escapes.
-    """
-    _resumed = False
+    """Handle voice activation (from wake word or hotkey) non-blockingly."""
     try:
         logger.info(f"[VOICE] Voice activation triggered! (from_hotkey={from_hotkey})")
         
@@ -176,47 +204,15 @@ def handle_activation(from_hotkey: bool = False):
             return
         
         # Run the coroutine in the main loop from this thread
-        future = asyncio.run_coroutine_threadsafe(
+        # We do NOT wait for completion, allowing the background detector thread
+        # to immediately exit the callback and process the pause state (which releases mic).
+        asyncio.run_coroutine_threadsafe(
             assistant.handle_voice_activation(from_hotkey=from_hotkey),
             main_loop
         )
         
-        # Wait for completion (longer timeout for auto-listen scenarios)
-        try:
-            result = future.result(timeout=60)  # 60 second timeout (allows auto-listen)
-        except TimeoutError:
-            logger.error("Voice activation timed out after 60 seconds")
-        except asyncio.CancelledError:
-            logger.info("[VOICE] Activation coroutine was cancelled")
-        except Exception as e:
-            logger.error(f"Error in voice activation: {e}", exc_info=True)
-        
     except Exception as e:
         logger.error(f"Error handling activation: {e}", exc_info=True)
-    finally:
-        # GUARANTEED resume — always re-enable detection unless the user
-        # intentionally disabled it via toggle (is_enabled == False).
-        #
-        # BUG FIX: previously this block only resumed if wake_word_manager existed
-        # AND is_enabled was truthy at callback time.  If wake_word_manager hadn't
-        # finished initializing, the detector would be left permanently paused and
-        # every subsequent wake word would be silently ignored.
-        _should_resume = True
-        if wake_word_manager is not None:
-            # Only skip resume when the user deliberately disabled listening.
-            _should_resume = bool(getattr(wake_word_manager, "is_enabled", True))
-
-        if wake_word_detector and _should_resume:
-            wake_word_detector.resume()
-            _resumed = True
-            logger.debug("[VOICE] Wake word detector resumed after activation")
-        elif not _should_resume:
-            logger.debug("[VOICE] Wake word detector not resumed — listening disabled by user toggle")
-        else:
-            logger.warning(
-                "[VOICE] Wake word detector was NOT resumed — detector object is missing "
-                f"(from_hotkey={from_hotkey})"
-            )
 
 
 def handle_toggle_wake_word():

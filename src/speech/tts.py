@@ -21,13 +21,27 @@ from src.utils.paths import resource_path
 
 logger = get_logger(__name__)
 
-# Initialize pygame mixer
-try:
-    pygame.mixer.init()
-    PYGAME_AVAILABLE = True
-except Exception as e:
-    logger.warning(f"Pygame mixer init failed: {e}")
-    PYGAME_AVAILABLE = False
+# Pygame mixer is initialized lazily on first use (see _ensure_mixer())
+# so it always runs on the correct thread.
+PYGAME_AVAILABLE = True  # assumed True until proven otherwise
+_MIXER_INITIALIZED = False
+
+
+def _ensure_mixer() -> bool:
+    """Lazily initialize pygame mixer. Safe to call multiple times."""
+    global _MIXER_INITIALIZED, PYGAME_AVAILABLE
+    if _MIXER_INITIALIZED:
+        return PYGAME_AVAILABLE
+    try:
+        if not pygame.mixer.get_init():
+            pygame.mixer.init()
+        _MIXER_INITIALIZED = True
+        PYGAME_AVAILABLE = True
+    except Exception as e:
+        logger.warning(f"Pygame mixer init failed: {e}")
+        PYGAME_AVAILABLE = False
+        _MIXER_INITIALIZED = True  # don't keep retrying
+    return PYGAME_AVAILABLE
 
 
 class TTSEngine:
@@ -72,7 +86,7 @@ class TTSEngine:
 
     def _preload_common_sounds(self):
         """Pre-load frequently used sound effects into memory for instant playback."""
-        if not PYGAME_AVAILABLE:
+        if not _ensure_mixer():
             return
         common_sounds = ["activation", "mmm1", "mmm2", "error", "success"]
         for name in common_sounds:
@@ -433,7 +447,7 @@ class TTSEngine:
     
     async def _play_audio_data(self, audio_data: bytes):
         """Play audio data using pygame"""
-        if not PYGAME_AVAILABLE:
+        if not _ensure_mixer():
             logger.error("Pygame not available for audio playback")
             return
         
@@ -492,12 +506,19 @@ class TTSEngine:
 
     async def play_sound_now(self, sound_name: str):
         """Play a sound effect immediately and wait for it to finish."""
+        if not _ensure_mixer():
+            return
         try:
+            # Small guard: give any concurrent stop() a moment to settle
+            await asyncio.sleep(0.02)
+
             # Use pre-loaded sound for zero-latency playback
             preloaded = self._preloaded_sounds.get(sound_name.lower())
             if preloaded:
                 logger.debug(f"TTS: Playing pre-loaded sound: {sound_name}")
-                channel = preloaded.play()
+                from src.utils.audio_lock import AUDIO_DEVICE_LOCK
+                with AUDIO_DEVICE_LOCK:
+                    channel = preloaded.play()
                 if channel:
                     while channel.get_busy():
                         await asyncio.sleep(0.05)
@@ -518,11 +539,10 @@ class TTSEngine:
 
     async def _play_sound_file(self, sound_path: str):
         """Internal method to play sound file and wait"""
-        if not PYGAME_AVAILABLE:
+        if not _ensure_mixer():
             return
             
         try:
-            # Check preloaded cache by filename stem
             stem = os.path.splitext(os.path.basename(sound_path))[0].lower()
             sound = self._preloaded_sounds.get(stem)
 
@@ -530,10 +550,10 @@ class TTSEngine:
                 sound = pygame.mixer.Sound(sound_path)
                 sound.set_volume(0.6)
             
-            # Sound.play returns a Channel
-            channel = sound.play()
+            from src.utils.audio_lock import AUDIO_DEVICE_LOCK
+            with AUDIO_DEVICE_LOCK:
+                channel = sound.play()
             
-            # Wait for channel to finish (reduced from 100ms to 50ms for snappier response)
             if channel:
                 while channel.get_busy():
                     await asyncio.sleep(0.05)
@@ -544,20 +564,14 @@ class TTSEngine:
         """Stop current playback and clear the queue (Barge-in / Interruption)"""
         logger.info("TTS: Stop requested (Barge-in)")
 
-        # 1. Stop current audio — music track AND all Sound channels.
-        # Previously only music.stop() was called, leaving sound-effect channels
-        # (pygame.mixer.Sound) running even after a barge-in.
-        if PYGAME_AVAILABLE:
-            try:
-                pygame.mixer.music.stop()
-            except Exception as e:
-                logger.debug(f"TTS: Error stopping music: {e}")
-            try:
-                pygame.mixer.stop()   # stops all active Sound channels
-            except Exception as e:
-                logger.debug(f"TTS: Error stopping channels: {e}")
+        if _ensure_mixer():
+            from src.utils.audio_lock import AUDIO_DEVICE_LOCK
+            with AUDIO_DEVICE_LOCK:
+                try:
+                    pygame.mixer.music.stop()
+                except Exception as e:
+                    logger.debug(f"TTS: Error stopping music: {e}")
 
-        # 2. Clear the pending-speech queue
         while not self.audio_queue.empty():
             try:
                 self.audio_queue.get_nowait()
@@ -567,17 +581,15 @@ class TTSEngine:
 
     def stop_playback_now(self):
         """Thread-friendly immediate audio stop for global hotkey callbacks."""
-        if not PYGAME_AVAILABLE:
+        if not _ensure_mixer():
             return
 
-        try:
-            pygame.mixer.music.stop()
-        except Exception as e:
-            logger.debug(f"TTS: Error stopping music immediately: {e}")
-        try:
-            pygame.mixer.stop()
-        except Exception as e:
-            logger.debug(f"TTS: Error stopping channels immediately: {e}")
+        from src.utils.audio_lock import AUDIO_DEVICE_LOCK
+        with AUDIO_DEVICE_LOCK:
+            try:
+                pygame.mixer.music.stop()
+            except Exception as e:
+                logger.debug(f"TTS: Error stopping music immediately: {e}")
     
     async def wait_until_done(self, timeout: float = 10.0):
         """Wait for all queued audio to finish playing"""

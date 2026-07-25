@@ -263,7 +263,7 @@ class SpeechConfig(BaseSettings):
     oww_vad_threshold: float = Field(default=0.3)     # Silero VAD gate; 0=disabled, higher=stricter
     # Silero VAD — more accurate than WebRTC VAD (requires torch)
     stt_use_silero_vad: bool = Field(default=True)
-    stt_silero_threshold: float = Field(default=0.28)
+    stt_silero_threshold: float = Field(default=0.5)
     # VAD aggressiveness for WebRTC fallback (0=sensitive, 3=strict)
     stt_vad_aggressiveness: int = Field(default=1)
 

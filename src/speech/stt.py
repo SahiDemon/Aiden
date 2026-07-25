@@ -148,7 +148,7 @@ class STTEngine:
         # --- VAD selection ---
         self._silero: Optional[_SileroVAD] = None
         use_silero = getattr(self.settings.speech, "stt_use_silero_vad", True)
-        silero_threshold = getattr(self.settings.speech, "stt_silero_threshold", 0.28)
+        silero_threshold = getattr(self.settings.speech, "stt_silero_threshold", 0.5)
 
         if use_silero:
             try:
@@ -382,8 +382,16 @@ class STTEngine:
         Classify a single PCM frame as speech or non-speech.
 
         Uses Silero VAD when available, otherwise WebRTC VAD.
+        Includes a pre-gate RMS energy check to ignore absolute silence/hum.
         """
         try:
+            # Quick energy gate: if RMS is extremely low (<30 out of 32768), 
+            # it's just silence/line-noise. Don't let the neural net hallucinate.
+            audio_array = np.frombuffer(frame, dtype=np.int16)
+            rms = np.sqrt(np.mean(audio_array.astype(np.float32) ** 2))
+            if rms < 30.0:
+                return False
+
             if self._silero:
                 return self._silero.is_speech(frame)
             else:

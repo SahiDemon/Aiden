@@ -182,33 +182,37 @@ class OpenWakeWordDetector:
         logger.info("OpenWakeWord: model loaded OK — labels: %s", list(self._oww_model.models.keys()))
 
     def _open_stream(self) -> None:
-        self._pa = pyaudio.PyAudio()
-        self._stream = self._pa.open(
-            rate=_SAMPLE_RATE,
-            channels=_CHANNELS,
-            format=_FORMAT,
-            input=True,
-            frames_per_buffer=_FRAME_SAMPLES,
-        )
+        from src.utils.audio_lock import AUDIO_DEVICE_LOCK
+        with AUDIO_DEVICE_LOCK:
+            self._pa = pyaudio.PyAudio()
+            self._stream = self._pa.open(
+                rate=_SAMPLE_RATE,
+                channels=_CHANNELS,
+                format=_FORMAT,
+                input=True,
+                frames_per_buffer=_FRAME_SAMPLES,
+            )
         logger.info("OpenWakeWord: audio stream opened (%d Hz, %d ms frames)", _SAMPLE_RATE, _FRAME_MS)
 
     def _cleanup(self) -> None:
-        try:
-            if self._stream:
-                self._stream.stop_stream()
-                self._stream.close()
-        except Exception:
-            pass
-        finally:
-            self._stream = None
+        from src.utils.audio_lock import AUDIO_DEVICE_LOCK
+        with AUDIO_DEVICE_LOCK:
+            try:
+                if self._stream:
+                    self._stream.stop_stream()
+                    self._stream.close()
+            except Exception:
+                pass
+            finally:
+                self._stream = None
 
-        try:
-            if self._pa:
-                self._pa.terminate()
-        except Exception:
-            pass
-        finally:
-            self._pa = None
+            try:
+                if self._pa:
+                    self._pa.terminate()
+            except Exception:
+                pass
+            finally:
+                self._pa = None
 
     def _supervisor_loop(self) -> None:
         restart_times: list[float] = []

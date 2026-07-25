@@ -153,18 +153,7 @@ class GeminiClient:
         except Exception as e:
             logger.debug(f"Could not save working key index to Redis: {e}")
     
-    async def _announce_key_rotation(self):
-        """Announce API key rotation via TTS after main response completes"""
-        try:
-            await asyncio.sleep(6)  # Give main response time to speak first
-            from src.speech.tts import get_tts_engine
-            tts = get_tts_engine()
-            message = "Sir! I detected an issue with my backend server API, so I've automatically switched to a new one to keep things running smoothly."
-            await tts.speak(message)
-            logger.info("Announced API key rotation via TTS")
-        except Exception as e:
-            logger.error(f"Failed to announce key rotation via TTS: {e}")
-    
+
     async def chat(self, messages: List[Dict[str, str]], use_json_format: bool = True) -> Optional[Dict[str, Any]]:
         """
         Send chat request to Gemini API with context awareness
@@ -239,14 +228,8 @@ class GeminiClient:
                     # Parse JSON response
                     result = self._parse_json_response(response.text)
                 
-                # If we successfully got a response after rotating, save the working key and announce
-                if result and rotated_this_request:
+                if result and (rotated_this_request or self.current_key_index != self.initial_key_index):
                     # Save the working key index to Redis as the new default
-                    await self._save_working_key_index(self.current_key_index)
-                    # Announce rotation in background (don't wait)
-                    asyncio.create_task(self._announce_key_rotation())
-                elif result and self.current_key_index != self.initial_key_index:
-                    # If we're using a different key than we started with, save it
                     await self._save_working_key_index(self.current_key_index)
                 
                 if result:

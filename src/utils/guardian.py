@@ -362,8 +362,13 @@ def run_guardian(debug: bool = False, extra_args: list[str] | None = None) -> No
 # The child handles its own SIGINT separately.
 # ---------------------------------------------------------------------------
 def _setup_signals() -> None:
+    def handle_sigint(signum, frame):
+        log.info("Guardian received SIGINT/Ctrl+C. Cleaning up and exiting...")
+        signal_guardian_stop()
+        sys.exit(0)
+
     try:
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGINT, handle_sigint)
     except Exception:
         pass
     if sys.platform != "win32":

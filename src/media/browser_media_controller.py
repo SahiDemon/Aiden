@@ -429,52 +429,19 @@ class BrowserMediaController:
         active_pids: set[int] = set()
 
         try:
-            comtypes.CoInitialize()
-        except Exception:
-            pass
-
-        # Track COM interface references so we can explicitly release them
-        # before CoUninitialize() — otherwise Python's GC may call Release()
-        # on dead COM pointers after the apartment is torn down, causing:
-        # "ValueError: COM method call without VTable"
-        enumerator = None
-        device = None
-        session_manager_unknown = None
-        session_manager = None
-        session_enum = None
-
-        try:
-            enumerator = comtypes.CoCreateInstance(
-                CLSID_MMDeviceEnumerator,
-                interface=IMMDeviceEnumerator,
-                clsctx=comtypes.CLSCTX_ALL,
-            )
-            device = enumerator.GetDefaultAudioEndpoint(E_RENDER, E_MULTIMEDIA)
-            session_manager_unknown = device.Activate(
-                IAudioSessionManager2._iid_,
-                comtypes.CLSCTX_ALL,
-                None,
-            )
-            session_manager = session_manager_unknown.QueryInterface(IAudioSessionManager2)
-            session_enum = session_manager.GetSessionEnumerator()
-            session_count = session_enum.GetCount()
-
-            for index in range(session_count):
-                session = None
-                session_control = None
-                meter = None
+            from pycaw.pycaw import AudioUtilities
+            sessions = AudioUtilities.GetAllSessions()
+            for session in sessions:
                 try:
-                    session = session_enum.GetSession(index)
-                    session_control = session.QueryInterface(IAudioSessionControl2)
-                    if session_control.GetState() != AUDIO_SESSION_STATE_ACTIVE:
+                    process = session.Process
+                    if not process:
                         continue
 
-                    pid = int(session_control.GetProcessId() or 0)
+                    pid = int(process.pid)
                     if not pid:
                         continue
 
                     try:
-                        process = psutil.Process(pid)
                         process_name = process.name().lower()
                     except (psutil.NoSuchProcess, psutil.AccessDenied):
                         continue
@@ -484,7 +451,7 @@ class BrowserMediaController:
 
                     peak = 0.0
                     try:
-                        meter = session.QueryInterface(IAudioMeterInformation)
+                        meter = session._ctl.QueryInterface(IAudioMeterInformation)
                         peak = float(meter.GetPeakValue())
                     except Exception:
                         peak = 0.0
@@ -493,20 +460,8 @@ class BrowserMediaController:
                         active_pids.add(pid)
                 except Exception as exc:
                     logger.debug(f"Skipping browser audio session during inspection: {exc}")
-                finally:
-                    # Release per-session COM references while apartment is alive
-                    meter = None
-                    session_control = None
-                    session = None
         except Exception as exc:
             logger.debug(f"Browser audio session inspection failed: {exc}")
-            return set()
-        finally:
-            session_enum = None
-            session_manager = None
-            session_manager_unknown = None
-            device = None
-            enumerator = None
 
         return active_pids
 
