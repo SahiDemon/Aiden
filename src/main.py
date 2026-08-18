@@ -12,6 +12,7 @@ Unified application with hidden tray + optional web dashboard
 # -----------------------------------------------------------------------
 import sys
 import os
+from pathlib import Path
 
 class DummyStream:
     """A dummy stream that does nothing but prevents NoneType AttributeError for GUI processes."""
@@ -344,10 +345,11 @@ async def initialize_services():
             import os, subprocess
 
             cf_token = settings.app.cloudflare_tunnel_token
-            if os.path.exists("cloudflared.exe") and cf_token:
+            cloudflared_path = Path(__file__).resolve().parent.parent / "tools" / "bin" / "cloudflared.exe"
+            if cloudflared_path.exists() and cf_token:
                 logger.info("Auto-starting the configured Cloudflare Tunnel")
                 creation_flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
-                subprocess.Popen(["cloudflared.exe", "tunnel", "run", "--token", cf_token], creationflags=creation_flags)
+                subprocess.Popen([str(cloudflared_path), "tunnel", "run", "--token", cf_token], creationflags=creation_flags)
         except Exception as cf_err:
             logger.warning(f"Could not auto-start Cloudflare tunnel: {cf_err}")
         

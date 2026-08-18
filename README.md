@@ -81,7 +81,7 @@ A powerful voice-controlled AI assistant for Windows with context-aware conversa
 - **🛡️ Automatic Protection** - Force shutdown after 5 minutes on battery
 - **⚡ Emergency Voltage Check** - Immediate shutdown if voltage critical (<22V)
 - **💾 Data Protection** - Predictable alerts give you time to save work
-- See [README_UPS_MONITORING.md](README_UPS_MONITORING.md) for details
+- See [UPS monitoring guide](docs/guides/ups-monitoring.md) for details
 
 ### ⚙️ Advanced System Control
 - **📶 Wi-Fi Control**

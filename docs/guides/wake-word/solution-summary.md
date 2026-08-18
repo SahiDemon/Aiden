@@ -147,15 +147,14 @@ Once satisfied, run Aiden normally:
 
 ```
 Aiden/
-├── run_wake_word_debug.ps1          # Main launcher script
-├── debug_wake_word.bat              # Windows double-click launcher
-├── WAKE_WORD_DEBUG_QUICKSTART.md    # Quick start guide
+├── debug_wake_word.bat                         # Windows double-click launcher
 ├── scripts/
-│   ├── debug_wake_word.py           # Basic debugger (Vosk)
-│   ├── debug_wake_word_advanced.py  # Advanced debugger (Both models)
-│   ├── test_wake_word_settings.py   # Settings viewer/tester
-│   ├── README_WAKE_WORD_DEBUG.md    # Detailed documentation
-│   └── WAKE_WORD_SOLUTION_SUMMARY.md # This file
+│   ├── debug_wake_word.py                      # Basic debugger (Vosk)
+│   ├── debug_wake_word_advanced.py             # Advanced debugger (both models)
+│   └── diagnostics/test_wake_word_settings.py  # Settings viewer/tester
+├── docs/guides/wake-word/
+│   ├── debugging.md                            # Detailed documentation
+│   └── solution-summary.md                     # This file
 └── logs/
     ├── wake_word_debug_*.txt        # Generated: Debug logs
     └── wake_word_audio_*/           # Generated: Audio clips

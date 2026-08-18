@@ -127,7 +127,7 @@ async def run_google_tts_diagnostic():
         print("1. Verify credentials file exists and is valid")
         print("2. Check that Cloud Text-to-Speech API is enabled")
         print("3. Ensure service account has 'Cloud Text-to-Speech User' role")
-        print("4. Review README_GOOGLE_CHIRP_TTS.md for setup instructions")
+        print("4. Review docs/guides/google-chirp-tts.md for setup instructions")
 
 
 if __name__ == "__main__":

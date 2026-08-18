@@ -186,8 +186,8 @@ def main():
     print("  3. Update your .env file")
     print("  4. Run: .\\run_wake_word_debug.ps1")
     print("  5. Test and iterate")
-    print("\nFor detailed debugging, see: scripts/README_WAKE_WORD_DEBUG.md")
-    print("For quick start, see: WAKE_WORD_DEBUG_QUICKSTART.md")
+    print("\nFor detailed debugging, see: docs/guides/wake-word/debugging.md")
+    print("For quick start, see: docs/guides/wake-word/solution-summary.md")
     print("")
 
 

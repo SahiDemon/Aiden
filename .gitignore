@@ -73,6 +73,7 @@ coverage/
 .electron-builder-cache/
 
 # Local TLS/tunnel tooling and generated credentials
+.local/
 .lego/
 ssl_backup/
 cloudflared.exe

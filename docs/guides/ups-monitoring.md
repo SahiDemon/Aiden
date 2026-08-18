@@ -120,7 +120,7 @@ When UPS asks about shutdown, you can respond naturally:
 
 ```powershell
 # Monitor UPS status in real-time
-python monitor_viewpower_logs.py
+python scripts/diagnostics/monitor_viewpower_logs.py
 ```
 
 This shows:
@@ -243,7 +243,7 @@ Planned features:
 **Questions or issues?**
 - Check `logs/aiden.log` for detailed monitoring info
 - File an issue on GitHub
-- Test with `python monitor_viewpower_logs.py` first
+- Test with `python scripts/diagnostics/monitor_viewpower_logs.py` first
 
 ---
 

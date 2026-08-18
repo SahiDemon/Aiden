@@ -300,8 +300,9 @@ def main():
         print(f"\n{Fore.CYAN}ViewPower Log Monitor")
         print(f"{Fore.WHITE}Real-time UPS mode monitoring (Line mode ⚡ vs Battery mode 🔋)")
         print(f"{Fore.WHITE}Options:")
-        print(f"  python monitor_viewpower_logs.py        - Monitor UPS mode in real-time")
-        print(f"  python monitor_viewpower_logs.py status - Show recent UPS status snapshot\n")
+        command = "python scripts/diagnostics/monitor_viewpower_logs.py"
+        print(f"  {command}        - Monitor UPS mode in real-time")
+        print(f"  {command} status - Show recent UPS status snapshot\n")
         
         monitor_info_log_realtime()
 
