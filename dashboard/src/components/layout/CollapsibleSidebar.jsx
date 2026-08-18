@@ -52,10 +52,15 @@ const CollapsibleSidebar = ({
                 transition={{ duration: 0.2 }}
                 className="flex items-center gap-3"
               >
-                <div className="w-9 h-9 rounded-xl bg-blue-500/20 flex items-center justify-center flex-shrink-0">
-                  <span className="text-blue-400 font-bold text-lg">A</span>
+                <div className="w-9 h-9 rounded-xl bg-blue-500/20 flex items-center justify-center flex-shrink-0 border border-blue-500/30">
+                  <span className="text-blue-400 font-bold text-lg" style={{ fontFamily: "'Space Grotesk', 'Inter', sans-serif" }}>A</span>
                 </div>
-                <span className="text-white font-semibold text-base">Aiden AI</span>
+                <span 
+                  className="text-white font-black text-xl tracking-widest bg-gradient-to-r from-white via-blue-100 to-blue-300 bg-clip-text text-transparent"
+                  style={{ fontFamily: "'Space Grotesk', 'Inter', sans-serif" }}
+                >
+                  AIDEN
+                </span>
               </motion.div>
             )}
           </AnimatePresence>
@@ -162,14 +167,11 @@ const CollapsibleSidebar = ({
                     />
                   </div>
                   
-                  <div className="text-xs font-semibold text-blue-300/60 px-1 mt-4">
-                    SMART FAN
-                  </div>
-                  <div className="liquid-glass-card p-3 rounded-xl border-blue-400/20 shadow-lg shadow-blue-500/5">
+                  <div className="mt-4">
                     <SmartDeviceCard
                       connected={connected}
                       deviceUpdates={deviceUpdates}
-                      compact={true}
+                      compact={false}
                     />
                   </div>
                 </div>

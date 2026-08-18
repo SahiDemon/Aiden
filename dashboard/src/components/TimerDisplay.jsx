@@ -144,7 +144,7 @@ const TimerDisplay = ({ timers = [], onTimerUpdate }) => {
     const urgentBorder = getUrgencyBorder(urgentRemaining);
 
     return (
-        <div className="timer-display-container">
+        <div className="fixed top-[env(safe-area-inset-top,1rem)] left-1/2 -translate-x-1/2 md:left-auto md:-translate-x-0 md:right-6 md:top-24 z-50 w-[90%] md:w-80 flex flex-col gap-2">
             {/* Compact Timer Display */}
             <div 
                 className={`timer-compact liquid-glass-card cursor-pointer transition-all duration-300 hover:scale-105 ${urgentBorder}`}
@@ -284,6 +284,17 @@ const TimerDisplay = ({ timers = [], onTimerUpdate }) => {
                     z-index: 999;
                     min-width: 320px;
                     max-width: 400px;
+                }
+                
+                @media (max-width: 768px) {
+                    .timer-display-container {
+                        top: 5rem;
+                        left: 1rem;
+                        right: 1rem;
+                        min-width: auto;
+                        max-width: none;
+                        width: calc(100% - 2rem);
+                    }
                 }
                 
                 .timer-compact {

@@ -32,13 +32,13 @@ const WaveAnimation = ({ isActive, isSpeaking }) => {
       let targetWaves, targetAmplitude, targetOpacity, targetBaseY, targetFrequency, targetSpeed
       
       if (!isActive && !isSpeaking) {
-        // Idle state - subtle waves at bottom
-        targetWaves = 4
-        targetAmplitude = 20
-        targetOpacity = 0.3
-        targetBaseY = height - 120
-        targetFrequency = 0.004
-        targetSpeed = 0.015
+        // Idle state - subtle, calm waves at bottom
+        targetWaves = 3
+        targetAmplitude = 12
+        targetOpacity = 0.25
+        targetBaseY = height - 100
+        targetFrequency = 0.003
+        targetSpeed = 0.006
       } else if (isActive && !isSpeaking) {
         // Listening state - moderate waves
         targetWaves = 8

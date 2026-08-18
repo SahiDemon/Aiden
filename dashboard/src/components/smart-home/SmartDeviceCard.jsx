@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Fan, RefreshCw, Wifi, WifiOff } from 'lucide-react'
+import { Fan, RefreshCw, Wifi, WifiOff, Power, RotateCw, Clock, Gauge, Zap } from 'lucide-react'
 import { toast } from 'react-hot-toast'
 import { Button } from '../ui/button'
 import { Badge } from '../ui/badge'
@@ -77,8 +77,8 @@ const SmartDeviceCard = ({ connected, deviceUpdates, compact = false }) => {
       return
     }
 
-    if (!connected || !isDeviceConnected) {
-      toast.error('Device not connected')
+    if (!connected) {
+      toast.error('Not connected to Aiden')
       return
     }
 
@@ -116,24 +116,91 @@ const SmartDeviceCard = ({ connected, deviceUpdates, compact = false }) => {
     }
   }
 
+  // Default fallback controls when backend controls list is not populated yet
+  const defaultControls = useMemo(() => [
+    {
+      id: 'power',
+      label: 'Fan Power',
+      feature: 'Power',
+      kind: 'toggle',
+      value: summary.state || 'off',
+      steps: [
+        { key: 'on', label: 'Power ON' },
+        { key: 'off', label: 'Power OFF' },
+      ],
+    },
+    {
+      id: 'oscillation',
+      label: 'Rotate / Oscillation',
+      feature: 'Swing',
+      kind: 'toggle',
+      value: summary.oscillation || summary.mode || 'off',
+      steps: [
+        { key: 'on', label: 'Rotate ON' },
+        { key: 'off', label: 'Rotate OFF' },
+      ],
+    },
+    {
+      id: 'speed',
+      label: 'Fan Speed Level',
+      feature: 'Speed',
+      kind: 'step',
+      value: String(summary.speed || '1'),
+      steps: [
+        { key: '1', label: 'Speed 1' },
+        { key: '2', label: 'Speed 2' },
+        { key: '3', label: 'Speed 3' },
+        { key: '4', label: 'Speed 4' },
+        { key: '5', label: 'Speed 5' },
+      ],
+    },
+    {
+      id: 'timer',
+      label: 'Shutdown Timer',
+      feature: 'Timer',
+      kind: 'step',
+      value: summary.timer ? String(summary.timer) : 'off',
+      steps: [
+        { key: 'off', label: 'Off' },
+        { key: '1h', label: '1 Hour' },
+        { key: '2h', label: '2 Hours' },
+        { key: '4h', label: '4 Hours' },
+        { key: '8h', label: '8 Hours' },
+      ],
+    },
+  ], [summary])
+
+  const activeControls = controls.length > 0 ? controls : defaultControls
+
+  const getControlIcon = (feature) => {
+    switch (String(feature || '').toLowerCase()) {
+      case 'power': return <Power className="w-4 h-4 text-emerald-400" />
+      case 'swing':
+      case 'oscillation': return <RotateCw className="w-4 h-4 text-sky-400" />
+      case 'speed': return <Gauge className="w-4 h-4 text-blue-400" />
+      case 'timer': return <Clock className="w-4 h-4 text-purple-400" />
+      default: return <Zap className="w-4 h-4 text-amber-400" />
+    }
+  }
+
   const renderStepButtons = (control, columns = 2) => (
-    <div className={`grid gap-2 ${columns === 3 ? 'grid-cols-3' : 'grid-cols-2'}`}>
+    <div className={`grid gap-2 ${columns === 5 ? 'grid-cols-5' : columns === 4 ? 'grid-cols-4' : columns === 3 ? 'grid-cols-3' : 'grid-cols-2'}`}>
       {control.steps.map((step) => {
-        const isActive = control.value === step.key
+        const isActive = String(control.value) === String(step.key)
         const loadingKey = `${control.id}:${step.key}`
         return (
           <Button
             key={`${control.id}-${step.key}`}
             onClick={() => handleControl(control.id, { target: step.key })}
-            disabled={!isDeviceConnected || actionLoading !== null}
+            disabled={actionLoading !== null}
             className={
               isActive
-                ? 'bg-blue-500/20 border border-blue-400/40 text-blue-100 hover:bg-blue-500/25'
-                : 'bg-white/5 border border-white/10 text-white/75 hover:bg-white/10'
+                ? 'bg-blue-500/25 border border-blue-400/50 text-blue-100 font-semibold shadow-md shadow-blue-500/10 hover:bg-blue-500/35 transition-all text-xs py-1.5 h-auto'
+                : 'bg-white/5 border border-white/10 text-white/75 hover:bg-white/10 hover:text-white transition-all text-xs py-1.5 h-auto'
             }
           >
             {actionLoading === loadingKey ? (
-              <RefreshCw className="w-4 h-4 animate-spin mr-2" />
+              <RefreshCw className="w-3 h-3 animate-spin mr-1" />
             ) : null}
             {step.label}
           </Button>
@@ -145,43 +212,24 @@ const SmartDeviceCard = ({ connected, deviceUpdates, compact = false }) => {
   const renderControl = (control) => {
     const steps = control.steps || []
     const isToggle = control.kind === 'toggle' || steps.length === 2
-    const usesSelect = control.kind === 'cycle' && steps.length > 5
+    const isSpeedOrTimer = control.id === 'speed' || control.id === 'timer'
 
     return (
-      <div key={control.id} className="rounded-xl border border-white/10 bg-white/5 p-3 space-y-3">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="text-sm font-medium text-white/85">{control.label}</p>
-            <p className="text-xs text-white/50">
-              {control.value_label || control.value || 'Unknown'}
-            </p>
+      <div key={control.id} className="rounded-xl border border-white/10 bg-white/5 p-3 space-y-2.5 backdrop-blur-sm">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            {getControlIcon(control.feature || control.id)}
+            <p className="text-sm font-medium text-white/90">{control.label}</p>
           </div>
-          <Badge className="bg-white/10 border-white/10 text-white/80">
-            {control.feature}
+          <Badge className="bg-white/10 border-white/10 text-white/80 text-[10px]">
+            {control.feature || control.id}
           </Badge>
         </div>
 
-        {usesSelect ? (
-          <Select
-            value={control.value || ''}
-            onValueChange={(value) => handleControl(control.id, { target: value })}
-          >
-            <SelectTrigger
-              className="border-white/10 bg-white/5 text-white"
-              disabled={!isDeviceConnected || actionLoading !== null}
-            >
-              <SelectValue placeholder={`Select ${control.label.toLowerCase()}`} />
-            </SelectTrigger>
-            <SelectContent className="border-white/10 bg-slate-950 text-white">
-              {steps.map((step) => (
-                <SelectItem key={`${control.id}-${step.key}`} value={step.key} className="text-white">
-                  {step.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        ) : isToggle ? (
+        {isToggle ? (
           renderStepButtons(control, 2)
+        ) : isSpeedOrTimer ? (
+          renderStepButtons(control, steps.length)
         ) : (
           renderStepButtons(control, steps.length >= 3 ? 3 : 2)
         )}
@@ -194,7 +242,7 @@ const SmartDeviceCard = ({ connected, deviceUpdates, compact = false }) => {
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-medium text-blue-200/80 flex items-center gap-2">
-            <Fan className={`w-4 h-4 ${summary.state === 'on' ? 'text-emerald-300' : 'text-blue-300'}`} />
+            <Fan className={`w-4 h-4 ${summary.state === 'on' ? 'text-emerald-300 animate-spin' : 'text-blue-300'}`} />
             {device?.device_name || 'Smart Fan'}
           </h3>
           <Button
@@ -211,40 +259,57 @@ const SmartDeviceCard = ({ connected, deviceUpdates, compact = false }) => {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             {isDeviceConnected ? (
-              <Wifi className="w-3 h-3 text-blue-400" />
+              <Wifi className="w-3 h-3 text-emerald-400" />
             ) : (
               <WifiOff className="w-3 h-3 text-red-400" />
             )}
-            <span className="text-xs text-white/70">Device</span>
+            <span className="text-xs text-white/70">{deviceStatus?.ip_address || '192.168.1.180'}</span>
           </div>
           <Badge
             variant={isDeviceConnected ? 'default' : 'destructive'}
-            className={isDeviceConnected ? 'text-xs px-2 py-0.5 bg-blue-500/20 border-blue-400/30 text-blue-200' : 'text-xs px-2 py-0.5'}
+            className={isDeviceConnected ? 'text-xs px-2 py-0.5 bg-emerald-500/20 border-emerald-400/30 text-emerald-200' : 'text-xs px-2 py-0.5'}
           >
-            {isDeviceConnected ? 'Online' : 'Offline'}
+            {isDeviceConnected ? 'Connected' : 'Offline'}
           </Badge>
         </div>
 
-        {quickFacts.length > 0 && (
-          <p className="text-xs text-white/60 leading-relaxed">
-            {quickFacts.join(' • ')}
-          </p>
-        )}
+        {/* Compact Quick Controls */}
+        <div className="grid grid-cols-2 gap-1.5">
+          <Button
+            size="sm"
+            onClick={() => handleControl('power', { target: summary.state === 'on' ? 'off' : 'on' })}
+            className={`h-8 text-xs ${summary.state === 'on' ? 'bg-emerald-500/20 border border-emerald-400/40 text-emerald-200' : 'bg-white/5 border border-white/10 text-white/70'}`}
+          >
+            <Power className="w-3 h-3 mr-1.5" />
+            {summary.state === 'on' ? 'Fan ON' : 'Fan OFF'}
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => handleControl('oscillation', { target: summary.oscillation === 'on' ? 'off' : 'on' })}
+            className={`h-8 text-xs ${summary.oscillation === 'on' ? 'bg-sky-500/20 border border-sky-400/40 text-sky-200' : 'bg-white/5 border border-white/10 text-white/70'}`}
+          >
+            <RotateCw className="w-3 h-3 mr-1.5" />
+            {summary.oscillation === 'on' ? 'Rotate ON' : 'Rotate OFF'}
+          </Button>
+        </div>
       </div>
     )
   }
 
   return (
-    <div className="liquid-glass-card p-6">
+    <div className="liquid-glass-card p-5 md:p-6">
       <div className="pb-3 flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-            <Fan className={`w-5 h-5 ${summary.state === 'on' ? 'text-emerald-300 animate-spin' : ''}`} />
-            {device?.device_name || 'Smart Fan'}
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-bold text-white flex items-center gap-2.5">
+            <Fan className={`w-5 h-5 ${summary.state === 'on' ? 'text-emerald-400 animate-spin' : 'text-blue-400'}`} />
+            {device?.device_name || 'Smart Fan Control'}
           </h2>
-          <p className="text-xs text-white/50 mt-1">
-            Runtime controls from the ESP32 device
-          </p>
+          <Badge
+            variant={isDeviceConnected ? 'default' : 'destructive'}
+            className={isDeviceConnected ? 'bg-emerald-500/20 border-emerald-400/30 text-emerald-200 text-xs' : 'bg-red-500/20 border-red-400/30 text-red-200 text-xs'}
+          >
+            {isDeviceConnected ? 'Online' : 'Offline'}
+          </Badge>
         </div>
         <Button
           size="icon"
@@ -257,49 +322,13 @@ const SmartDeviceCard = ({ connected, deviceUpdates, compact = false }) => {
         </Button>
       </div>
 
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-sm">
-            {isDeviceConnected ? (
-              <Wifi className="w-4 h-4 text-emerald-400" />
-            ) : (
-              <WifiOff className="w-4 h-4 text-red-400" />
-            )}
-            <span className="text-white/70">{deviceStatus?.ip_address || '192.168.1.180'}</span>
-          </div>
-          <Badge
-            variant={isDeviceConnected ? 'default' : 'destructive'}
-            className="bg-white/10 border-white/20 text-white"
-          >
-            {isDeviceConnected ? 'Connected' : 'Offline'}
-          </Badge>
-        </div>
-
-        <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-          <p className="text-sm font-medium text-white/80">Current Runtime State</p>
-          <p className="text-xs text-white/60 mt-1">
-            {quickFacts.length > 0 ? quickFacts.join(' • ') : 'No live state available'}
-          </p>
-        </div>
-
+      <div className="space-y-4 pt-2">
+        {/* Interactive Controls List */}
         <div className="space-y-3">
-          {controls.length > 0 ? (
-            controls.map(renderControl)
-          ) : (
-            <div className="rounded-xl border border-dashed border-white/10 bg-white/5 p-4 text-sm text-white/60">
-              {isDeviceConnected
-                ? 'No runtime controls were returned by the ESP32.'
-                : 'ESP32 fan is offline. Once it reconnects, the live controls will appear here.'}
-            </div>
-          )}
+          {activeControls.map(renderControl)}
         </div>
-
-        <p className="text-xs text-white/50 text-center">
-          Voice: “set fan timer to 3.5 hours”, “set speed to 2”, or “turn oscillation on”
-        </p>
       </div>
     </div>
   )
 }
-
 export default SmartDeviceCard

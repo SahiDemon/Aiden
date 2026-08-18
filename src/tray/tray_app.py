@@ -118,7 +118,10 @@ class AidenTrayApp:
     def open_dashboard(self, icon, item):
         """Open the dashboard in browser"""
         try:
-            url = f"http://{self.settings.api.host}:{self.settings.api.port}"
+            import os
+            host = "localhost" if self.settings.api.host == "0.0.0.0" else self.settings.api.host
+            protocol = "https" if os.path.exists("key.pem") else "http"
+            url = f"{protocol}://{host}:{self.settings.api.port}"
             logger.info(f"Opening dashboard: {url}")
             webbrowser.open(url)
         except Exception as e:

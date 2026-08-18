@@ -182,7 +182,8 @@ class TTSEngine:
                         wake_word_paused = self._pause_wake_word_detection()
                         try:
                             # Play
-                            await self._play_audio_data(audio_data)
+                            source = task.get("source", "local")
+                            await self._play_audio_data(audio_data, source=source)
                         finally:
                             self._resume_wake_word_detection(wake_word_paused)
                         
@@ -207,13 +208,14 @@ class TTSEngine:
             except Exception as e:
                 logger.error(f"Error in TTS queue processor: {e}")
     
-    async def speak(self, text: str):
+    async def speak(self, text: str, source: str = "local"):
         """
         Convert text to speech and play it
         Uses Redis cache for common phrases
         
         Args:
             text: Text to speak
+            source: Source of the request (e.g., 'local', 'web')
         """
         if not text:
             return
@@ -235,7 +237,8 @@ class TTSEngine:
                 await self.audio_queue.put({
                     "type": "speak",
                     "data": cached_audio,
-                    "text": text
+                    "text": text,
+                    "source": source
                 })
             else:
                 logger.debug("TTS: Generating new audio")
@@ -262,14 +265,15 @@ class TTSEngine:
                         logger.error(f"TTS: Offline fallback also failed: {offline_e}")
                 
                 if audio_data:
-                    # Cache in background
-                    asyncio.create_task(self._cache_audio(text, audio_data))
+                    # Cache it
+                    await self._cache_audio(text, audio_data)
                     
                     # Queue for playback
                     await self.audio_queue.put({
                         "type": "speak",
                         "data": audio_data,
-                        "text": text
+                        "text": text,
+                        "source": source
                     })
                 else:
                     raise ValueError("TTS generation failed (both online and offline)")
@@ -445,12 +449,39 @@ class TTSEngine:
             logger.error(f"Offline TTS wrapper failed: {e}", exc_info=True)
             return None
     
-    async def _play_audio_data(self, audio_data: bytes):
-        """Play audio data using pygame"""
-        if not _ensure_mixer():
-            logger.error("Pygame not available for audio playback")
-            return
+    async def _play_audio_data(self, audio_data: bytes, source: str = "local"):
+        """Play audio data using pygame and broadcast to web clients"""
         
+        # Broadcast audio to all connected web clients via WebSocket
+        try:
+            from src.api.server import broadcast_update
+            import base64
+            
+            # Encode audio to base64
+            audio_b64 = base64.b64encode(audio_data).decode('utf-8')
+            
+            # Detect format
+            is_wav = audio_data[:4] == b'RIFF'
+            mime_type = "audio/wav" if is_wav else "audio/mpeg"
+            
+            # Create data URI
+            data_uri = f"data:{mime_type};base64,{audio_b64}"
+            
+            await broadcast_update("tts_audio", {
+                "audio_uri": data_uri
+            })
+            logger.info("Broadcasted TTS audio to web clients")
+        except Exception as e:
+            logger.error(f"Failed to broadcast TTS audio: {e}")
+
+        if not _ensure_mixer():
+            logger.error("Pygame not available for local audio playback")
+            return
+            
+        if source == "web":
+            logger.info("TTS: Skipping local playback because request originated from web dashboard")
+            return
+
         try:
             # Save to temporary file
             import uuid

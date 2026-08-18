@@ -338,6 +338,18 @@ async def initialize_services():
         # Reduced from 1 s → 0.3 s: the API server starts asynchronously
         # and is typically ready in ~100ms.
         await asyncio.sleep(0.3)
+
+        # Auto-start the configured Cloudflare Tunnel when the local binary is available.
+        try:
+            import os, subprocess
+
+            cf_token = settings.app.cloudflare_tunnel_token
+            if os.path.exists("cloudflared.exe") and cf_token:
+                logger.info("Auto-starting the configured Cloudflare Tunnel")
+                creation_flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+                subprocess.Popen(["cloudflared.exe", "tunnel", "run", "--token", cf_token], creationflags=creation_flags)
+        except Exception as cf_err:
+            logger.warning(f"Could not auto-start Cloudflare tunnel: {cf_err}")
         
         # Pre-warm the LLM client in the background so startup isn't blocked.
         # Delay 3s to let the API server finish initializing Redis first

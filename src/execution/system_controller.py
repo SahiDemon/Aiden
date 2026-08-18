@@ -93,14 +93,16 @@ class SystemController:
 
     async def shutdown(self, force: bool = True) -> bool:
         """Shutdown Windows"""
-        command = "shutdown /s /t 0"
+        # Use a 6-second delay so Aiden has time to say goodbye before the OS shuts down
+        command = "shutdown /s /t 6"
         if force:
             command += " /f"
         return self._run_simple_command(command)
 
     async def restart(self, force: bool = False) -> bool:
         """Restart Windows"""
-        command = "shutdown /r /t 0"
+        # Use a 6-second delay so Aiden has time to say goodbye before the OS restarts
+        command = "shutdown /r /t 6"
         if force:
             command += " /f"
         return self._run_simple_command(command)

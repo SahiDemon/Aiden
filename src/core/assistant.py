@@ -388,13 +388,14 @@ class AidenAssistant:
         except Exception as e:
             logger.error(f"Error during auto-listen: {e}", exc_info=True)
     
-    async def _speak_async(self, text: str, wait: bool = False):
+    async def _speak_async(self, text: str, wait: bool = False, source: str = "local"):
         """
         Wrapper to speak asynchronously without blocking - streams by sentence
         
         Args:
             text: Text to speak
-            wait: If True, waits for TTS to complete 
+            wait: If True, waits for TTS to complete
+            source: Source of the request (e.g., 'local', 'web')
         """
         import asyncio
         task = asyncio.current_task()
@@ -412,7 +413,7 @@ class AidenAssistant:
             # By queuing sentences individually, Aiden begins playing the first
             # sentence instantly while the rest are fetched in the background.
             for sentence in sentences:
-                await self.tts.speak(sentence)
+                await self.tts.speak(sentence, source=source)
 
             if wait:
                 await self.tts.wait_until_done()
@@ -820,29 +821,80 @@ class AidenAssistant:
 
         return cancelled
     
-    async def handle_text_message(self, text: str) -> str:
+    async def handle_text_message(self, text: str, source: str = "local") -> str:
         """
         Handle text-based message (from dashboard/API)
         
         Args:
             text: User's text message
+            source: Where the message came from ('local' or 'web')
             
         Returns:
             Assistant's response text
         """
+        from src.utils.websocket_broadcast import broadcast_voice_status
         try:
-            logger.info(f"TEXT MESSAGE: {text}")
+            logger.info(f"TEXT MESSAGE: {text} (source: {source})")
+            
+            # Broadcast processing status so the UI knows we're thinking
+            await broadcast_voice_status("processing", speaking=False, active=True)
             
             # Process with AI
-            response = await self._process_user_message(text)
+            response = await self._process_user_message(text, source=source)
+            
+            # Note: tts.speak (inside _process_user_message) will broadcast "speaking" and then "idle"
+            # But if it didn't speak (e.g. error or silent), we ensure it returns to idle here.
+            # However, since tts.speak might take time, we only broadcast idle if we aren't speaking.
+            # For safety, let the TTS handle the "idle" broadcast when it finishes, 
+            # unless an error occurred.
             
             return response
             
         except Exception as e:
             logger.error(f"Error handling text message: {e}", exc_info=True)
+            await broadcast_voice_status("idle", speaking=False, active=False)
             return "Sorry, something went wrong."
     
-    async def _process_user_message(self, user_text: str) -> str:
+    @staticmethod
+    def _is_unhelpful_question_response(ai_response: Dict[str, Any]) -> bool:
+        """
+        Dynamically check if the AI returned a dead-end refusal or deferral phrase for a question
+        without providing any executable commands.
+        """
+        if not ai_response or ai_response.get("commands"):
+            return False
+        
+        response_text = (ai_response.get("response") or "").strip().lower()
+        if not response_text:
+            return True
+            
+        # Generalized regex patterns matching structural meta-refusal or deferral semantics
+        meta_refusal_patterns = [
+            r"\b(can'?t|cannot|unable|don'?t have|do not have|no access|not able)\b.*\b(provide|summary|summaries|answer|look|search|access|info|detail|details)\b",
+            r"\b(let me|i'll|i can|i will)\s+(look|check|search)\b",
+            r"\b(look|check|search)\s+(that|this|it)\s+up\b",
+            r"\b(give|allow)\s+me\s+a\s+(moment|second|minute)\b",
+            r"\b(as an ai|language model)\b",
+        ]
+        return any(re.search(pat, response_text) for pat in meta_refusal_patterns)
+
+    def _build_search_fallback_response(self, user_text: str) -> Dict[str, Any]:
+        """
+        Dynamically build a Google Search shell command response when AI fails to answer a question.
+        """
+        import urllib.parse
+        encoded_query = urllib.parse.quote_plus(user_text)
+        search_cmd = f'start "" "https://www.google.com/search?q={encoded_query}"'
+        return {
+            "is_followup": False,
+            "intent": "question",
+            "commands": [{"type": "shell_command", "params": {"command": search_cmd}}],
+            "response": f"Searching Google for {user_text}...",
+            "update_context": True,
+            "expecting_followup": False,
+        }
+
+    async def _process_user_message(self, user_text: str, source: str = "local") -> str:
         """
         Core message processing logic with 2-pass AI system:
         Pass 1: AI decides what context it needs
@@ -850,6 +902,7 @@ class AidenAssistant:
         
         Args:
             user_text: User's message
+            source: Where the message came from ('local' or 'web')
             
         Returns:
             Assistant's response text
@@ -871,7 +924,7 @@ class AidenAssistant:
                 if not ai_response:
                     logger.error(f"Empty response from {self.settings.app.llm_provider.upper()} AI (direct)")
                     response_text = "Sorry, I couldn't process that."
-                    await self.tts.speak(response_text)
+                    await self.tts.speak(response_text, source=source)
                     return response_text
                 needs_context = []
             else:
@@ -883,7 +936,7 @@ class AidenAssistant:
                 if not ai_response_pass1:
                     logger.error(f"Empty response from {self.settings.app.llm_provider.upper()} AI (Pass 1)")
                     response_text = "Sorry, I couldn't process that."
-                    await self.tts.speak(response_text)
+                    await self.tts.speak(response_text, source=source)
                     return response_text
 
                 needs_context = ai_response_pass1.get("needs_context", [])
@@ -908,7 +961,28 @@ class AidenAssistant:
                 )
 
             ai_response = self._maybe_apply_simple_fan_heuristic(user_text, ai_response)
-            
+
+            # Dynamic Safeguard for Question Refusals & Placeholders:
+            # Step 1: Attempt dynamic re-prompt if response is an unhelpful refusal/deferral.
+            if self._is_unhelpful_question_response(ai_response):
+                logger.warning(
+                    "Unhelpful/refusal response detected ('%s'). Re-prompting AI for direct knowledge answer...",
+                    ai_response.get("response")
+                )
+                retry_messages = await self.context_manager.build_messages(
+                    user_text + " (Answer directly with factual information or plot details. If uncertain, emit a shell_command with Google Search.)",
+                    context,
+                    needs_context=needs_context
+                )
+                retry_ai_response = await llm.chat(retry_messages)
+                if retry_ai_response and not self._is_unhelpful_question_response(retry_ai_response):
+                    logger.info("Successfully recovered direct response on retry: %s", retry_ai_response.get("response"))
+                    ai_response = retry_ai_response
+                else:
+                    # Step 2: If LLM still fails to answer, dynamically fall back to opening Google Search
+                    logger.warning("AI failed to provide an answer on retry. Dynamically falling back to Google Search.")
+                    ai_response = self._build_search_fallback_response(user_text)
+
             # Parse AI response
             intent = ai_response.get("intent", "unknown")
             commands = ai_response.get("commands", [])
@@ -946,6 +1020,18 @@ class AidenAssistant:
             
             # Execute commands concurrently if any
             if commands:
+                # Broadcast commands as actions to the UI
+                try:
+                    from src.utils.websocket_broadcast import broadcast_message
+                    for cmd in commands:
+                        await broadcast_message("message", {
+                            "role": "action",
+                            "action": cmd,
+                            "timestamp": __import__('datetime').datetime.now().isoformat()
+                        })
+                except Exception as e:
+                    logger.error(f"Failed to broadcast actions: {e}")
+
                 has_self_termination = any(cmd.get("type") == "self_termination" for cmd in commands)
                 should_delay_response = has_self_termination or any(
                     self.executor.command_requires_post_response(cmd)
@@ -956,7 +1042,7 @@ class AidenAssistant:
                 if should_delay_response or expecting_followup:
                     execution_results = await self.executor.execute_multiple(commands)
                 else:
-                    initial_tts_task = asyncio.create_task(self._speak_async(response_text))
+                    initial_tts_task = asyncio.create_task(self._speak_async(response_text, source=source))
                     execution_results = await self.executor.execute_multiple(commands)
                 
                 # Merge dynamic command responses (battery/cpu/gpu stats) into spoken text
@@ -991,8 +1077,8 @@ class AidenAssistant:
 
                 failure_followup = self._build_failure_followup(execution_results)
 
-                # Broadcast the enriched initial response if execution changed it
-                if response_text != original_response:
+                # Broadcast the final response if we delayed it, or if it changed
+                if should_delay_response or expecting_followup or response_text != original_response:
                     try:
                         from src.utils.websocket_broadcast import broadcast_message
                         await broadcast_message("message", {
@@ -1004,7 +1090,7 @@ class AidenAssistant:
                         pass  # Non-critical
 
                 if should_delay_response or expecting_followup:
-                    await self._speak_async(response_text)
+                    await self._speak_async(response_text, source=source)
                 elif initial_tts_task:
                     await initial_tts_task
 
@@ -1020,16 +1106,16 @@ class AidenAssistant:
                         pass  # Non-critical
 
                     if expecting_followup:
-                        await self._speak_async(failure_followup)
+                        await self._speak_async(failure_followup, source=source)
                     else:
-                        asyncio.create_task(self._speak_async(failure_followup))
+                        asyncio.create_task(self._speak_async(failure_followup, source=source))
             else:
                 # No commands, just respond
                 # Wait for TTS if we're expecting follow-up, otherwise background
                 if expecting_followup:
-                    await self._speak_async(response_text)  # Wait for TTS
+                    await self._speak_async(response_text, source=source)  # Wait for TTS
                 else:
-                    asyncio.create_task(self._speak_async(response_text))  # Background
+                    asyncio.create_task(self._speak_async(response_text, source=source))  # Background
             
             # Update context if needed
             if update_context:
@@ -1040,9 +1126,12 @@ class AidenAssistant:
             
             # Let AI decide if we should continue listening
             if expecting_followup:
-                logger.info("🔄 AI expects follow-up - will auto-listen for response")
-                # AUTO-LISTEN for follow-up without requiring wake word!
-                await self._auto_listen_for_followup()
+                logger.info("🔄 AI expects follow-up")
+                if source == "local":
+                    logger.info("Auto-listening for response on local microphone...")
+                    await self._auto_listen_for_followup()
+                else:
+                    logger.info("Source is web - skipping local microphone auto-listen.")
             else:
                 logger.info("✅ Conversation complete - no follow-up expected")
                 # Conversation stays active for 5 minutes (Redis TTL handles cleanup)
@@ -1055,7 +1144,7 @@ class AidenAssistant:
         except Exception as e:
             logger.error(f"Error processing message: {e}", exc_info=True)
             response_text = "Sorry, I encountered an error."
-            await self.tts.speak(response_text)
+            await self.tts.speak(response_text, source=source)
             return response_text
     
     async def greet_user(self):

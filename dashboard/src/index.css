@@ -189,14 +189,40 @@
     8px 0 32px rgba(0, 0, 0, 0.4);
 }
 
-/* Clean Gradient Background - No dark waves */
+/* Clean Gradient Background - Matches image aesthetic */
 .gradient-bg {
-  background: linear-gradient(135deg, 
-    #0f172a 0%,
-    #1e293b 50%,
-    #0f172a 100%);
-  background-size: 200% 200%;
-  animation: gradientShift 20s ease infinite;
+  background: radial-gradient(circle at 50% 30%, #121e33 0%, #060913 100%);
+  background-size: cover;
+  background-attachment: fixed;
+  position: relative;
+}
+
+.gradient-bg::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: 
+    linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  background-size: 20px 20px;
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+/* Premium Mic Button */
+.mic-glow-button {
+  background: radial-gradient(circle at center, #1e3a6a 0%, #0a1428 100%);
+  border: 2px solid rgba(59, 130, 246, 0.4);
+  box-shadow: 
+    0 0 30px rgba(59, 130, 246, 0.3),
+    inset 0 0 20px rgba(59, 130, 246, 0.2);
+  transition: all 0.3s ease;
+}
+.mic-glow-button:active {
+  box-shadow: 
+    0 0 15px rgba(59, 130, 246, 0.5),
+    inset 0 0 10px rgba(59, 130, 246, 0.4);
+  transform: scale(0.95);
 }
 
 @keyframes gradientShift {

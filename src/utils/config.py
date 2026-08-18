@@ -164,6 +164,10 @@ class AppConfig(BaseSettings):
     jellyfin_api_key: str = Field(
         default="", validation_alias=AliasChoices("jellyfin_api_key", "JELLYFIN_API_KEY")
     )
+    cloudflare_tunnel_token: str = Field(
+        default="",
+        validation_alias=AliasChoices("cloudflare_tunnel_token", "CLOUDFLARE_TUNNEL_TOKEN"),
+    )
 
 
     @field_validator("debug", mode="before")
@@ -203,7 +207,7 @@ class APIConfig(BaseSettings):
         extra="ignore",
     )
 
-    host: str = Field(default="localhost")
+    host: str = Field(default="0.0.0.0")
     port: int = Field(default=5000)
     reload: bool = Field(default=False)
 

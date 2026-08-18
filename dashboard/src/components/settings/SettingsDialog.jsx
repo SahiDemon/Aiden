@@ -80,7 +80,7 @@ const getIn = (object, path, fallback = '') => {
 
 const SettingRow = ({ label, hint, children }) => (
   <div className="space-y-2 border-b border-white/5 pb-4">
-    <div className="flex items-center justify-between gap-6">
+    <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 md:gap-6">
       <div className="max-w-md">
         <Label className="text-sm font-medium text-white">{label}</Label>
         {hint && <p className="mt-1 text-xs text-white/45">{hint}</p>}
@@ -207,36 +207,51 @@ const SettingsDialog = ({ open, onOpenChange }) => {
       <DialogContent className="!block h-[95vh] max-h-[95vh] max-w-[96vw] overflow-hidden border-white/10 bg-slate-950 p-0 text-white shadow-2xl">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.18),_transparent_28%),radial-gradient(circle_at_bottom_right,_rgba(14,165,233,0.15),_transparent_32%)]" />
         <div className="relative flex h-full flex-col">
-          <DialogHeader className="border-b border-white/10 px-8 py-6">
-            <div className="flex items-start justify-between gap-6">
-              <div>
-                <DialogTitle className="flex items-center gap-3 text-2xl font-semibold text-white">
-                  <Settings2 className="h-6 w-6 text-sky-300" />
-                  Aiden Settings Console
+          <DialogHeader className="border-b border-white/10 px-4 py-3 md:px-8 md:py-5 bg-white/[0.02]">
+            <div className="flex flex-row items-center justify-between gap-2 md:gap-6">
+              <div className="min-w-0 flex-1 hidden md:block">
+                <DialogTitle className="flex items-center gap-2 md:gap-3 text-base md:text-2xl font-bold tracking-tight text-white truncate">
+                  <Settings2 className="h-4 w-4 md:h-6 md:w-6 text-sky-300 shrink-0" />
+                  <span>Aiden Settings Console</span>
                 </DialogTitle>
-                <DialogDescription className="mt-2 max-w-3xl text-white/55">
+                <DialogDescription className="mt-1 hidden md:block max-w-3xl text-xs md:text-sm text-white/55">
                   Provider switching, detected models, prompts, speech, integrations, and runtime controls are managed here from one real settings contract.
                 </DialogDescription>
               </div>
-              <div className="flex items-center gap-3">
-                <Badge className="border-sky-400/20 bg-sky-400/10 text-sky-200">
+              <div className="md:hidden min-w-0 flex-1 pr-2">
+                <Select value={activeSection} onValueChange={setActiveSection}>
+                  <SelectTrigger className="h-9 border-white/10 bg-white/5 text-white w-full rounded-xl">
+                    <SelectValue placeholder="Select section" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {sections.map((section) => (
+                      <SelectItem key={section.id} value={section.id}>
+                        {section.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <Badge className="hidden sm:inline-flex border-sky-400/20 bg-sky-400/10 text-sky-200 text-xs">
                   Provider: {currentProvider}
                 </Badge>
-                {hasChanges && <Badge className="border-amber-400/20 bg-amber-400/10 text-amber-200">Unsaved changes</Badge>}
-                <Button variant="outline" onClick={fetchSettings} className="border-white/10 bg-white/5 text-white hover:bg-white/10">
-                  <RefreshCw className="mr-2 h-4 w-4" />
-                  Reload
+                {hasChanges && <Badge className="border-amber-400/20 bg-amber-400/10 text-amber-200 text-xs px-2 py-0.5">Unsaved</Badge>}
+                <Button variant="outline" size="sm" onClick={fetchSettings} className="h-9 w-9 md:w-auto md:px-2.5 px-0 text-xs border-white/10 bg-white/5 text-white hover:bg-white/10 flex justify-center items-center rounded-xl">
+                  <RefreshCw className="h-4 w-4 md:h-3.5 md:w-3.5 md:mr-1.5" />
+                  <span className="hidden md:inline">Reload</span>
                 </Button>
-                <Button onClick={handleSave} disabled={!hasChanges || saving} className="bg-sky-500 text-slate-950 hover:bg-sky-400">
-                  <Save className="mr-2 h-4 w-4" />
-                  {saving ? 'Saving...' : 'Save changes'}
+                <Button size="sm" onClick={handleSave} disabled={!hasChanges || saving} className="h-9 md:px-3 px-3 text-xs bg-sky-500 text-slate-950 font-semibold hover:bg-sky-400 flex justify-center items-center rounded-xl">
+                  <Save className="h-4 w-4 md:h-3.5 md:w-3.5 md:mr-1.5" />
+                  <span className="hidden md:inline">{saving ? 'Saving...' : 'Save'}</span>
                 </Button>
               </div>
             </div>
           </DialogHeader>
 
-          <div className="grid min-h-0 flex-1 grid-cols-[240px_minmax(0,1fr)_320px] overflow-hidden">
-            <aside className="border-r border-white/10 bg-white/[0.02] p-4">
+          <div className="flex flex-col md:grid min-h-0 flex-1 md:grid-cols-[240px_minmax(0,1fr)_320px] overflow-hidden">
+            {/* Desktop Left Sidebar */}
+            <aside className="hidden md:block border-r border-white/10 bg-white/[0.02] p-4 flex-shrink-0">
               <div className="relative mb-4">
                 <Search className="absolute left-3 top-3 h-4 w-4 text-white/35" />
                 <Input
@@ -247,13 +262,13 @@ const SettingsDialog = ({ open, onOpenChange }) => {
                 />
               </div>
               <ScrollArea className="h-[calc(95vh-180px)] pr-3">
-                <div className="space-y-1">
+                <div className="flex flex-col space-y-1">
                   {filteredSections.map((section) => (
                     <button
                       key={section.id}
                       type="button"
                       onClick={() => setActiveSection(section.id)}
-                      className={`w-full rounded-xl px-3 py-2 text-left text-sm transition ${activeSection === section.id ? 'bg-sky-400/15 text-sky-200' : 'text-white/65 hover:bg-white/5 hover:text-white'}`}
+                      className={`whitespace-nowrap rounded-xl px-4 py-2 text-left text-sm transition ${activeSection === section.id ? 'bg-sky-400/15 text-sky-200 font-medium' : 'text-white/65 hover:bg-white/5 hover:text-white'}`}
                     >
                       {section.label}
                     </button>
@@ -262,14 +277,14 @@ const SettingsDialog = ({ open, onOpenChange }) => {
               </ScrollArea>
             </aside>
 
-            <div className="h-full min-h-0 overflow-y-auto px-8 py-6">
+            <div className="h-full min-h-0 overflow-y-auto px-4 md:px-8 py-4 md:py-6">
               {loading || !settings ? (
                 <div className="flex h-full items-center justify-center text-white/55">Loading settings...</div>
               ) : (
                 <div className="space-y-8 pb-24">
                   {activeSection === 'overview' && (
                     <>
-                      <div className="grid grid-cols-3 gap-4">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                           <div className="text-xs uppercase tracking-[0.2em] text-white/35">LLM</div>
                           <div className="mt-3 text-xl font-semibold">{currentProvider}</div>
@@ -486,7 +501,7 @@ const SettingsDialog = ({ open, onOpenChange }) => {
               )}
             </div>
 
-            <aside className="h-full overflow-y-auto border-l border-white/10 bg-white/[0.03] px-6 py-6">
+            <aside className="h-full overflow-y-auto border-t md:border-l border-white/10 bg-white/[0.03] px-6 py-6 hidden md:block">
               <div className="space-y-6">
                 <div>
                   <div className="flex items-center gap-2 text-sm font-semibold text-white">

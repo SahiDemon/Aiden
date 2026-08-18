@@ -47,6 +47,7 @@ def set_voice_activation_callback(callback: Callable):
 class MessageRequest(BaseModel):
     message: str
     input_type: str = "text"
+    source: str = "local"
 
 class CommandRequest(BaseModel):
     command_type: str
@@ -313,7 +314,7 @@ async def send_message(request: MessageRequest):
     try:
         from src.core.assistant import get_assistant
         assistant = await get_assistant()
-        response_text = await assistant.handle_text_message(request.message)
+        response_text = await assistant.handle_text_message(request.message, source=request.source)
         return {
             "success": True,
             "message": "Message processed",
@@ -925,13 +926,21 @@ async def start_api_server():
     import uvicorn
     
     settings = get_settings()
+    
+    # Check for SSL certificates for HTTPS support
+    import os
+    ssl_keyfile = "key.pem" if os.path.exists("key.pem") else None
+    ssl_certfile = "cert.pem" if os.path.exists("cert.pem") else None
+    
     _server_config = uvicorn.Config(
         app,
         host=settings.api.host,
         port=settings.api.port,
         log_level="info",
         access_log=False,
-        loop="asyncio"
+        loop="asyncio",
+        ssl_keyfile=ssl_keyfile,
+        ssl_certfile=ssl_certfile
     )
     
     _server = uvicorn.Server(_server_config)
