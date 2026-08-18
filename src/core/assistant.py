@@ -154,6 +154,12 @@ class AidenAssistant:
         except Exception as exc:
             logger.debug("Could not play wake acknowledgement: %s", exc)
 
+    async def _play_activation_ready_cue(self, from_hotkey: bool) -> None:
+        """Play acknowledgement (for wake word) followed by the speak-now cue."""
+        if not from_hotkey:
+            await self._play_wake_acknowledgement()
+        await self.tts.play_sound_now("activation")
+
     async def _maybe_apply_vague_close_heuristic(
         self,
         user_text: str,
@@ -668,10 +674,7 @@ class AidenAssistant:
 
         self.is_processing = True
 
-        # Broadcast listening status IMMEDIATELY so the overlay starts
-        # appearing while media ducking and sounds play concurrently.
         from src.utils.websocket_broadcast import broadcast_voice_status
-        await broadcast_voice_status("listening", speaking=False, active=True)
 
         duck_state = None
         duck_state_consumed = False
@@ -684,20 +687,15 @@ class AidenAssistant:
         except Exception as exc:
             logger.debug(f"STT media ducking unavailable before activation cue: {exc}")
 
-        # For voice wake, cleanly play the vocal acknowledgement ("mmm?").
-        # For hotkey, play the standard activation beep.
-        # This prevents overlapping audio cues from echoing into STT.
-        if not from_hotkey:
-            await self._play_wake_acknowledgement()
-        else:
-            await self.tts.play_sound_now("activation")
+        # The acknowledgement confirms the wake word, then the activation sound
+        # is the precise "speak now" cue. STT publishes the listening state only
+        # after both sounds finish and their buffered speaker audio is discarded.
+        await self._play_activation_ready_cue(from_hotkey)
         
         import time as _time
         _t0 = _time.monotonic()
 
         try:
-            # (listening status already broadcast above)
-            
             # ── Step 1: STT ──────────────────────────────────────────────
             _t_stt_start = _time.monotonic()
             self._is_listening = True

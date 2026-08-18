@@ -321,6 +321,17 @@ async def initialize_services():
         # 2. Initialize assistant
         logger.info("Initializing assistant...")
         assistant = await get_assistant()
+
+        # Build the latency-sensitive voice path before enabling wake-word
+        # detection. This removes first-activation initialization work and
+        # ensures a wake acknowledgement is only possible after STT startup.
+        logger.info("Pre-warming voice activation pipeline...")
+        from src.media.media_router import get_media_router
+        get_media_router()
+        if assistant.stt.microphone_ready:
+            logger.info("✅ Voice activation pipeline ready (microphone pre-warmed)")
+        else:
+            logger.warning("⚠️ Voice activation pipeline started without a ready microphone")
         
         # 3. Start API server
         logger.info(f"Starting API server on {settings.api.host}:{settings.api.port}...")

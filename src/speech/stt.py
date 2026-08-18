@@ -22,7 +22,7 @@ import io
 import time
 import struct
 import threading
-from typing import Optional, Tuple, List
+from typing import Callable, Optional, Tuple, List
 
 import speech_recognition as sr
 try:
@@ -241,6 +241,11 @@ class STTEngine:
             raise RuntimeError("Could not initialize microphone")
         return self._persistent_mic
 
+    @property
+    def microphone_ready(self) -> bool:
+        """Whether the persistent microphone stream opened successfully."""
+        return self._persistent_mic is not None
+
     def _get_selected_device_name(self) -> Optional[str]:
         """Resolve the configured microphone name for logging/debugging."""
         try:
@@ -274,6 +279,7 @@ class STTEngine:
         play_activation_sound: bool = True,
         duck_state: Optional[dict] = None,
         media_already_ducked: bool = False,
+        preserve_recent_audio: bool = False,
     ) -> Tuple[bool, Optional[str], Optional[str]]:
         """
         Listen and transcribe speech to text.
@@ -298,19 +304,44 @@ class STTEngine:
                 tts = get_tts_engine()
                 await tts.play_sound_now("activation")
 
-            # Broadcast listening status
-            try:
-                from src.utils.websocket_broadcast import broadcast_voice_status
-                await broadcast_voice_status("listening", speaking=False)
-            except Exception:
-                pass
-
             # Reset Silero's per-stream state before each listen session
             if self._silero:
                 self._silero.reset()
 
-            # Run blocking listen operation in thread pool
-            success, audio, error = await asyncio.to_thread(self._listen_sync)
+            # Start capture in the thread pool, but do not claim to be listening
+            # until that thread has confirmed the microphone is open and any
+            # acknowledgement/beep audio has been flushed from its buffer.
+            loop = asyncio.get_running_loop()
+            listening_ready = asyncio.Event()
+
+            def signal_listening_ready() -> None:
+                loop.call_soon_threadsafe(listening_ready.set)
+
+            listen_task = asyncio.create_task(
+                asyncio.to_thread(
+                    self._listen_sync,
+                    signal_listening_ready,
+                    preserve_recent_audio,
+                )
+            )
+            ready_task = asyncio.create_task(listening_ready.wait())
+
+            try:
+                done, _ = await asyncio.wait(
+                    {listen_task, ready_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if ready_task in done:
+                    try:
+                        from src.utils.websocket_broadcast import broadcast_voice_status
+                        await broadcast_voice_status("listening", speaking=False, active=True)
+                    except Exception:
+                        pass
+
+                success, audio, error = await listen_task
+            finally:
+                if not ready_task.done():
+                    ready_task.cancel()
 
             if self._stop_requested.is_set():
                 logger.info("STT: Stop requested after audio capture — treating listen as cancelled")
@@ -554,25 +585,37 @@ class STTEngine:
             logger.warning(f"STT AGC: Failed to normalize audio gain: {e}")
             return audio_bytes
 
-    def _listen_sync(self) -> Tuple[bool, Optional[sr.AudioData], Optional[str]]:
+    def _listen_sync(
+        self,
+        on_listening_ready: Optional[Callable[[], None]] = None,
+        preserve_recent_audio: bool = False,
+    ) -> Tuple[bool, Optional[sr.AudioData], Optional[str]]:
         """Synchronous listen operation (runs in thread pool)"""
         try:
             source = self._ensure_mic()
             logger.debug(f"STT: Persistent microphone ready ({self.sample_rate}Hz)")
 
             try:
-                # Carefully flush stale PyAudio buffer (>500ms old) so we don't catch ancient noise,
-                # while preserving the most recent ~400ms of audio in case user started speaking during the cue.
+                # Flush buffered acknowledgement/beep audio before advertising
+                # readiness. Optional pre-roll is retained only for callers that
+                # explicitly want to capture speech started before the ready cue.
                 try:
                     if hasattr(source.stream, 'read'):
                         avail = source.stream.get_read_available()
-                        max_keep_samples = int(self.sample_rate * 0.4)  # 400ms = 6400 samples @ 16kHz
+                        max_keep_samples = int(self.sample_rate * 0.4) if preserve_recent_audio else 0
                         if avail > max_keep_samples:
                             to_discard = avail - max_keep_samples
                             source.stream.read(to_discard, exception_on_overflow=False)
-                            logger.debug(f"STT: Discarded {to_discard} stale stream samples, preserved {avail - to_discard} recent samples")
+                            logger.debug(
+                                "STT: Discarded %d buffered samples, preserved %d recent samples",
+                                to_discard,
+                                avail - to_discard,
+                            )
                 except Exception as e:
                     logger.debug(f"STT: Could not flush stream: {e}")
+
+                if on_listening_ready:
+                    on_listening_ready()
 
                 audio = self._listen_with_vad(source)
                 logger.debug("STT: Audio captured via VAD")

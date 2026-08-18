@@ -21,6 +21,8 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+_SPOTIFY_DUCK_DEADLINE_SECONDS = 0.6
+
 
 class MediaRouter:
     """Routes media commands to Spotify or browser controllers."""
@@ -52,35 +54,72 @@ class MediaRouter:
         return await self.browser_controller.control(action_alias(action), None)
 
     async def duck_for_listening(self) -> dict:
-        """Best-effort pause of active media while STT is listening."""
+        """Best-effort pause of active media without delaying microphone readiness."""
         state = {
             "spotify_was_playing": False,
             "spotify_device_id": None,
             "muted_app_sessions": {"muted_sessions": []},
         }
 
-        try:
-            if self.spotify_client.is_enabled():
-                if not self.spotify_client.has_fresh_token():
-                    self.spotify_client.refresh_token_in_background()
-                    logger.debug("Spotify token refresh started in background; skipping Spotify duck for this listen.")
-                else:
-                    playback = await self.spotify_client.get_current_playback()
-                    if playback and playback.get("is_playing"):
-                        device = playback.get("device") or {}
-                        state["spotify_was_playing"] = True
-                        state["spotify_device_id"] = device.get("id")
-                        await self.spotify_client.pause(device_id=device.get("id"))
-                        logger.info("Paused Spotify for STT listening window.")
-        except Exception as exc:
-            logger.debug(f"Spotify ducking skipped: {exc}")
+        # Local session enumeration and the Spotify network request can run in
+        # parallel. Spotify gets a strict deadline so a slow API never leaves
+        # the wake acknowledgement waiting for several seconds.
+        loop = asyncio.get_running_loop()
+        readiness_started = loop.time()
+        spotify_duck_task = asyncio.create_task(self._duck_spotify_for_listening())
 
+        # Let the Spotify coroutine initiate its request, then perform local
+        # COM audio-session work on the owning Windows event-loop thread.
+        await asyncio.sleep(0)
         try:
             state["muted_app_sessions"] = get_audio_session_ducker().duck_for_listening()
         except Exception as exc:
             logger.debug(f"App-session ducking skipped: {exc}")
 
+        try:
+            remaining = _SPOTIFY_DUCK_DEADLINE_SECONDS - (loop.time() - readiness_started)
+            if remaining <= 0:
+                spotify_duck_task.cancel()
+                try:
+                    await spotify_duck_task
+                except asyncio.CancelledError:
+                    pass
+                raise TimeoutError
+            spotify_was_playing, spotify_device_id = await asyncio.wait_for(
+                spotify_duck_task,
+                timeout=remaining,
+            )
+            state["spotify_was_playing"] = spotify_was_playing
+            state["spotify_device_id"] = spotify_device_id
+        except TimeoutError:
+            logger.debug(
+                "Spotify ducking exceeded %.1fs readiness deadline; continuing without it.",
+                _SPOTIFY_DUCK_DEADLINE_SECONDS,
+            )
+        except Exception as exc:
+            logger.debug(f"Spotify ducking skipped: {exc}")
+
         return state
+
+    async def _duck_spotify_for_listening(self) -> Tuple[bool, Optional[str]]:
+        """Pause active Spotify playback and return state needed for restoration."""
+        if not self.spotify_client.is_enabled():
+            return False, None
+
+        if not self.spotify_client.has_fresh_token():
+            self.spotify_client.refresh_token_in_background()
+            logger.debug("Spotify token refresh started in background; skipping Spotify duck for this listen.")
+            return False, None
+
+        playback = await self.spotify_client.get_current_playback()
+        if not playback or not playback.get("is_playing"):
+            return False, None
+
+        device = playback.get("device") or {}
+        device_id = device.get("id")
+        await self.spotify_client.pause(device_id=device_id)
+        logger.info("Paused Spotify for STT listening window.")
+        return True, device_id
 
     async def restore_after_listening(self, state: Optional[dict]) -> None:
         """Restore media playback after STT completes."""
