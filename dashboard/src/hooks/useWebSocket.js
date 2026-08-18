@@ -176,7 +176,7 @@ export const useWebSocket = (url = getWsUrl()) => {
             
             case 'ping':
               // Server is checking if we are alive
-              sendMessage('pong')
+              ws.send(JSON.stringify({ type: 'pong' }))
               break
               
             default:
@@ -246,6 +246,5 @@ export const useWebSocket = (url = getWsUrl()) => {
 }
 
 export default useWebSocket
-
 
 

@@ -67,9 +67,18 @@ coverage/
 # Temporary files
 *.tmp
 *.temp
+*.pid
 .cache/
 .build-tmp/
 .electron-builder-cache/
+
+# Local TLS/tunnel tooling and generated credentials
+.lego/
+ssl_backup/
+cloudflared.exe
+lego.exe
+cert.pem
+key.pem
 
 # Model / cache files (large, auto-generated)
 vosk_models/

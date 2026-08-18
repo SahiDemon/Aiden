@@ -7,8 +7,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 from sqlalchemy import Column, String, Integer, Boolean, DateTime, Text, ForeignKey, JSON
 from sqlalchemy.dialects.postgresql import UUID, JSONB
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
 

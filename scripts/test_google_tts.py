@@ -16,8 +16,8 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-async def test_google_tts():
-    """Test Google TTS setup and generate sample audio"""
+async def run_google_tts_diagnostic():
+    """Verify Google TTS setup and generate sample audio interactively."""
     print("\n" + "="*60)
     print("Google Chirp 3 HD TTS Test")
     print("="*60 + "\n")
@@ -109,7 +109,7 @@ async def test_google_tts():
         try:
             os.remove(output_file)
             print(f"🧹 Cleaned up test file: {output_file}")
-        except:
+        except OSError:
             pass
         
         print("\n" + "="*60)
@@ -131,4 +131,4 @@ async def test_google_tts():
 
 
 if __name__ == "__main__":
-    asyncio.run(test_google_tts())
+    asyncio.run(run_google_tts_diagnostic())

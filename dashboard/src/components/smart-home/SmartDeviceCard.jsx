@@ -3,13 +3,6 @@ import { Fan, RefreshCw, Wifi, WifiOff, Power, RotateCw, Clock, Gauge, Zap } fro
 import { toast } from 'react-hot-toast'
 import { Button } from '../ui/button'
 import { Badge } from '../ui/badge'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '../ui/select'
 import api from '../../lib/api'
 
 const SmartDeviceCard = ({ connected, deviceUpdates, compact = false }) => {
@@ -60,7 +53,10 @@ const SmartDeviceCard = ({ connected, deviceUpdates, compact = false }) => {
 
   const isDeviceConnected = deviceStatus?.connected
   const device = deviceStatus?.device
-  const summary = device?.summary || deviceStatus?.status || {}
+  const summary = useMemo(
+    () => device?.summary || deviceStatus?.status || {},
+    [device?.summary, deviceStatus?.status]
+  )
   const controls = device?.controls || []
 
   const quickFacts = useMemo(() => {
@@ -323,6 +319,13 @@ const SmartDeviceCard = ({ connected, deviceUpdates, compact = false }) => {
       </div>
 
       <div className="space-y-4 pt-2">
+        <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+          <p className="text-sm font-medium text-white/80">Current Runtime State</p>
+          <p className="mt-1 text-xs text-white/60">
+            {quickFacts.length > 0 ? quickFacts.join(' • ') : 'No live state available'}
+          </p>
+        </div>
+
         {/* Interactive Controls List */}
         <div className="space-y-3">
           {activeControls.map(renderControl)}

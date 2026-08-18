@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, MessageSquare, Settings, Activity } from 'lucide-react';
+import { MessageSquare, Settings, Activity } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 const BottomNav = ({ activeTab, setActiveTab, onShowSettings }) => {

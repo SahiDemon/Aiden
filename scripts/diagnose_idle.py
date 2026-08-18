@@ -1,16 +1,12 @@
 import asyncio
-import sys
-import os
 import platform
-import time
+import sys
+from pathlib import Path
+
 import pygame
 
 # Ensure src is in python path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-
-from src.utils.media_idle_monitor import MediaIdleMonitor, PYCAW_AVAILABLE
-if PYCAW_AVAILABLE:
-    from pycaw.pycaw import AudioUtilities
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 async def run_diagnostics():
     print("=" * 60)

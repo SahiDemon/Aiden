@@ -85,7 +85,7 @@ const ChatInterface = ({ messages, voiceActivity, connected }) => {
       setDisplayText(currentText)
     } else if (isListening || isClientListening) {
       // When listening, always clear text for a clean slate, UNLESS we have interim transcript
-      if (!isClientListening || !displayText) {
+      if (!isClientListening) {
         console.log('[ChatInterface] Listening: Clearing display.')
         setDisplayText('')
       }
