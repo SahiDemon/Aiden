@@ -353,11 +353,32 @@ async def initialize_services():
 
         # Auto-start the configured Cloudflare Tunnel when the local binary is available.
         try:
-            import os, subprocess
+            import shutil
+            import subprocess
 
             cf_token = settings.app.cloudflare_tunnel_token
-            cloudflared_path = Path(__file__).resolve().parent.parent / "tools" / "bin" / "cloudflared.exe"
-            if cloudflared_path.exists() and cf_token:
+            app_root = Path(__file__).resolve().parent.parent
+            bundled_cloudflared = app_root / "tools" / "bin" / "cloudflared.exe"
+            installed_cloudflared = shutil.which("cloudflared")
+            cloudflared_path = (
+                bundled_cloudflared
+                if bundled_cloudflared.exists()
+                else Path(installed_cloudflared)
+                if installed_cloudflared
+                else None
+            )
+
+            if not cf_token:
+                logger.warning(
+                    "Cloudflare Tunnel was not started: CLOUDFLARE_TUNNEL_TOKEN is missing. "
+                    "Add a current tunnel token to .env and restart Aiden."
+                )
+            elif cloudflared_path is None:
+                logger.warning(
+                    "Cloudflare Tunnel was not started: cloudflared.exe was not found in tools/bin "
+                    "or on PATH."
+                )
+            else:
                 logger.info("Auto-starting the configured Cloudflare Tunnel")
                 creation_flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
                 subprocess.Popen([str(cloudflared_path), "tunnel", "run", "--token", cf_token], creationflags=creation_flags)
