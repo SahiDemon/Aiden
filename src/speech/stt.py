@@ -232,6 +232,8 @@ class STTEngine:
                     resolved_index = resolve_input_device_index(
                         self.input_device_name,
                         audio,
+                        sample_rate=self.sample_rate,
+                        input_format=pyaudio.paInt16,
                     )
                 finally:
                     audio.terminate()

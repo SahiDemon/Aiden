@@ -20,20 +20,66 @@ CHANNELS = 1
 CHUNK = 1_280
 
 
-def find_device(audio: pyaudio.PyAudio, preferred_name: str) -> tuple[int | None, str]:
+def _name_matches(preferred_name: str, candidate_name: str) -> bool:
     needle = preferred_name.casefold().strip()
-    matches: list[tuple[int, str]] = []
+    folded = candidate_name.casefold()
+    if not needle:
+        return True
+    if needle in folded:
+        return True
+    tokens = [token for token in needle.replace("-", " ").split() if len(token) >= 3]
+    matching_tokens = sum(token in folded for token in tokens)
+    return bool(tokens and matching_tokens >= max(1, len(tokens) - 1))
+
+
+def _can_open_device(audio: pyaudio.PyAudio, device_index: int) -> bool:
+    """Probe the exact PCM stream used for recording before prompting."""
+    stream = None
+    try:
+        stream = audio.open(
+            format=pyaudio.paInt16,
+            channels=CHANNELS,
+            rate=SAMPLE_RATE,
+            input=True,
+            input_device_index=device_index,
+            frames_per_buffer=CHUNK,
+            start=False,
+        )
+        return True
+    except OSError:
+        return False
+    finally:
+        if stream is not None:
+            stream.close()
+
+
+def find_device(audio: pyaudio.PyAudio, preferred_name: str) -> tuple[int | None, str]:
+    candidates: list[tuple[int, str]] = []
+    try:
+        default = audio.get_default_input_device_info()
+        default_index = int(default["index"])
+        default_name = str(default["name"])
+        if _name_matches(preferred_name, default_name):
+            candidates.append((default_index, default_name))
+    except Exception:
+        pass
+
     for index in range(audio.get_device_count()):
         info = audio.get_device_info_by_index(index)
         if int(info.get("maxInputChannels", 0)) <= 0:
             continue
         name = str(info.get("name", ""))
-        if needle and needle in name.casefold():
-            matches.append((index, name))
-    if matches:
-        return min(matches, key=lambda item: len(item[1]))
-    default = audio.get_default_input_device_info()
-    return int(default["index"]), str(default["name"])
+        candidate = (index, name)
+        if _name_matches(preferred_name, name) and candidate not in candidates:
+            candidates.append(candidate)
+
+    for index, name in candidates:
+        if _can_open_device(audio, index):
+            return index, name
+    raise RuntimeError(
+        f"No 16 kHz mono input endpoint could be opened for '{preferred_name}'. "
+        "Close Aiden and other microphone applications, then retry."
+    )
 
 
 def record_clip(

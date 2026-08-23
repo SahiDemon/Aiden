@@ -62,6 +62,43 @@ def test_device_resolver_accepts_truncated_windows_default_name():
     assert resolve_input_device_index("USB PnP Audio Device", audio) == 1
 
 
+def test_device_resolver_skips_incompatible_windows_endpoint():
+    devices = {
+        1: {
+            "index": 1,
+            "name": "Microphone (3- USB PnP Audio De",
+            "maxInputChannels": 1,
+        },
+        50: {
+            "index": 50,
+            "name": "Microphone (USB PnP Audio Device)",
+            "maxInputChannels": 1,
+        },
+    }
+
+    def supports(_rate, *, input_device, **_kwargs):
+        if input_device == 50:
+            raise ValueError("Invalid sample rate")
+        return True
+
+    audio = SimpleNamespace(
+        get_default_input_device_info=lambda: devices[50],
+        get_device_count=lambda: 51,
+        get_device_info_by_index=lambda index: devices.get(
+            index,
+            {"name": "output", "maxInputChannels": 0},
+        ),
+        is_format_supported=supports,
+    )
+
+    assert resolve_input_device_index(
+        "USB PnP Audio Device",
+        audio,
+        sample_rate=16_000,
+        input_format=8,
+    ) == 1
+
+
 def test_score_smoothing_accepts_two_normal_hits_or_one_strong_hit():
     detector = OpenWakeWordDetector.__new__(OpenWakeWordDetector)
     detector.threshold = 0.50

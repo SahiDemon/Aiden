@@ -371,6 +371,8 @@ class OpenWakeWordDetector:
             self._device_index = resolve_input_device_index(
                 self.input_device_name,
                 self._pa,
+                sample_rate=_SAMPLE_RATE,
+                input_format=_FORMAT,
             )
             if self.input_device_name and self._device_index is None:
                 logger.warning(
