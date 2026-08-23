@@ -102,6 +102,15 @@ class TTSEngine:
                 logger.debug(f"TTS: Could not pre-load sound {name}: {e}")
         logger.info(f"TTS: Pre-loaded {len(self._preloaded_sounds)} sound effects into memory")
 
+    def is_sound_ready(self, sound_name: str) -> bool:
+        """Return whether a cue is preloaded or available for disk fallback."""
+        if sound_name.lower() in self._preloaded_sounds:
+            return True
+        return any(
+            resource_path("sounds", f"{sound_name}{suffix}").exists()
+            for suffix in (".mp3", ".MP3")
+        )
+
     def _pause_wake_word_detection(self) -> bool:
         """Pause wake-word detection while TTS audio is playing."""
         try:
@@ -535,10 +544,10 @@ class TTSEngine:
         except Exception as e:
             logger.error(f"TTS: Error queuing sound: {e}")
 
-    async def play_sound_now(self, sound_name: str):
+    async def play_sound_now(self, sound_name: str) -> bool:
         """Play a sound effect immediately and wait for it to finish."""
         if not _ensure_mixer():
-            return
+            return False
         try:
             # Small guard: give any concurrent stop() a moment to settle
             await asyncio.sleep(0.02)
@@ -553,7 +562,8 @@ class TTSEngine:
                 if channel:
                     while channel.get_busy():
                         await asyncio.sleep(0.05)
-                return
+                    return True
+                return False
 
             # Fallback to disk loading for non-preloaded sounds
             sound_path = resource_path("sounds", f"{sound_name}.mp3")
@@ -562,16 +572,18 @@ class TTSEngine:
 
             if sound_path.exists():
                 logger.debug(f"TTS: Playing sound now (from disk): {sound_name}")
-                await self._play_sound_file(str(sound_path))
+                return await self._play_sound_file(str(sound_path))
             else:
                 logger.warning(f"TTS: Sound not found: {sound_name}")
+                return False
         except Exception as e:
             logger.error(f"TTS: Error playing sound immediately: {e}")
+            return False
 
-    async def _play_sound_file(self, sound_path: str):
+    async def _play_sound_file(self, sound_path: str) -> bool:
         """Internal method to play sound file and wait"""
         if not _ensure_mixer():
-            return
+            return False
             
         try:
             stem = os.path.splitext(os.path.basename(sound_path))[0].lower()
@@ -588,8 +600,11 @@ class TTSEngine:
             if channel:
                 while channel.get_busy():
                     await asyncio.sleep(0.05)
+                return True
+            return False
         except Exception as e:
             logger.error(f"Error playing sound file: {e}")
+            return False
             
     def stop(self):
         """Stop current playback and clear the queue (Barge-in / Interruption)"""
@@ -654,7 +669,5 @@ def get_tts_engine() -> TTSEngine:
 def reset_tts_engine() -> None:
     global _tts_engine
     _tts_engine = None
-
-
 
 

@@ -248,6 +248,7 @@ class SpeechConfig(BaseSettings):
     # Keep a short trailing non-speaking buffer without cutting natural pauses.
     stt_non_speaking_duration: float = Field(default=0.7)
     stt_device_index: Optional[int] = Field(default=None)
+    input_device_name: str = Field(default="USB PnP Audio Device")
     stt_energy_threshold: int = Field(default=600)
     pending_clarification_grace_seconds: int = Field(default=60)
     vosk_model_path: str = Field(default="vosk_models/vosk-model-small-en-us-0.15")
@@ -265,6 +266,15 @@ class SpeechConfig(BaseSettings):
     oww_model_path: str = Field(default="")          # path to custom .tflite/.onnx model; leave blank for pre-trained
     oww_threshold: float = Field(default=0.5)         # activation score threshold (0-1)
     oww_vad_threshold: float = Field(default=0.3)     # Silero VAD gate; 0=disabled, higher=stricter
+    oww_verifier_path: str = Field(default="")
+    oww_verifier_gate: float = Field(default=0.25)
+    oww_strong_threshold: float = Field(default=0.75)
+    oww_smoothing_window: int = Field(default=3)
+    oww_smoothing_hits: int = Field(default=2)
+    oww_continuation_window_ms: int = Field(default=300)
+    oww_profile_path: str = Field(default="")
+    oww_shadow_mode: bool = Field(default=False)
+    oww_capture_diagnostics: bool = Field(default=False)
     # Silero VAD — more accurate than WebRTC VAD (requires torch)
     stt_use_silero_vad: bool = Field(default=True)
     stt_silero_threshold: float = Field(default=0.5)

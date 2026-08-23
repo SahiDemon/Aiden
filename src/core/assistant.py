@@ -16,6 +16,7 @@ from src.core.context_manager import get_context_manager
 from src.execution.command_executor import get_command_executor
 from src.speech.stt import get_stt_engine
 from src.speech.tts import get_tts_engine
+from src.speech.wake_detection import WakeDetection
 from src.utils.config import get_settings
 from src.utils.logger import get_logger
 
@@ -154,11 +155,55 @@ class AidenAssistant:
         except Exception as exc:
             logger.debug("Could not play wake acknowledgement: %s", exc)
 
+    async def _play_sound_reliably(self, sound_name: str) -> bool:
+        """Play a cue with one retry and an audible Windows fallback."""
+        for attempt in range(2):
+            try:
+                result = await self.tts.play_sound_now(sound_name)
+                # Older/mocked engines returned None after successful playback.
+                if result is not False:
+                    return True
+            except Exception as exc:
+                logger.debug(
+                    "Wake cue '%s' attempt %d failed: %s",
+                    sound_name,
+                    attempt + 1,
+                    exc,
+                )
+            if attempt == 0:
+                await asyncio.sleep(0.04)
+
+        if sound_name == "activation":
+            try:
+                import winsound
+
+                await asyncio.to_thread(winsound.MessageBeep, winsound.MB_OK)
+                logger.warning("Activation sound failed; used Windows fallback cue")
+                return True
+            except Exception as exc:
+                logger.warning("All activation cue paths failed: %s", exc)
+        return False
+
     async def _play_activation_ready_cue(self, from_hotkey: bool) -> None:
         """Play acknowledgement (for wake word) followed by the speak-now cue."""
         if not from_hotkey:
             await self._play_wake_acknowledgement()
-        await self.tts.play_sound_now("activation")
+        await self._play_sound_reliably("activation")
+
+    async def _play_continuous_command_confirmation(self) -> None:
+        """Confirm a command that was already captured with the wake phrase."""
+        await self._play_sound_reliably("activation")
+
+    @staticmethod
+    def _should_use_buffered_command(
+        from_hotkey: bool,
+        wake_detection: Optional[WakeDetection],
+    ) -> bool:
+        return bool(
+            not from_hotkey
+            and wake_detection is not None
+            and wake_detection.has_command_audio
+        )
 
     async def _maybe_apply_vague_close_heuristic(
         self,
@@ -646,7 +691,11 @@ class AidenAssistant:
 
         return f"I completed part of that, but {' '.join(failure_messages[:2])}"
     
-    async def handle_voice_activation(self, from_hotkey: bool = False):
+    async def handle_voice_activation(
+        self,
+        from_hotkey: bool = False,
+        wake_detection: Optional[WakeDetection] = None,
+    ):
         """
         Handle voice activation (wake word or hotkey)
         Complete flow: Listen -> Understand -> Execute -> Respond
@@ -687,10 +736,18 @@ class AidenAssistant:
         except Exception as exc:
             logger.debug(f"STT media ducking unavailable before activation cue: {exc}")
 
-        # The acknowledgement confirms the wake word, then the activation sound
-        # is the precise "speak now" cue. STT publishes the listening state only
-        # after both sounds finish and their buffered speaker audio is discarded.
-        await self._play_activation_ready_cue(from_hotkey)
+        captured_command = self._should_use_buffered_command(
+            from_hotkey,
+            wake_detection,
+        )
+        if captured_command:
+            # Audio is already complete, so this is a confirmation rather than
+            # a speak-now cue. Do not publish a misleading listening state.
+            await self._play_continuous_command_confirmation()
+        else:
+            # The acknowledgement confirms the wake word, then activation.mp3
+            # is the precise speak-now cue.
+            await self._play_activation_ready_cue(from_hotkey)
         
         import time as _time
         _t0 = _time.monotonic()
@@ -698,14 +755,32 @@ class AidenAssistant:
         try:
             # ── Step 1: STT ──────────────────────────────────────────────
             _t_stt_start = _time.monotonic()
-            self._is_listening = True
             duck_state_consumed = True
-            success, user_text, error = await self.stt.transcribe(
-                play_activation_sound=False,
-                duck_state=duck_state,
-                media_already_ducked=True,
-            )
-            self._is_listening = False
+            if captured_command and wake_detection is not None:
+                success, user_text, error = await self.stt.transcribe_captured_pcm(
+                    wake_detection.command_audio or b"",
+                )
+                if not success:
+                    logger.info(
+                        "Buffered wake command unavailable (%s); falling back to normal listening",
+                        error,
+                    )
+                    await self._play_activation_ready_cue(from_hotkey=False)
+                    self._is_listening = True
+                    success, user_text, error = await self.stt.transcribe(
+                        play_activation_sound=False,
+                        duck_state=duck_state,
+                        media_already_ducked=True,
+                    )
+                    self._is_listening = False
+            else:
+                self._is_listening = True
+                success, user_text, error = await self.stt.transcribe(
+                    play_activation_sound=False,
+                    duck_state=duck_state,
+                    media_already_ducked=True,
+                )
+                self._is_listening = False
             logger.info("[TIMING] STT: %.0f ms", (_time.monotonic() - _t_stt_start) * 1000)
             
             # Start conversation in background while user was speaking

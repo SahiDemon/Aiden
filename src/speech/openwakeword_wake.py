@@ -15,15 +15,20 @@ Architecture:
                                          └─ YES → callback → debounce
 """
 
-import logging
+import collections
+import json
+import pickle
 import threading
 import time
+import wave
 from pathlib import Path
 from typing import Callable, Optional
 
 import numpy as np
 import pyaudio
 
+from src.speech.audio_devices import resolve_input_device_index
+from src.speech.wake_detection import WakeDetection
 from src.utils.config import get_settings
 from src.utils.logger import get_logger
 from src.utils.paths import resource_path
@@ -52,17 +57,21 @@ class OpenWakeWordDetector:
       oww_threshold           – activation score threshold  (default 0.5)
       oww_vad_threshold       – Silero VAD gate; 0 = disabled, 0.5 = balanced
       porcupine_debounce_seconds – reused for debounce timing
-      porcupine_min_energy    – reused as a lightweight RMS energy pre-gate
+      input_device_name       – stable microphone name substring
     """
 
-    def __init__(self, callback: Callable[[], None]):
+    def __init__(self, callback: Callable[[WakeDetection], None]):
         self.callback = callback
         cfg = get_settings().speech
+
+        profile = self._load_profile(getattr(cfg, "oww_profile_path", ""))
+        self._legacy_threshold = float(getattr(cfg, "oww_threshold", 0.5))
+        self._legacy_vad_threshold = float(getattr(cfg, "oww_vad_threshold", 0.3))
 
         # Resolve the model path via resource_path() so it works correctly
         # both when running from source AND from a PyInstaller EXE bundle
         # (where the CWD may differ from the EXE's directory).
-        raw_model_path: str = getattr(cfg, "oww_model_path", "")
+        raw_model_path: str = str(profile.get("model_path") or getattr(cfg, "oww_model_path", ""))
         if raw_model_path:
             p = Path(raw_model_path)
             self.model_path = str(
@@ -70,31 +79,117 @@ class OpenWakeWordDetector:
             )
         else:
             self.model_path = ""
-        self.threshold: float = getattr(cfg, "oww_threshold", 0.5)
-        self.vad_threshold: float = getattr(cfg, "oww_vad_threshold", 0.3)
+        self.threshold = float(profile.get("threshold", self._legacy_threshold))
+        self.vad_threshold = float(profile.get("vad_threshold", self._legacy_vad_threshold))
+        self.strong_threshold = float(
+            profile.get("strong_threshold", getattr(cfg, "oww_strong_threshold", 0.75))
+        )
+        self.smoothing_window = max(
+            1,
+            int(profile.get("smoothing_window", getattr(cfg, "oww_smoothing_window", 3))),
+        )
+        self.smoothing_hits = min(
+            self.smoothing_window,
+            max(1, int(profile.get("smoothing_hits", getattr(cfg, "oww_smoothing_hits", 2)))),
+        )
+        self.verifier_gate = float(
+            profile.get("verifier_gate", getattr(cfg, "oww_verifier_gate", 0.25))
+        )
+        raw_verifier_path = str(
+            profile.get("verifier_path") or getattr(cfg, "oww_verifier_path", "")
+        )
+        self.verifier_path = self._resolve_optional_path(raw_verifier_path)
+        self.input_device_name = str(
+            profile.get("input_device_name") or getattr(cfg, "input_device_name", "")
+        )
+        self.continuation_window_ms = max(
+            _FRAME_MS,
+            int(getattr(cfg, "oww_continuation_window_ms", 300)),
+        )
+        self.shadow_mode = bool(getattr(cfg, "oww_shadow_mode", False))
+        self.capture_diagnostics = bool(getattr(cfg, "oww_capture_diagnostics", False))
+        if not self.verifier_path and not profile:
+            # Preserve legacy one-frame activation until a calibrated v2
+            # profile and personal verifier are available.
+            self.smoothing_window = 1
+            self.smoothing_hits = 1
         self.debounce: float = cfg.porcupine_debounce_seconds
-        self.min_energy: float = cfg.porcupine_min_energy
 
         self._oww_model = None
+        self._verifier_model = None
         self._pa: Optional[pyaudio.PyAudio] = None
         self._stream: Optional[pyaudio.Stream] = None
+        self._device_index: Optional[int] = None
 
         self._running = False
         self._paused = False
         self._lock = threading.Lock()
 
         self._last_trigger_time: float = 0.0
+        self._last_metric_time: float = 0.0
+        self._noise_rms: float = 30.0
+        self._score_history: dict[str, collections.deque[float]] = {}
+        self._audio_history: collections.deque[bytes] = collections.deque(
+            maxlen=max(8, int(1_600 / _FRAME_MS))
+        )
+        self._ready_event = threading.Event()
+        self._startup_error: Optional[str] = None
 
         self._thread: Optional[threading.Thread] = None
 
         logger.info(
-            "OpenWakeWord detector configured: threshold=%.2f, vad_threshold=%.2f, "
-            "debounce=%.1fs, min_energy=%.0f",
+            "OpenWakeWord detector configured: threshold=%.2f, strong=%.2f, "
+            "vad_threshold=%.2f, verifier=%s, smoothing=%d/%d, shadow=%s",
             self.threshold,
+            self.strong_threshold,
             self.vad_threshold,
-            self.debounce,
-            self.min_energy,
+            "enabled" if self.verifier_path else "disabled",
+            self.smoothing_hits,
+            self.smoothing_window,
+            self.shadow_mode,
         )
+
+    @staticmethod
+    def _resolve_optional_path(raw_path: str) -> str:
+        if not raw_path:
+            return ""
+        path = Path(raw_path)
+        return str(path if path.is_absolute() else resource_path(*path.parts))
+
+    @classmethod
+    def _load_profile(cls, raw_path: str) -> dict:
+        """Load an optional calibrated profile, leaving legacy settings intact."""
+        path_text = (raw_path or "").strip()
+        if not path_text:
+            return {}
+        path = Path(path_text)
+        path = path if path.is_absolute() else resource_path(*path.parts)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("profile root must be an object")
+            for key in (
+                "threshold",
+                "strong_threshold",
+                "vad_threshold",
+                "verifier_gate",
+            ):
+                if key in data and not 0.0 <= float(data[key]) <= 1.0:
+                    raise ValueError(f"{key} must be between 0 and 1")
+            for key in ("smoothing_window", "smoothing_hits"):
+                if key in data and int(data[key]) < 1:
+                    raise ValueError(f"{key} must be positive")
+            if (
+                "threshold" in data
+                and "strong_threshold" in data
+                and float(data["strong_threshold"]) < float(data["threshold"])
+            ):
+                raise ValueError("strong_threshold must not be below threshold")
+            logger.info("OpenWakeWord: loaded calibration profile from %s", path)
+            return data
+        except Exception as exc:
+            logger.warning("OpenWakeWord: ignoring invalid profile %s: %s", path, exc)
+            return {}
 
     # ------------------------------------------------------------------
     # Public API (mirrors PorcupineWakeWordDetector)
@@ -108,6 +203,10 @@ class OpenWakeWordDetector:
         )
         self._thread.start()
         logger.info("OpenWakeWord detector started (with watchdog)")
+
+    def wait_until_ready(self, timeout: float = 10.0) -> bool:
+        """Wait until both the model and selected microphone are ready."""
+        return self._ready_event.wait(timeout) and self._startup_error is None
 
     def stop(self) -> None:
         """Gracefully stop the detector."""
@@ -157,12 +256,84 @@ class OpenWakeWordDetector:
             ) from exc
 
         if self.model_path:
+            requested_model = Path(self.model_path)
+            fallback_model = resource_path("vosk_models", "hey_aiden.onnx")
+            if not requested_model.exists():
+                if fallback_model.exists():
+                    logger.error(
+                        "OpenWakeWord: model %s is missing; rolling back to %s",
+                        requested_model,
+                        fallback_model,
+                    )
+                    self._use_rollback_settings(fallback_model)
+                else:
+                    raise FileNotFoundError(f"Wake-word model not found: {requested_model}")
+
+            if Path(self.model_path).stem == "aiden_v2" and not self.verifier_path:
+                logger.error(
+                    "OpenWakeWord: aiden_v2 requires its personal verifier; using rollback model"
+                )
+                if fallback_model.exists():
+                    self._use_rollback_settings(fallback_model)
+                else:
+                    raise FileNotFoundError(
+                        "aiden_v2 verifier is not configured and rollback model is missing"
+                    )
+
+            model_kwargs = {
+                "wakeword_models": [self.model_path],
+                "vad_threshold": self.vad_threshold,
+                "inference_framework": "onnx",
+            }
+            if self.verifier_path:
+                verifier = Path(self.verifier_path)
+                if verifier.exists():
+                    try:
+                        # Load the same sklearn pipeline openWakeWord uses, but
+                        # apply it explicitly so diagnostics retain both the
+                        # base and personal-verifier scores.
+                        with verifier.open("rb") as verifier_file:
+                            self._verifier_model = pickle.load(verifier_file)
+                    except Exception:
+                        logger.exception(
+                            "OpenWakeWord: personal verifier failed to load; using rollback model"
+                        )
+                        if fallback_model.exists():
+                            self._use_rollback_settings(fallback_model)
+                            model_kwargs["wakeword_models"] = [self.model_path]
+                            model_kwargs["vad_threshold"] = self.vad_threshold
+                        else:
+                            raise
+                else:
+                    logger.error(
+                        "OpenWakeWord: verifier %s is missing; using rollback model",
+                        verifier,
+                    )
+                    if fallback_model.exists():
+                        self._use_rollback_settings(fallback_model)
+                        model_kwargs["wakeword_models"] = [self.model_path]
+                        model_kwargs["vad_threshold"] = self.vad_threshold
+                    else:
+                        raise FileNotFoundError(
+                            f"Personal verifier and rollback model are missing: {verifier}"
+                        )
+
             logger.info("OpenWakeWord: loading custom model from %s", self.model_path)
-            self._oww_model = Model(
-                wakeword_models=[self.model_path],
-                vad_threshold=self.vad_threshold,
-                inference_framework="onnx",
-            )
+            try:
+                self._oww_model = Model(**model_kwargs)
+            except Exception:
+                if not fallback_model.exists() or Path(self.model_path) == fallback_model:
+                    raise
+                logger.exception(
+                    "OpenWakeWord: personalized model failed; rolling back to %s",
+                    fallback_model,
+                )
+                self._use_rollback_settings(fallback_model)
+                self._oww_model = Model(
+                    wakeword_models=[self.model_path],
+                    vad_threshold=self.vad_threshold,
+                    inference_framework="onnx",
+                )
         else:
             # Fall back to pre-trained models bundled with openWakeWord
             logger.info(
@@ -181,18 +352,45 @@ class OpenWakeWordDetector:
 
         logger.info("OpenWakeWord: model loaded OK — labels: %s", list(self._oww_model.models.keys()))
 
+    def _use_rollback_settings(self, fallback_model: Path) -> None:
+        """Restore the known-good model and its backward-compatible policy."""
+        self.model_path = str(fallback_model)
+        self.verifier_path = ""
+        self._verifier_model = None
+        self.threshold = self._legacy_threshold
+        self.vad_threshold = self._legacy_vad_threshold
+        self.strong_threshold = max(self.threshold, 1.0)
+        self.smoothing_window = 1
+        self.smoothing_hits = 1
+        self._score_history.clear()
+
     def _open_stream(self) -> None:
         from src.utils.audio_lock import AUDIO_DEVICE_LOCK
         with AUDIO_DEVICE_LOCK:
             self._pa = pyaudio.PyAudio()
+            self._device_index = resolve_input_device_index(
+                self.input_device_name,
+                self._pa,
+            )
+            if self.input_device_name and self._device_index is None:
+                logger.warning(
+                    "OpenWakeWord: input '%s' not found; using system default",
+                    self.input_device_name,
+                )
             self._stream = self._pa.open(
                 rate=_SAMPLE_RATE,
                 channels=_CHANNELS,
                 format=_FORMAT,
                 input=True,
                 frames_per_buffer=_FRAME_SAMPLES,
+                input_device_index=self._device_index,
             )
-        logger.info("OpenWakeWord: audio stream opened (%d Hz, %d ms frames)", _SAMPLE_RATE, _FRAME_MS)
+        logger.info(
+            "OpenWakeWord: audio stream opened (%d Hz, %d ms frames, device=%s)",
+            _SAMPLE_RATE,
+            _FRAME_MS,
+            self._device_index if self._device_index is not None else "system default",
+        )
 
     def _cleanup(self) -> None:
         from src.utils.audio_lock import AUDIO_DEVICE_LOCK
@@ -233,6 +431,9 @@ class OpenWakeWordDetector:
                     "[WATCHDOG] OpenWakeWord detection loop crashed (restart #%d): %s",
                     n, exc, exc_info=True,
                 )
+                if not self._ready_event.is_set():
+                    self._startup_error = str(exc)
+                    self._ready_event.set()
                 self._cleanup()
 
                 if n > _MAX_RAPID_RESTARTS:
@@ -248,6 +449,8 @@ class OpenWakeWordDetector:
     def _detection_loop(self) -> None:
         self._load_model()
         self._open_stream()
+        self._startup_error = None
+        self._ready_event.set()
 
         logger.info("OpenWakeWord: listening for wake word…")
 
@@ -284,21 +487,45 @@ class OpenWakeWordDetector:
                 raise  # let watchdog restart
 
             audio = np.frombuffer(raw, dtype=np.int16)
+            self._audio_history.append(raw)
+            rms = self._rms(audio)
+            if rms < max(80.0, self._noise_rms * 3.0):
+                self._noise_rms = (self._noise_rms * 0.98) + (rms * 0.02)
 
-            # Lightweight RMS energy pre-gate (same concept as Porcupine's min_energy)
-            if self.min_energy > 0:
-                rms = float(np.sqrt(np.mean(audio.astype(np.float32) ** 2)))
-                if rms < self.min_energy:
-                    continue
-
-            # Run openWakeWord inference (includes Silero VAD internally)
+            # Run openWakeWord inference (includes Silero VAD internally),
+            # then apply the personal verifier while retaining both scores.
+            inference_started = time.perf_counter()
             predictions = self._oww_model.predict(audio)
+            vad_score = self._current_vad_score()
 
-            # Check if any model exceeded threshold
-            for model_name, score in predictions.items():
-                if score >= self.threshold:
+            # Check for one strong score or multiple normal scores in a short
+            # rolling window. The personal verifier is applied separately so
+            # the base score remains available for local diagnostics.
+            for model_name, base_score_value in predictions.items():
+                base_score = float(base_score_value)
+                score, verifier_score = self._apply_personal_verifier(
+                    model_name,
+                    base_score,
+                )
+                total_latency_ms = (time.perf_counter() - inference_started) * 1_000
+                activated, normal_hits = self._activation_decision(model_name, score)
+
+                if score >= min(self.threshold, self.verifier_gate):
+                    self._log_near_miss(
+                        model_name,
+                        base_score,
+                        verifier_score,
+                        score,
+                        vad_score,
+                        rms,
+                        total_latency_ms,
+                        normal_hits,
+                        activated,
+                    )
+
+                if activated:
                     now = time.monotonic()
-                    if now - self._last_trigger_time < self.debounce:
+                    if self._is_debounced(now):
                         logger.debug(
                             "OpenWakeWord: debounced trigger (%.2f < %.2f debounce)",
                             now - self._last_trigger_time, self.debounce,
@@ -306,12 +533,193 @@ class OpenWakeWordDetector:
                         break
 
                     self._last_trigger_time = now
-                    logger.info(
-                        "OpenWakeWord: WAKE WORD detected! model=%s score=%.3f",
-                        model_name, score,
+                    command_audio, continuation_meta = self._capture_command_continuation()
+                    detection = WakeDetection(
+                        model_name=model_name,
+                        confidence=float(score),
+                        command_audio=command_audio,
+                        metadata={
+                            "base_score": round(base_score, 4),
+                            "verifier_score": (
+                                round(verifier_score, 4)
+                                if verifier_score is not None
+                                else None
+                            ),
+                            "vad": round(vad_score, 4),
+                            "rms": round(rms, 2),
+                            "noise_rms": round(self._noise_rms, 2),
+                            "inference_latency_ms": round(total_latency_ms, 2),
+                            "normal_hits": normal_hits,
+                            **continuation_meta,
+                        },
                     )
+                    logger.info(
+                        "OpenWakeWord: WAKE WORD detected! model=%s score=%.3f command_audio=%s",
+                        model_name,
+                        score,
+                        bool(command_audio),
+                    )
+                    if self.capture_diagnostics:
+                        self._save_diagnostic_clip(detection)
+                    if self.shadow_mode:
+                        logger.info("OpenWakeWord: shadow mode suppressed activation")
+                        self._score_history.get(model_name, collections.deque()).clear()
+                        break
                     try:
-                        self.callback()
+                        self.callback(detection)
                     except Exception as cb_exc:
                         logger.error("OpenWakeWord: callback error: %s", cb_exc)
                     break  # one trigger per frame
+
+    def _is_debounced(self, now: float) -> bool:
+        return now - self._last_trigger_time < self.debounce
+
+    def _apply_personal_verifier(
+        self,
+        model_name: str,
+        base_score: float,
+    ) -> tuple[float, Optional[float]]:
+        """Return the effective score and optional voice-verifier score."""
+        if self._verifier_model is None or base_score < self.verifier_gate:
+            return base_score, None
+
+        try:
+            parent_model = self._oww_model.get_parent_model_from_label(model_name)
+            features = self._oww_model.preprocessor.get_features(
+                self._oww_model.model_inputs[parent_model]
+            )
+            verifier_score = float(self._verifier_model.predict_proba(features)[0][-1])
+            return verifier_score, verifier_score
+        except Exception as exc:
+            fallback_model = resource_path("vosk_models", "hey_aiden.onnx")
+            if fallback_model.exists():
+                self._use_rollback_settings(fallback_model)
+            raise RuntimeError("Personal wake verifier inference failed") from exc
+
+    def _current_vad_score(self) -> float:
+        """Return the VAD score window openWakeWord used for this frame."""
+        vad = getattr(self._oww_model, "vad", None)
+        prediction_buffer = getattr(vad, "prediction_buffer", None)
+        if prediction_buffer is None:
+            return 0.0
+        frames = list(prediction_buffer)[-7:-4]
+        return float(max(frames)) if frames else 0.0
+
+    def _activation_decision(self, model_name: str, score: float) -> tuple[bool, int]:
+        history = self._score_history.setdefault(
+            model_name,
+            collections.deque(maxlen=self.smoothing_window),
+        )
+        history.append(score)
+        normal_hits = sum(item >= self.threshold for item in history)
+        activated = score >= self.strong_threshold or normal_hits >= self.smoothing_hits
+        return activated, normal_hits
+
+    @staticmethod
+    def _rms(audio: np.ndarray) -> float:
+        if audio.size == 0:
+            return 0.0
+        return float(np.sqrt(np.mean(audio.astype(np.float32) ** 2)))
+
+    def _log_near_miss(
+        self,
+        model_name: str,
+        base_score: float,
+        verifier_score: Optional[float],
+        score: float,
+        vad_score: float,
+        rms: float,
+        inference_latency_ms: float,
+        hits: int,
+        activated: bool,
+    ) -> None:
+        now = time.monotonic()
+        if not activated and now - self._last_metric_time < 0.4:
+            return
+        self._last_metric_time = now
+        logger.info(
+            "[WAKE METRIC] model=%s base=%.3f verifier=%s score=%.3f "
+            "vad=%.3f rms=%.1f noise=%.1f latency_ms=%.1f hits=%d/%d activated=%s",
+            model_name,
+            base_score,
+            f"{verifier_score:.3f}" if verifier_score is not None else "n/a",
+            score,
+            vad_score,
+            rms,
+            self._noise_rms,
+            inference_latency_ms,
+            hits,
+            self.smoothing_window,
+            activated,
+        )
+
+    def _capture_command_continuation(self) -> tuple[Optional[bytes], dict]:
+        """Capture speech following the wake phrase without opening a new mic."""
+        if self._stream is None:
+            return None, {"continuation": False}
+
+        probe_frames = max(1, int(np.ceil(self.continuation_window_ms / _FRAME_MS)))
+        tail: list[bytes] = []
+        tail_rms: list[float] = []
+        gate = max(35.0, self._noise_rms * 1.65)
+
+        for _ in range(probe_frames):
+            try:
+                frame = self._stream.read(_FRAME_SAMPLES, exception_on_overflow=False)
+            except Exception:
+                return None, {"continuation": False, "capture_error": True}
+            tail.append(frame)
+            tail_rms.append(self._rms(np.frombuffer(frame, dtype=np.int16)))
+
+        # The first frame can contain the trailing edge of the wake word. A
+        # real same-breath command should contribute at least two voiced
+        # frames after that edge, avoiding a false continuous-command branch.
+        continuation_frames = tail_rms[1:] if len(tail_rms) > 1 else tail_rms
+        if sum(value >= gate for value in continuation_frames) < 2:
+            return None, {
+                "continuation": False,
+                "continuation_gate": round(gate, 2),
+            }
+
+        silence_frames = 0
+        max_frames = int(5_000 / _FRAME_MS)
+        stop_after_silence = max(4, int(560 / _FRAME_MS))
+        for _ in range(max_frames - probe_frames):
+            try:
+                frame = self._stream.read(_FRAME_SAMPLES, exception_on_overflow=False)
+            except Exception:
+                break
+            tail.append(frame)
+            value = self._rms(np.frombuffer(frame, dtype=np.int16))
+            if value >= gate:
+                silence_frames = 0
+            else:
+                silence_frames += 1
+                if silence_frames >= stop_after_silence:
+                    break
+
+        # Include enough pre-roll for Whisper to hear and remove the wake phrase.
+        pcm = b"".join(list(self._audio_history) + tail)
+        return pcm, {
+            "continuation": True,
+            "continuation_gate": round(gate, 2),
+            "continuation_ms": int(len(tail) * _FRAME_MS),
+        }
+
+    def _save_diagnostic_clip(self, detection: WakeDetection) -> None:
+        pcm = detection.command_audio or b"".join(self._audio_history)
+        if not pcm:
+            return
+        try:
+            output_dir = resource_path(".local", "wake-word", "captures")
+            output_dir.mkdir(parents=True, exist_ok=True)
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            path = output_dir / f"{stamp}-{detection.model_name}-{detection.confidence:.3f}.wav"
+            with wave.open(str(path), "wb") as wav_file:
+                wav_file.setnchannels(_CHANNELS)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(_SAMPLE_RATE)
+                wav_file.writeframes(pcm)
+            logger.info("OpenWakeWord: saved diagnostic clip %s", path)
+        except Exception as exc:
+            logger.warning("OpenWakeWord: could not save diagnostic clip: %s", exc)

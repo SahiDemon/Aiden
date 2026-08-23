@@ -10,6 +10,7 @@ import src.media.media_router as media_router_module
 from src.core.assistant import AidenAssistant
 from src.media.media_router import MediaRouter
 from src.speech.stt import STTEngine
+from src.speech.wake_detection import WakeDetection
 
 
 @pytest.mark.asyncio
@@ -36,6 +37,29 @@ async def test_activation_sound_is_the_final_speak_now_cue(from_hotkey, expected
     await assistant._play_activation_ready_cue(from_hotkey)
 
     assert events == expected
+
+
+@pytest.mark.asyncio
+async def test_activation_sound_retries_once_before_fallback():
+    assistant = AidenAssistant.__new__(AidenAssistant)
+    attempts = []
+
+    async def play_sound(sound_name):
+        attempts.append(sound_name)
+        return len(attempts) == 2
+
+    assistant.tts = SimpleNamespace(play_sound_now=play_sound)
+
+    assert await assistant._play_sound_reliably("activation") is True
+    assert attempts == ["activation", "activation"]
+
+
+def test_command_flow_uses_buffered_audio_only_for_wake_detection():
+    detection = WakeDetection("aiden_v2", 0.9, command_audio=b"wake and command")
+
+    assert AidenAssistant._should_use_buffered_command(False, detection) is True
+    assert AidenAssistant._should_use_buffered_command(True, detection) is False
+    assert AidenAssistant._should_use_buffered_command(False, None) is False
 
 
 @pytest.mark.asyncio

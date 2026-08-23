@@ -136,6 +136,7 @@ from src.core.wake_word_manager import get_wake_word_manager
 from src.speech.wake_word import get_wake_word_detector
 from src.speech.porcupine_wake import get_porcupine_detector
 from src.speech.openwakeword_wake import OpenWakeWordDetector
+from src.speech.wake_detection import WakeDetection
 from src.tray.tray_app import run_tray_app
 from src.utils.config import get_settings
 from src.utils.logger import get_logger
@@ -169,6 +170,7 @@ media_idle_monitor: Optional[object] = None
 shutdown_event = threading.Event()
 restart_event = threading.Event()
 main_loop: Optional[asyncio.AbstractEventLoop] = None
+voice_pipeline_ready = False
 
 
 def _set_high_priority():
@@ -189,10 +191,21 @@ def _set_high_priority():
         logger.warning(f"Could not set process priority: {e}")
 
 
-def handle_activation(from_hotkey: bool = False):
+def handle_activation(
+    detection: Optional[WakeDetection] = None,
+    from_hotkey: bool = False,
+):
     """Handle voice activation (from wake word or hotkey) non-blockingly."""
     try:
-        logger.info(f"[VOICE] Voice activation triggered! (from_hotkey={from_hotkey})")
+        if not voice_pipeline_ready:
+            logger.warning("Ignoring activation until the voice pipeline is fully ready")
+            return
+        logger.info(
+            "[VOICE] Voice activation triggered! (from_hotkey=%s, model=%s, score=%s)",
+            from_hotkey,
+            detection.model_name if detection else "manual",
+            f"{detection.confidence:.3f}" if detection else "n/a",
+        )
         
         # CRITICAL: Pause wake word detector so STT can use microphone
         if wake_word_detector:
@@ -208,7 +221,10 @@ def handle_activation(from_hotkey: bool = False):
         # We do NOT wait for completion, allowing the background detector thread
         # to immediately exit the callback and process the pause state (which releases mic).
         asyncio.run_coroutine_threadsafe(
-            assistant.handle_voice_activation(from_hotkey=from_hotkey),
+            assistant.handle_voice_activation(
+                from_hotkey=from_hotkey,
+                wake_detection=detection,
+            ),
             main_loop
         )
         
@@ -291,7 +307,7 @@ def handle_stop_listening():
 
 async def initialize_services():
     """Initialize all Aiden services"""
-    global assistant, wake_word_detector, wake_word_manager, hotkey_listener, toggle_hotkey_listener, stop_listening_hotkey_listener, api_server_task, overlay_launcher, ups_monitor, media_idle_monitor, main_loop
+    global assistant, wake_word_detector, wake_word_manager, hotkey_listener, toggle_hotkey_listener, stop_listening_hotkey_listener, api_server_task, overlay_launcher, ups_monitor, media_idle_monitor, main_loop, voice_pipeline_ready
     
     # Store the main event loop for thread-safe async calls
     main_loop = asyncio.get_running_loop()
@@ -332,6 +348,12 @@ async def initialize_services():
             logger.info("✅ Voice activation pipeline ready (microphone pre-warmed)")
         else:
             logger.warning("⚠️ Voice activation pipeline started without a ready microphone")
+        if assistant.tts.is_sound_ready("activation"):
+            logger.info("✅ Activation sound preloaded and ready")
+        else:
+            # Wake handling will retry and use the Windows cue plus visible
+            # overlay, but make the degraded startup state explicit.
+            logger.warning("⚠️ activation.mp3 unavailable; Windows cue fallback is armed")
         
         # 3. Start API server
         logger.info(f"Starting API server on {settings.api.host}:{settings.api.port}...")
@@ -425,9 +447,17 @@ async def initialize_services():
                 logger.info("Using openWakeWord detector (low false-positive, open-source)")
                 wake_word_detector = OpenWakeWordDetector(callback=handle_activation)
                 wake_word_detector.start()
-                logger.info("✅ openWakeWord detector started successfully")
+                if wake_word_detector.wait_until_ready(timeout=15.0):
+                    logger.info("✅ openWakeWord detector and microphone ready")
+                else:
+                    raise RuntimeError("openWakeWord did not become ready")
             except Exception as e:
                 logger.error(f"Failed to start openWakeWord detector: {e} — falling back to Vosk")
+                if wake_word_detector is not None:
+                    try:
+                        wake_word_detector.stop()
+                    except Exception as stop_error:
+                        logger.debug("Could not stop failed openWakeWord detector: %s", stop_error)
                 _fallback_to_vosk()
 
         elif settings.speech.use_porcupine and settings.speech.porcupine_access_key:
@@ -469,6 +499,8 @@ async def initialize_services():
         executor = get_command_executor()
         executor.set_wake_word_manager(wake_word_manager)
         logger.info("Wake word manager injected into command executor")
+        voice_pipeline_ready = True
+        logger.info("✅ Voice pipeline is fully ready for activation")
         
         # 4. Initialize hotkey listeners
         hotkey_listener = get_hotkey_listener(

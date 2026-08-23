@@ -32,7 +32,10 @@ except ImportError:
     webrtcvad = None  # type: ignore[assignment]
     _WEBRTCVAD_AVAILABLE = False
 import numpy as np
+import pyaudio
 
+from src.speech.audio_devices import resolve_input_device_index
+from src.speech.wake_detection import strip_wake_phrase
 from src.utils.config import get_settings
 from src.utils.logger import get_logger
 
@@ -140,6 +143,7 @@ class STTEngine:
         self.timeout = self.settings.speech.stt_timeout
         self.pause_threshold = self.settings.speech.stt_pause_threshold
         self.device_index = self.settings.speech.stt_device_index
+        self.input_device_name = getattr(self.settings.speech, "input_device_name", "")
         self.non_speaking_duration = self.settings.speech.stt_non_speaking_duration
 
         # Audio parameters — 16 kHz mono 16-bit PCM
@@ -222,6 +226,24 @@ class STTEngine:
     def _init_persistent_mic(self):
         """Pre-warm the PyAudio stream to eliminate 500ms+ startup latency."""
         try:
+            if self.input_device_name:
+                audio = pyaudio.PyAudio()
+                try:
+                    resolved_index = resolve_input_device_index(
+                        self.input_device_name,
+                        audio,
+                    )
+                finally:
+                    audio.terminate()
+                if resolved_index is not None:
+                    # Stable name selection takes precedence over the legacy
+                    # numeric index so wake detection and STT share a device.
+                    self.device_index = resolved_index
+                elif self.device_index is None:
+                    logger.warning(
+                        "STT input '%s' not found; using system default microphone",
+                        self.input_device_name,
+                    )
             mic_kwargs = {"sample_rate": self.sample_rate}
             if self.device_index is not None:
                 mic_kwargs["device_index"] = self.device_index
@@ -403,6 +425,47 @@ class STTEngine:
                 logger.debug(f"STT media restore skipped: {exc}")
             finally:
                 self._stop_requested.clear()
+
+    async def transcribe_captured_pcm(
+        self,
+        pcm_bytes: bytes,
+        *,
+        remove_wake_phrase: bool = True,
+    ) -> Tuple[bool, Optional[str], Optional[str]]:
+        """Transcribe PCM already captured by the wake-word microphone.
+
+        This avoids reopening the microphone and preserves commands spoken in
+        the same breath as the wake phrase.
+        """
+        if not pcm_bytes:
+            return False, None, "empty_audio"
+
+        minimum_bytes = int(self.sample_rate * _SAMPLE_WIDTH * self.min_speech_duration)
+        if len(pcm_bytes) < minimum_bytes:
+            return False, None, "recording_too_short"
+
+        try:
+            normalized = self._normalize_pcm_gain(pcm_bytes)
+            audio = sr.AudioData(normalized, self.sample_rate, _SAMPLE_WIDTH)
+            from src.ai.groq_client import get_groq_client
+
+            groq_client = await get_groq_client()
+            text = await groq_client.transcribe_audio(audio.get_wav_data())
+            if not text:
+                return False, None, "No speech detected"
+
+            command = strip_wake_phrase(text) if remove_wake_phrase else text.strip()
+            logger.info(
+                "STT: Recognized buffered wake command: '%s' -> '%s'",
+                text,
+                command,
+            )
+            if not command:
+                return False, None, "wake_phrase_only"
+            return True, command, None
+        except Exception as exc:
+            logger.error("STT: Buffered command transcription failed: %s", exc)
+            return False, None, f"Speech service error: {exc}"
 
     # ------------------------------------------------------------------
     # VAD listening (blocking — runs inside thread pool)
