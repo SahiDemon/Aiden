@@ -22,6 +22,10 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 _SPOTIFY_DUCK_DEADLINE_SECONDS = 0.6
+# Spotify Connect can take noticeably longer to expose the Windows desktop
+# player after a cold launch or OAuth reauthorization. Poll quickly at first,
+# then back off while allowing up to 30 seconds for device registration.
+_SPOTIFY_DESKTOP_POLL_DELAYS_SECONDS = (1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0, 5.0, 5.0)
 
 
 class MediaRouter:
@@ -397,17 +401,35 @@ class MediaRouter:
             logger.warning("Failed to launch Spotify desktop application.")
             return None, {"type": "spotify", "message": "Could not launch Spotify on PC."}
 
-        for attempt in range(1, 6):
-            await asyncio.sleep(2.0)
+        poll_count = len(_SPOTIFY_DESKTOP_POLL_DELAYS_SECONDS)
+        elapsed = 0.0
+        for attempt, delay in enumerate(_SPOTIFY_DESKTOP_POLL_DELAYS_SECONDS, start=1):
+            await asyncio.sleep(delay)
+            elapsed += delay
             devices = await self.spotify_client.get_devices()
             computer_devices = [d for d in devices if str(d.get("type", "")).lower() == "computer"]
             if computer_devices:
                 device = next((d for d in computer_devices if d.get("is_active")), computer_devices[0])
-                logger.info(f"Found computer device on attempt {attempt}: {device['name']}")
+                logger.info(
+                    "Found computer device after %.1fs (attempt %d/%d): %s",
+                    elapsed,
+                    attempt,
+                    poll_count,
+                    device["name"],
+                )
                 return device, None
-            logger.info(f"Waiting for Spotify PC device to register (attempt {attempt}/5)...")
+            logger.info(
+                "Waiting for Spotify PC device to register "
+                "(%.1fs elapsed, attempt %d/%d)...",
+                elapsed,
+                attempt,
+                poll_count,
+            )
 
-        return None, {"type": "spotify", "message": "Spotify launched on PC, but could not connect to desktop player yet."}
+        return None, {
+            "type": "spotify",
+            "message": "Spotify launched on PC, but did not become ready within 30 seconds.",
+        }
 
     async def _ensure_spotify_device(self, device_name: str) -> Tuple[Optional[dict], Optional[dict]]:
         """
@@ -421,8 +443,13 @@ class MediaRouter:
             logger.info(f"Requested device '{device_name}' appears to be a PC/computer. Launching Spotify desktop...")
             await self._maybe_launch_spotify_desktop()
 
-        for attempt in range(1, 6):
-            await asyncio.sleep(1.5)
+        poll_delays = (
+            _SPOTIFY_DESKTOP_POLL_DELAYS_SECONDS
+            if is_pc_request
+            else (1.5,)
+        )
+        for attempt, delay in enumerate(poll_delays, start=1):
+            await asyncio.sleep(delay)
             devices = await self.spotify_client.get_devices()
             device = find_best_device(devices, device_name)
             if device:
