@@ -271,6 +271,26 @@ def test_wake_word_trailing_frame_is_not_treated_as_command():
     assert metadata["continuation"] is False
 
 
+def test_usb_room_noise_is_not_treated_as_continuous_command():
+    room_noise = np.full(1_280, 80, dtype=np.int16).tobytes()
+    frames = [room_noise] * 8
+
+    class Stream:
+        def read(self, *_args, **_kwargs):
+            return frames.pop(0) if frames else room_noise
+
+    detector = OpenWakeWordDetector.__new__(OpenWakeWordDetector)
+    detector._stream = Stream()
+    detector._noise_rms = 30.0
+    detector.continuation_window_ms = 300
+    detector._audio_history = collections.deque([b"wake"], maxlen=20)
+
+    pcm, metadata = detector._capture_command_continuation()
+
+    assert pcm is None
+    assert metadata["continuation"] is False
+
+
 def test_profile_loader_ignores_invalid_json(tmp_path):
     profile = tmp_path / "profile.json"
     profile.write_text("not json", encoding="utf-8")

@@ -663,7 +663,11 @@ class OpenWakeWordDetector:
         probe_frames = max(1, int(np.ceil(self.continuation_window_ms / _FRAME_MS)))
         tail: list[bytes] = []
         tail_rms: list[float] = []
-        gate = max(35.0, self._noise_rms * 1.65)
+        # A very low RMS floor mistakes normal USB-microphone room noise for a
+        # same-breath command and blocks the wake callback for the full five
+        # second capture limit. Require clearly voiced audio above both a
+        # practical absolute floor and the learned room-noise level.
+        gate = max(120.0, self._noise_rms * 2.5)
 
         for _ in range(probe_frames):
             try:
@@ -673,10 +677,10 @@ class OpenWakeWordDetector:
             tail.append(frame)
             tail_rms.append(self._rms(np.frombuffer(frame, dtype=np.int16)))
 
-        # The first frame can contain the trailing edge of the wake word. A
-        # real same-breath command should contribute at least two voiced
-        # frames after that edge, avoiding a false continuous-command branch.
-        continuation_frames = tail_rms[1:] if len(tail_rms) > 1 else tail_rms
+        # The first two frames can contain the trailing edge of the wake word.
+        # A real same-breath command must remain voiced beyond that 160 ms
+        # grace period, avoiding a false continuous-command branch.
+        continuation_frames = tail_rms[2:] if len(tail_rms) > 2 else []
         if sum(value >= gate for value in continuation_frames) < 2:
             return None, {
                 "continuation": False,
