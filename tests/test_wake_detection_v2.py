@@ -250,6 +250,21 @@ def test_no_continuation_returns_normal_two_step_mode():
     assert metadata["continuation"] is False
 
 
+def test_zero_continuation_window_disables_command_capture():
+    class Stream:
+        def read(self, *_args, **_kwargs):
+            raise AssertionError("disabled continuation must not read the microphone")
+
+    detector = OpenWakeWordDetector.__new__(OpenWakeWordDetector)
+    detector._stream = Stream()
+    detector.continuation_window_ms = 0
+
+    pcm, metadata = detector._capture_command_continuation()
+
+    assert pcm is None
+    assert metadata == {"continuation": False, "continuation_disabled": True}
+
+
 def test_wake_word_trailing_frame_is_not_treated_as_command():
     loud = np.full(1_280, 1_000, dtype=np.int16).tobytes()
     quiet = np.zeros(1_280, dtype=np.int16).tobytes()

@@ -103,7 +103,7 @@ class OpenWakeWordDetector:
             profile.get("input_device_name") or getattr(cfg, "input_device_name", "")
         )
         self.continuation_window_ms = max(
-            _FRAME_MS,
+            0,
             int(getattr(cfg, "oww_continuation_window_ms", 300)),
         )
         self.shadow_mode = bool(getattr(cfg, "oww_shadow_mode", False))
@@ -657,6 +657,8 @@ class OpenWakeWordDetector:
 
     def _capture_command_continuation(self) -> tuple[Optional[bytes], dict]:
         """Capture speech following the wake phrase without opening a new mic."""
+        if self.continuation_window_ms <= 0:
+            return None, {"continuation": False, "continuation_disabled": True}
         if self._stream is None:
             return None, {"continuation": False}
 

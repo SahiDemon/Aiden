@@ -271,7 +271,7 @@ class SpeechConfig(BaseSettings):
     oww_strong_threshold: float = Field(default=0.75)
     oww_smoothing_window: int = Field(default=3)
     oww_smoothing_hits: int = Field(default=2)
-    oww_continuation_window_ms: int = Field(default=300)
+    oww_continuation_window_ms: int = Field(default=300)  # 0 disables same-breath command capture
     oww_profile_path: str = Field(default="")
     oww_shadow_mode: bool = Field(default=False)
     oww_capture_diagnostics: bool = Field(default=False)
