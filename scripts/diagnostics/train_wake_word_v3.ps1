@@ -5,10 +5,12 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$wslRepositoryRoot = (& wsl.exe -d $Distro -u root -- wslpath -a $repositoryRoot).Trim()
-if (-not $wslRepositoryRoot) {
-    throw "Could not resolve the repository path inside WSL distro '$Distro'."
+if ($repositoryRoot -notmatch '^(?<Drive>[A-Za-z]):(?<Relative>\\.*)$') {
+    throw "Expected a drive-qualified Windows repository path, got '$repositoryRoot'."
 }
+$drive = $Matches.Drive.ToLowerInvariant()
+$relativePath = $Matches.Relative.Replace('\', '/')
+$wslRepositoryRoot = "/mnt/$drive$relativePath"
 
 $trainingConfig = "$wslRepositoryRoot/scripts/diagnostics/wake_word_v3.yml"
 $trainingScript = "$wslRepositoryRoot/scripts/diagnostics/train_wake_word_v2.sh"
