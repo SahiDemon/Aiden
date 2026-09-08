@@ -14,6 +14,9 @@ $wslRepositoryRoot = "/mnt/$drive$relativePath"
 
 $trainingConfig = "$wslRepositoryRoot/scripts/diagnostics/wake_word_v3.yml"
 $trainingScript = "$wslRepositoryRoot/scripts/diagnostics/train_wake_word_v2.sh"
+$logDirectory = Join-Path $repositoryRoot '.local\wake-word'
+$logPath = Join-Path $logDirectory 'aiden-v3-training.log'
+New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
 $command = @(
     "cd '$wslRepositoryRoot' &&"
     'AIDEN_WAKE_TRAINING_ROOT=/opt/aiden-wake-training'
@@ -27,9 +30,11 @@ Write-Host "WSL distro: $Distro"
 Write-Host 'Training root: /opt/aiden-wake-training'
 Write-Host 'Target: Aiden (including Aidan/Ayden pronunciation variants)'
 Write-Host 'This window shows the real generator, augmentation, and GPU-training progress.'
+Write-Host "Saved log: $logPath"
 Write-Host ''
 
-& wsl.exe -d $Distro -u root -- bash -lc $command
+& wsl.exe -d $Distro -u root -- bash -lc $command 2>&1 |
+    Tee-Object -FilePath $logPath -Append
 $trainingExitCode = $LASTEXITCODE
 
 if ($trainingExitCode -ne 0) {
