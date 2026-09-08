@@ -146,6 +146,39 @@ def test_debounce_uses_monotonic_trigger_interval():
     assert detector._is_debounced(102.0) is False
 
 
+def test_detection_loop_does_not_open_microphone_after_stop_during_model_load():
+    detector = OpenWakeWordDetector.__new__(OpenWakeWordDetector)
+    detector._running = True
+    opened = []
+
+    def load_then_stop():
+        detector._running = False
+
+    detector._load_model = load_then_stop
+    detector._open_stream = lambda: opened.append(True)
+
+    detector._detection_loop()
+
+    assert opened == []
+
+
+def test_detection_loop_closes_microphone_if_stopped_while_opening_stream():
+    detector = OpenWakeWordDetector.__new__(OpenWakeWordDetector)
+    detector._running = True
+    cleaned = []
+    detector._load_model = lambda: None
+
+    def open_then_stop():
+        detector._running = False
+
+    detector._open_stream = open_then_stop
+    detector._cleanup = lambda: cleaned.append(True)
+
+    detector._detection_loop()
+
+    assert cleaned == [True]
+
+
 def test_personal_verifier_replaces_base_score_above_gate():
     detector = OpenWakeWordDetector.__new__(OpenWakeWordDetector)
     detector.verifier_gate = 0.25

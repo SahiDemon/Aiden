@@ -447,7 +447,10 @@ async def initialize_services():
                 logger.info("Using openWakeWord detector (low false-positive, open-source)")
                 wake_word_detector = OpenWakeWordDetector(callback=handle_activation)
                 wake_word_detector.start()
-                if wake_word_detector.wait_until_ready(timeout=15.0):
+                # Importing ONNX Runtime can be slow while local model training
+                # is saturating CPU/disk. A short timeout incorrectly selected
+                # Vosk even though openWakeWord was healthy and still loading.
+                if wake_word_detector.wait_until_ready(timeout=60.0):
                     logger.info("✅ openWakeWord detector and microphone ready")
                 else:
                     raise RuntimeError("openWakeWord did not become ready")

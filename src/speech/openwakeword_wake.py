@@ -197,6 +197,8 @@ class OpenWakeWordDetector:
 
     def start(self) -> None:
         """Start the detector in a background supervisor thread."""
+        self._startup_error = None
+        self._ready_event.clear()
         self._running = True
         self._thread = threading.Thread(
             target=self._supervisor_loop, name="oww-supervisor", daemon=True
@@ -416,41 +418,52 @@ class OpenWakeWordDetector:
 
     def _supervisor_loop(self) -> None:
         restart_times: list[float] = []
+        try:
+            while self._running:
+                try:
+                    self._detection_loop()
+                except Exception as exc:
+                    if not self._running:
+                        break
 
-        while self._running:
-            try:
-                self._detection_loop()
-            except Exception as exc:
-                if not self._running:
-                    break
+                    now = time.monotonic()
+                    restart_times = [t for t in restart_times if now - t < _RAPID_RESTART_WINDOW]
+                    restart_times.append(now)
+                    n = len(restart_times)
 
-                now = time.monotonic()
-                restart_times = [t for t in restart_times if now - t < _RAPID_RESTART_WINDOW]
-                restart_times.append(now)
-                n = len(restart_times)
+                    logger.error(
+                        "[WATCHDOG] OpenWakeWord detection loop crashed (restart #%d): %s",
+                        n, exc, exc_info=True,
+                    )
+                    if not self._ready_event.is_set():
+                        self._startup_error = str(exc)
+                        self._ready_event.set()
+                    self._cleanup()
 
-                logger.error(
-                    "[WATCHDOG] OpenWakeWord detection loop crashed (restart #%d): %s",
-                    n, exc, exc_info=True,
-                )
-                if not self._ready_event.is_set():
-                    self._startup_error = str(exc)
-                    self._ready_event.set()
-                self._cleanup()
+                    if n > _MAX_RAPID_RESTARTS:
+                        backoff = min(2 ** (n - _MAX_RAPID_RESTARTS), 60)
+                        logger.warning("[WATCHDOG] %d restarts in %ds — backing off %ds", n, _RAPID_RESTART_WINDOW, backoff)
+                        time.sleep(backoff)
+                    else:
+                        time.sleep(1.0)
 
-                if n > _MAX_RAPID_RESTARTS:
-                    backoff = min(2 ** (n - _MAX_RAPID_RESTARTS), 60)
-                    logger.warning("[WATCHDOG] %d restarts in %ds — backing off %ds", n, _RAPID_RESTART_WINDOW, backoff)
-                    time.sleep(backoff)
-                else:
-                    time.sleep(1.0)
-
-                if self._running:
-                    logger.info("[WATCHDOG] Restarting OpenWakeWord detection loop...")
+                    if self._running:
+                        logger.info("[WATCHDOG] Restarting OpenWakeWord detection loop...")
+        finally:
+            # A stop can arrive while ONNX/openWakeWord is still importing. In
+            # that case cleanup must happen after the blocking load returns,
+            # otherwise the old detector can open and retain the microphone
+            # after main has already switched to a fallback detector.
+            self._cleanup()
 
     def _detection_loop(self) -> None:
         self._load_model()
+        if not self._running:
+            return
         self._open_stream()
+        if not self._running:
+            self._cleanup()
+            return
         self._startup_error = None
         self._ready_event.set()
 
