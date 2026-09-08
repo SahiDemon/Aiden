@@ -8,6 +8,9 @@ oww_root="${work_root}/openWakeWord"
 venv_root="${work_root}/venv"
 python_bin="${PYTHON_BIN:-python3.10}"
 pytorch_version="${PYTORCH_VERSION:-2.7.1}"
+training_config_path="${AIDEN_WAKE_TRAINING_CONFIG:-${repo_root}/scripts/diagnostics/wake_word_v2.yml}"
+model_name="${AIDEN_WAKE_MODEL_NAME:-aiden_v2}"
+training_config_name="$(basename "${training_config_path}")"
 
 export PIP_CACHE_DIR="${AIDEN_WAKE_PIP_CACHE_DIR:-${host_work_root}/pip-cache}"
 export HF_HOME="${work_root}/huggingface-cache"
@@ -134,7 +137,11 @@ PY
 # resources; editable installs do not include these binary assets.
 python -c "import openwakeword; openwakeword.utils.download_models(['hey_aiden'])"
 
-cp "${repo_root}/scripts/diagnostics/wake_word_v2.yml" "${work_root}/wake_word_v2.yml"
+if [[ ! -f "${training_config_path}" ]]; then
+  echo "Missing training configuration: ${training_config_path}" >&2
+  exit 2
+fi
+cp "${training_config_path}" "${work_root}/${training_config_name}"
 cd "${work_root}"
 
 if [[ ! -f piper-sample-generator/models/en-us-libritts-high.pt ]]; then
@@ -161,22 +168,22 @@ for required_dir in mit_rirs audioset_16k fma; do
   fi
 done
 
-feature_root="aiden_v2_output/aiden_v2"
+feature_root="${model_name}_output/${model_name}"
 if [[ -f "${feature_root}/positive_features_train.npy" && \
       -f "${feature_root}/negative_features_train.npy" && \
       -f "${feature_root}/positive_features_test.npy" && \
       -f "${feature_root}/negative_features_test.npy" ]]; then
   echo "Reusing completed feature arrays in ${feature_root}; skipping clip generation and augmentation."
 else
-  python "${oww_root}/openwakeword/train.py" --training_config wake_word_v2.yml --generate_clips
-  python "${oww_root}/openwakeword/train.py" --training_config wake_word_v2.yml --augment_clips
+  python "${oww_root}/openwakeword/train.py" --training_config "${training_config_name}" --generate_clips
+  python "${oww_root}/openwakeword/train.py" --training_config "${training_config_name}" --augment_clips
 fi
-python "${oww_root}/openwakeword/train.py" --training_config wake_word_v2.yml --train_model
+python "${oww_root}/openwakeword/train.py" --training_config "${training_config_name}" --train_model
 
-model_path="$(find aiden_v2_output -name 'aiden_v2.onnx' -print -quit)"
+model_path="$(find "${model_name}_output" -name "${model_name}.onnx" -print -quit)"
 if [[ -z "${model_path}" ]]; then
-  echo "Training completed without producing aiden_v2.onnx" >&2
+  echo "Training completed without producing ${model_name}.onnx" >&2
   exit 3
 fi
-cp "${model_path}" "${repo_root}/vosk_models/aiden_v2.onnx"
-echo "Created ${repo_root}/vosk_models/aiden_v2.onnx"
+cp "${model_path}" "${repo_root}/vosk_models/${model_name}.onnx"
+echo "Created ${repo_root}/vosk_models/${model_name}.onnx"

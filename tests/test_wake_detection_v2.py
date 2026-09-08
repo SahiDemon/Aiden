@@ -62,7 +62,7 @@ def test_device_resolver_accepts_truncated_windows_default_name():
     assert resolve_input_device_index("USB PnP Audio Device", audio) == 1
 
 
-def test_device_resolver_prefers_full_name_over_truncated_default():
+def test_device_resolver_prefers_signalled_default_over_full_name_duplicate():
     devices = {
         1: {
             "name": "Microphone (3- USB PnP Audio De",
@@ -82,7 +82,7 @@ def test_device_resolver_prefers_full_name_over_truncated_default():
         ),
     )
 
-    assert resolve_input_device_index("USB PnP Audio Device", audio) == 50
+    assert resolve_input_device_index("USB PnP Audio Device", audio) == 1
 
 
 def test_device_resolver_skips_incompatible_windows_endpoint():

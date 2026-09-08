@@ -64,7 +64,16 @@ def main() -> int:
     parser.add_argument("--verifier", default="vosk_models/aiden_v2_verifier.pkl")
     parser.add_argument("--output", default=".local/wake-word/profile.json")
     parser.add_argument("--input-device-name", default="USB PnP Audio Device")
+    parser.add_argument(
+        "--verifier-gate",
+        type=float,
+        default=0.25,
+        help="Base-model score at which the personal verifier is evaluated",
+    )
     args = parser.parse_args()
+
+    if not 0.0 <= args.verifier_gate <= 1.0:
+        raise SystemExit("--verifier-gate must be between 0 and 1")
 
     dataset = Path(args.dataset).resolve()
     model_path = Path(args.model).resolve()
@@ -76,7 +85,7 @@ def main() -> int:
     model = Model(
         wakeword_models=[str(model_path)],
         custom_verifier_models={label: str(verifier_path)},
-        custom_verifier_threshold=0.25,
+        custom_verifier_threshold=args.verifier_gate,
         vad_threshold=0.2,
         inference_framework="onnx",
     )
@@ -154,7 +163,7 @@ def main() -> int:
         "version": 1,
         "model_path": str(Path(args.model).as_posix()),
         "verifier_path": str(Path(args.verifier).as_posix()),
-        "verifier_gate": 0.25,
+        "verifier_gate": args.verifier_gate,
         "threshold": threshold,
         "strong_threshold": strong,
         "vad_threshold": 0.2,
