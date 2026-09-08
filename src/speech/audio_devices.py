@@ -44,23 +44,21 @@ def resolve_input_device_index(
         except (OSError, ValueError):
             return False
 
-    # Prefer the current default endpoint when it is clearly the requested
-    # physical device. Windows MME names are sometimes truncated (for example
-    # "USB PnP Audio De"), so allow one missing name token.
+    # Remember the current default as a tie-breaker only. Windows MME names
+    # are often truncated (for example "USB PnP Audio De"), while WASAPI and
+    # WDM-KS expose the complete device name. An explicit full-name match is
+    # more stable and, importantly, preserves the endpoint used for wake-word
+    # recordings instead of silently switching to an MME duplicate.
+    default_index: Optional[int] = None
     try:
         default_info = audio.get_default_input_device_info()
-        default_name = str(default_info.get("name", "")).casefold()
-        matching_tokens = sum(token in default_name for token in tokens)
-        default_index = int(default_info["index"])
-        if (
-            needle in default_name
-            or (tokens and matching_tokens >= max(1, len(tokens) - 1))
-        ) and supports_format(default_index):
-            return default_index
+        candidate_default_index = int(default_info["index"])
+        if supports_format(candidate_default_index):
+            default_index = candidate_default_index
     except Exception:
         pass
 
-    candidates: list[tuple[int, int]] = []
+    candidates: list[tuple[int, int, int, int]] = []
     for index in range(audio.get_device_count()):
         info = audio.get_device_info_by_index(index)
         if int(info.get("maxInputChannels", 0)) <= 0:
@@ -72,16 +70,14 @@ def resolve_input_device_index(
         if not supports_format(index):
             continue
 
-        # Prefer a complete name match, then the shortest matching endpoint.
-        if folded == needle:
-            rank = 0
-        elif needle in folded:
-            rank = len(folded)
-        else:
-            rank = 1_000 + len(folded)
-        candidates.append((rank, index))
+        # A full configured-name match outranks a fuzzy/truncated one. Within
+        # an equally good match, the Windows default is preferred, then the
+        # shortest endpoint name and its stable PyAudio index break ties.
+        match_rank = 0 if needle in folded else 1
+        default_rank = 0 if index == default_index else 1
+        candidates.append((match_rank, default_rank, len(folded), index))
 
     if not candidates:
         return None
     candidates.sort()
-    return candidates[0][1]
+    return candidates[0][-1]

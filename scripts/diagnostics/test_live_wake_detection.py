@@ -51,7 +51,7 @@ def main() -> int:
         description="Press Space, say Aiden once, and measure whether it was detected."
     )
     parser.add_argument("--trials", type=int, default=15)
-    parser.add_argument("--window", type=float, default=3.0)
+    parser.add_argument("--window", type=float, default=4.0)
     parser.add_argument("--phrase", default="Aiden")
     parser.add_argument("--profile", default=".local/wake-word/profile.json")
     parser.add_argument("--output", default=".local/wake-word/live-recall-report.json")
@@ -76,6 +76,7 @@ def main() -> int:
     from src.speech.wake_detection import WakeDetection
 
     events: list[dict] = []
+    score_events: list[dict] = []
     event_lock = threading.Lock()
 
     def on_detection(detection: WakeDetection) -> None:
@@ -94,6 +95,31 @@ def main() -> int:
     detector.capture_diagnostics = False
     detector.shadow_mode = False
     detector.continuation_window_ms = 0
+
+    # The production callback is intentionally sparse: it only receives a
+    # completed activation. For diagnosis we also retain the best *in-memory*
+    # score in every user-confirmed trial, so a miss can be attributed to the
+    # model/verifier rather than guessed from an absent callback. No audio is
+    # stored or written anywhere.
+    original_apply_verifier = detector._apply_personal_verifier
+
+    def capture_score(model_name: str, base_score: float):
+        score, verifier_score = original_apply_verifier(model_name, base_score)
+        with event_lock:
+            score_events.append(
+                {
+                    "observed_at": time.monotonic(),
+                    "model": model_name,
+                    "base_score": round(base_score, 4),
+                    "verifier_score": (
+                        round(verifier_score, 4) if verifier_score is not None else None
+                    ),
+                    "score": round(score, 4),
+                }
+            )
+        return score, verifier_score
+
+    detector._apply_personal_verifier = capture_score
     detector.start()
 
     confirmed_trials: list[dict] = []
@@ -123,12 +149,16 @@ def main() -> int:
             # heard while the user was waiting at the prompt.
             with event_lock:
                 first_event = len(events)
+                first_score = len(score_events)
             detector._score_history.clear()
             detector._last_trigger_time = time.monotonic() - detector.debounce
 
             print(f"  BEEP — say {args.phrase!r} once now...", flush=True)
-            _beep()
+            # Include the cue itself in the window. This avoids falsely
+            # recording a prompt response as a miss when it begins immediately
+            # after the Windows beep returns.
             started = time.monotonic()
+            _beep()
             deadline = started + args.window
             while time.monotonic() < deadline:
                 time.sleep(0.04)
@@ -139,6 +169,13 @@ def main() -> int:
                     for event in events[first_event:]
                     if started <= event["observed_at"] <= deadline
                 ]
+                trial_scores = [
+                    score.copy()
+                    for score in score_events[first_score:]
+                    if started <= score["observed_at"] <= deadline
+                ]
+
+            best_score = max(trial_scores, key=lambda score: score["score"], default=None)
 
             if trial_events:
                 best = max(trial_events, key=lambda event: event["confidence"])
@@ -151,7 +188,15 @@ def main() -> int:
                 )
             else:
                 best = None
-                print("  MISSED — no activation inside the test window")
+                if best_score:
+                    print(
+                        "  MISSED "
+                        f"best_score={best_score['score']:.3f} "
+                        f"base={best_score['base_score']:.3f} "
+                        f"verifier={best_score['verifier_score']}"
+                    )
+                else:
+                    print("  MISSED — no model scores inside the test window")
 
             print("  Did you actually say it clearly? Y=yes, R=discard/retry, Q=finish > ", end="", flush=True)
             confirmation = _read_choice({"y", "r", "q"})
@@ -171,6 +216,7 @@ def main() -> int:
                     "confidence": best["confidence"] if best else None,
                     "model": best["model"] if best else None,
                     "metadata": best.get("metadata") if best else None,
+                    "best_model_score": best_score,
                 }
             )
             hits = sum(trial["detected"] for trial in confirmed_trials)

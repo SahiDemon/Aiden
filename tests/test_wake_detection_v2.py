@@ -62,6 +62,29 @@ def test_device_resolver_accepts_truncated_windows_default_name():
     assert resolve_input_device_index("USB PnP Audio Device", audio) == 1
 
 
+def test_device_resolver_prefers_full_name_over_truncated_default():
+    devices = {
+        1: {
+            "name": "Microphone (3- USB PnP Audio De",
+            "maxInputChannels": 1,
+        },
+        50: {
+            "name": "Microphone (USB PnP Audio Device)",
+            "maxInputChannels": 1,
+        },
+    }
+    audio = SimpleNamespace(
+        get_default_input_device_info=lambda: {"index": 1, **devices[1]},
+        get_device_count=lambda: 51,
+        get_device_info_by_index=lambda index: devices.get(
+            index,
+            {"name": "output", "maxInputChannels": 0},
+        ),
+    )
+
+    assert resolve_input_device_index("USB PnP Audio Device", audio) == 50
+
+
 def test_device_resolver_skips_incompatible_windows_endpoint():
     devices = {
         1: {
