@@ -20,6 +20,10 @@ export UV_CACHE_DIR="${work_root}/uv-cache"
 export UV_PYTHON_INSTALL_DIR="${work_root}/uv-python"
 export UV_PYTHON_BIN_DIR="${work_root}/bin"
 export PIP_PROGRESS_BAR=off
+# The official Piper and DeepPhonemizer checkpoints are trusted full-model
+# artifacts created before PyTorch 2.6 changed torch.load() to weights-only by
+# default. Keep this compatibility override confined to the training process.
+export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1
 
 if ! ldconfig -p 2>/dev/null | grep -q 'libespeak-ng\.so'; then
   apt-get update -qq
