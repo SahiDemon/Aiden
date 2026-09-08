@@ -198,6 +198,14 @@ if [[ -f "${feature_root}/positive_features_train.npy" && \
       -f "${feature_root}/negative_features_test.npy" ]]; then
   echo "Reusing completed feature arrays in ${feature_root}; skipping clip generation and augmentation."
 else
+  # Upstream skips the entire augmentation phase when only the first feature
+  # array exists. Remove incomplete arrays from an interrupted run so all four
+  # are rebuilt together instead of failing later with missing files.
+  rm -f \
+    "${feature_root}/positive_features_train.npy" \
+    "${feature_root}/negative_features_train.npy" \
+    "${feature_root}/positive_features_test.npy" \
+    "${feature_root}/negative_features_test.npy"
   python "${oww_root}/openwakeword/train.py" --training_config "${training_config_name}" --generate_clips
   python "${oww_root}/openwakeword/train.py" --training_config "${training_config_name}" --augment_clips
 fi
