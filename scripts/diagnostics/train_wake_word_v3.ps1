@@ -15,12 +15,12 @@ $wslRepositoryRoot = "/mnt/$drive$relativePath"
 $trainingConfig = "$wslRepositoryRoot/scripts/diagnostics/wake_word_v3.yml"
 $trainingScript = "$wslRepositoryRoot/scripts/diagnostics/train_wake_word_v2.sh"
 $command = @(
-    "cd '$wslRepositoryRoot'"
+    "cd '$wslRepositoryRoot' &&"
     'AIDEN_WAKE_TRAINING_ROOT=/opt/aiden-wake-training'
     'AIDEN_WAKE_MODEL_NAME=aiden_v3'
     "AIDEN_WAKE_TRAINING_CONFIG='$trainingConfig'"
     "bash '$trainingScript'"
-) -join ' && '
+) -join ' '
 
 Write-Host 'Aiden v3 wake-model training' -ForegroundColor Cyan
 Write-Host "WSL distro: $Distro"
