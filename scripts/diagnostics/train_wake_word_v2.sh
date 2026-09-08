@@ -91,6 +91,25 @@ PY
 
 # TensorFlow 2.8, required by the official training pipeline, predates NumPy 2.
 python -m pip install "numpy==1.23.5" -e "${oww_root}[full]"
+# The training extra installs CPU-only ONNX Runtime, which makes feature
+# extraction take well over an hour. Replace it with the matching CUDA build
+# when needed so the RTX GPU is used for openWakeWord embeddings as well.
+if ! python - <<'PY'
+import onnxruntime as ort
+raise SystemExit(0 if "CUDAExecutionProvider" in ort.get_available_providers() else 1)
+PY
+then
+  python -m pip uninstall -y onnxruntime onnxruntime-gpu
+  python -m pip install --no-deps "onnxruntime-gpu==1.23.2"
+fi
+python - <<'PY'
+import onnxruntime as ort
+
+providers = ort.get_available_providers()
+if "CUDAExecutionProvider" not in providers:
+    raise SystemExit(f"CUDA ONNX Runtime provider unavailable: {providers}")
+print(f"ONNX Runtime providers: {providers}")
+PY
 # Piper's generator is a source-only helper and its requirements are not
 # installed by openWakeWord's training extra.
 python -m pip install espeak-phonemizer webrtcvad
