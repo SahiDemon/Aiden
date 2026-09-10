@@ -132,6 +132,14 @@ def main() -> int:
         action="store_true",
         help="Record the separate 48-activation acceptance matrix",
     )
+    parser.add_argument(
+        "--refine-personalization",
+        action="store_true",
+        help=(
+            "Append a targeted live-microphone refinement set without replacing "
+            "the existing dataset"
+        ),
+    )
     parser.add_argument("--list-devices", action="store_true")
     args = parser.parse_args()
 
@@ -150,6 +158,9 @@ def main() -> int:
         print(f"All recordings stay local in {root}")
 
         manifest_path = root / "manifest.json"
+        if args.acceptance_only and args.refine_personalization:
+            raise SystemExit("Choose either --acceptance-only or --refine-personalization")
+
         if args.acceptance_only:
             if not manifest_path.exists():
                 raise SystemExit("Record the training dataset before acceptance samples")
@@ -181,6 +192,77 @@ def main() -> int:
                                     "split": "acceptance",
                                 }
                             )
+        elif args.refine_personalization:
+            if not manifest_path.exists():
+                raise SystemExit("Record the base training dataset before refining it")
+
+            manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest = list(manifest_data.get("samples", []))
+            print(
+                "This adds 44 short, labelled clips to the existing dataset. "
+                "Use your normal wake-word voice; the files remain local."
+            )
+
+            # A verifier learns the user's voice, not just the phrase. The
+            # base dataset deliberately has broad coverage but only eight
+            # training clips per phrase. Add enough natural USB-microphone
+            # examples and confusable words to make the verifier discriminative
+            # without discarding the original holdout material.
+            for phrase_slug, phrase in (("aiden", "Aiden"), ("hey_aiden", "Hey Aiden")):
+                for repetition in range(1, 13):
+                    split = "holdout" if repetition in {4, 8, 12} else "train"
+                    distance = ("0.5m", "1.5m", "3m")[(repetition - 1) % 3]
+                    volume = "quiet" if repetition % 4 == 0 else "normal"
+                    relative = (
+                        Path("positive")
+                        / split
+                        / "refinement"
+                        / phrase_slug
+                        / f"{repetition:02d}.wav"
+                    )
+                    countdown(
+                        f'Say "{phrase}" once — {volume} voice at {distance} '
+                        f"(refinement {repetition}/12)"
+                    )
+                    save_wav(root / relative, record_clip(audio, device_index, 2.5))
+                    manifest.append(
+                        {
+                            "path": relative.as_posix(),
+                            "label": "positive",
+                            "phrase": phrase,
+                            "distance": distance,
+                            "volume": volume,
+                            "split": split,
+                            "source": "personalization_refinement",
+                        }
+                    )
+
+            for phrase in ("Hayden", "maiden", "aid in", "aiding", "eight"):
+                slug = phrase.replace(" ", "_")
+                for repetition in range(1, 5):
+                    split = "holdout" if repetition == 4 else "train"
+                    relative = (
+                        Path("negative")
+                        / split
+                        / "hard"
+                        / "refinement"
+                        / f"{slug}-{repetition}.wav"
+                    )
+                    countdown(
+                        f'Say the non-wake phrase "{phrase}" once '
+                        f"(refinement {repetition}/4)"
+                    )
+                    save_wav(root / relative, record_clip(audio, device_index, 2.5))
+                    manifest.append(
+                        {
+                            "path": relative.as_posix(),
+                            "label": "negative",
+                            "category": "hard",
+                            "phrase": phrase,
+                            "split": split,
+                            "source": "personalization_refinement",
+                        }
+                    )
         else:
             manifest = []
             for phrase_slug, phrase in (("aiden", "Aiden"), ("hey_aiden", "Hey Aiden")):
