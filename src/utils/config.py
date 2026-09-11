@@ -135,7 +135,10 @@ class AppConfig(BaseSettings):
 
     name: str = Field(default="Aiden")
     user_name: str = Field(default="Sir", validation_alias=AliasChoices("user_name", "USER_NAME"))
-    wake_word: str = Field(default="aiden", validation_alias=AliasChoices("wake_word", "WAKE_WORD"))
+    wake_word: str = Field(
+        default="aiden",
+        validation_alias=AliasChoices("wake_word", "WAKE_WORD", "APP_WAKE_WORD"),
+    )
     hotkey: str = Field(default="ctrl+shift+space", validation_alias=AliasChoices("hotkey", "HOTKEY"))
     toggle_hotkey: str = Field(default="ctrl+shift+w", validation_alias=AliasChoices("toggle_hotkey", "TOGGLE_HOTKEY"))
     stop_listening_hotkey: str = Field(
