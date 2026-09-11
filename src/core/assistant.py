@@ -745,6 +745,13 @@ class AidenAssistant:
             # a speak-now cue. Do not publish a misleading listening state.
             await self._play_continuous_command_confirmation()
         else:
+            # Refresh the USB capture stream *before* the cue. A stream that
+            # has been idle for a long time can appear open yet return silence.
+            # The activation sound must mean the fresh microphone is already
+            # ready, never that it is about to be opened.
+            mic_ready = await asyncio.to_thread(self.stt.refresh_microphone)
+            if not mic_ready:
+                logger.warning("STT microphone refresh failed; attempting normal listen")
             # The acknowledgement confirms the wake word, then activation.mp3
             # is the precise speak-now cue.
             await self._play_activation_ready_cue(from_hotkey)
@@ -765,6 +772,9 @@ class AidenAssistant:
                         "Buffered wake command unavailable (%s); falling back to normal listening",
                         error,
                     )
+                    mic_ready = await asyncio.to_thread(self.stt.refresh_microphone)
+                    if not mic_ready:
+                        logger.warning("STT microphone refresh failed; attempting normal listen")
                     await self._play_activation_ready_cue(from_hotkey=False)
                     self._is_listening = True
                     success, user_text, error = await self.stt.transcribe(

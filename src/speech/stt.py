@@ -204,7 +204,6 @@ class STTEngine:
         # Anything shorter is almost certainly noise or a cough.
         self.min_speech_duration = 0.3
 
-        selected_device_name = self._get_selected_device_name()
         vad_name = "Silero" if self._silero else f"WebRTC (aggressiveness={self.vad_aggressiveness})"
 
         logger.info(
@@ -214,48 +213,80 @@ class STTEngine:
             f"non_speaking={self.non_speaking_duration}s, "
             f"pre_buffer=500ms"
         )
-        logger.info(
-            "STT input device: %s",
-            selected_device_name or "system default microphone"
-        )
-
         # Initialize persistent microphone to eliminate startup latency
         self._persistent_mic = None
         self._init_persistent_mic()
+        selected_device_name = self._get_selected_device_name()
+        logger.info(
+            "STT input device: %s",
+            selected_device_name or "system default microphone",
+        )
 
     def _init_persistent_mic(self):
         """Pre-warm the PyAudio stream to eliminate 500ms+ startup latency."""
         try:
-            if self.input_device_name:
-                audio = pyaudio.PyAudio()
-                try:
-                    resolved_index = resolve_input_device_index(
-                        self.input_device_name,
-                        audio,
-                        sample_rate=self.sample_rate,
-                        input_format=pyaudio.paInt16,
-                    )
-                finally:
-                    audio.terminate()
-                if resolved_index is not None:
-                    # Stable name selection takes precedence over the legacy
-                    # numeric index so wake detection and STT share a device.
-                    self.device_index = resolved_index
-                elif self.device_index is None:
-                    logger.warning(
-                        "STT input '%s' not found; using system default microphone",
-                        self.input_device_name,
-                    )
-            mic_kwargs = {"sample_rate": self.sample_rate}
-            if self.device_index is not None:
-                mic_kwargs["device_index"] = self.device_index
-            self._persistent_mic = sr.Microphone(**mic_kwargs)
-            # Enter the context to open the PyAudio stream and keep it open
-            self._persistent_mic.__enter__()
+            # PyAudio/PortAudio device changes must not race with the wake
+            # detector releasing or reopening its own stream on Windows.
+            from src.utils.audio_lock import AUDIO_DEVICE_LOCK
+
+            with AUDIO_DEVICE_LOCK:
+                if self.input_device_name:
+                    audio = pyaudio.PyAudio()
+                    try:
+                        resolved_index = resolve_input_device_index(
+                            self.input_device_name,
+                            audio,
+                            sample_rate=self.sample_rate,
+                            input_format=pyaudio.paInt16,
+                        )
+                    finally:
+                        audio.terminate()
+                    if resolved_index is not None:
+                        # Stable name selection takes precedence over the legacy
+                        # numeric index so wake detection and STT share a device.
+                        self.device_index = resolved_index
+                    elif self.device_index is None:
+                        logger.warning(
+                            "STT input '%s' not found; using system default microphone",
+                            self.input_device_name,
+                        )
+                mic_kwargs = {"sample_rate": self.sample_rate}
+                if self.device_index is not None:
+                    mic_kwargs["device_index"] = self.device_index
+                self._persistent_mic = sr.Microphone(**mic_kwargs)
+                # Enter the context to open the PyAudio stream and keep it open
+                self._persistent_mic.__enter__()
             logger.info("STT: Persistent microphone initialized and pre-warmed")
         except Exception as e:
             logger.error(f"STT: Failed to initialize persistent microphone: {e}")
             self._persistent_mic = None
+
+    def refresh_microphone(self) -> bool:
+        """Reopen the input stream after a wake-word handoff.
+
+        USB microphones and their Windows audio drivers can leave an otherwise
+        valid long-lived PortAudio stream silent after a period of inactivity.
+        The wake detector has released its stream before Aiden plays the
+        acknowledgement, so reopening the stream before that cue ensures the
+        cue only plays once the microphone is genuinely ready.
+        """
+        previous_mic = self._persistent_mic
+        self._persistent_mic = None
+
+        try:
+            if previous_mic is not None:
+                from src.utils.audio_lock import AUDIO_DEVICE_LOCK
+
+                with AUDIO_DEVICE_LOCK:
+                    previous_mic.__exit__(None, None, None)
+            logger.info("STT: Refreshing persistent microphone after wake activation")
+        except Exception as exc:
+            # Continue with a new stream even if Windows already invalidated
+            # the old one while the device was idle.
+            logger.debug("STT: Could not close stale microphone stream: %s", exc)
+
+        self._init_persistent_mic()
+        return self._persistent_mic is not None
 
     def _ensure_mic(self) -> sr.Microphone:
         """Ensure persistent microphone is ready."""

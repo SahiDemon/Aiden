@@ -125,6 +125,23 @@ def test_microphone_buffer_is_flushed_before_ready_signal(monkeypatch):
     ]
 
 
+def test_microphone_is_reopened_for_the_wake_to_stt_handoff(monkeypatch):
+    engine = STTEngine.__new__(STTEngine)
+    events = []
+    engine._persistent_mic = SimpleNamespace(
+        __exit__=lambda *_args: events.append("closed"),
+    )
+
+    def reopen():
+        events.append("opened")
+        engine._persistent_mic = object()
+
+    monkeypatch.setattr(engine, "_init_persistent_mic", reopen)
+
+    assert engine.refresh_microphone() is True
+    assert events == ["closed", "opened"]
+
+
 @pytest.mark.asyncio
 async def test_slow_spotify_does_not_block_listening_readiness(monkeypatch):
     router = MediaRouter.__new__(MediaRouter)
