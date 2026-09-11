@@ -70,6 +70,11 @@ def main() -> int:
         default=0.25,
         help="Base-model score at which the personal verifier is evaluated",
     )
+    parser.add_argument(
+        "--target-phrase",
+        default="",
+        help="Evaluate only this positive phrase; negatives are always retained",
+    )
     args = parser.parse_args()
 
     if not 0.0 <= args.verifier_gate <= 1.0:
@@ -90,9 +95,16 @@ def main() -> int:
         inference_framework="onnx",
     )
 
+    target_phrase = args.target_phrase.strip().casefold()
     evaluated = []
     for item in manifest["samples"]:
         if item["split"] not in {"holdout", "acceptance"}:
+            continue
+        if (
+            target_phrase
+            and item["label"] == "positive"
+            and str(item.get("phrase", "")).strip().casefold() != target_phrase
+        ):
             continue
         scores, duration = score_clip(model, dataset / item["path"], label)
         evaluated.append((item, scores, duration))
@@ -176,6 +188,7 @@ def main() -> int:
             "estimated_false_positives_per_hour": round(fp_per_hour, 4),
             "maximum_false_positives_per_hour": MAX_FALSE_POSITIVES_PER_HOUR,
             "holdout_clips": len(holdout),
+            "target_phrase": args.target_phrase or None,
             "acceptance": acceptance_metrics,
             "deployment_ready": deployment_ready,
         },
