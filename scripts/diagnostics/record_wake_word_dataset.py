@@ -14,6 +14,7 @@ from pathlib import Path
 import pyaudio
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SAMPLE_RATE = 16_000
 SAMPLE_WIDTH = 2
 CHANNELS = 1
@@ -124,7 +125,11 @@ def countdown(label: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output", default=".local/wake-word")
+    parser.add_argument(
+        "--output",
+        default=str(PROJECT_ROOT / ".local" / "wake-word"),
+        help="Local dataset directory (defaults to this repository's .local/wake-word)",
+    )
     parser.add_argument("--device-name", default="USB PnP Audio Device")
     parser.add_argument("--skip-long-negatives", action="store_true")
     parser.add_argument(
