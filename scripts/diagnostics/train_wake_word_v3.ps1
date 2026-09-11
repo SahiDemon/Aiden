@@ -1,7 +1,8 @@
 param(
     [string]$Distro = 'Ubuntu-24.04',
     [string]$ModelName = 'aiden_v3',
-    [string]$ConfigFile = 'wake_word_v3.yml'
+    [string]$ConfigFile = 'wake_word_v3.yml',
+    [string]$TargetDescription = 'Aiden and Hey Aiden'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -30,7 +31,7 @@ $command = @(
 Write-Host "$ModelName wake-model training" -ForegroundColor Cyan
 Write-Host "WSL distro: $Distro"
 Write-Host 'Training root: /opt/aiden-wake-training'
-Write-Host 'Target: Aiden and Hey Aiden'
+Write-Host "Target: $TargetDescription"
 Write-Host 'This window shows the real generator, augmentation, and GPU-training progress.'
 Write-Host "Saved log: $logPath"
 Write-Host ''
