@@ -145,16 +145,6 @@ class AidenAssistant:
         
         logger.info(f"Aiden Assistant initialized with {self.settings.app.llm_provider.upper()} LLM")
 
-    async def _play_wake_acknowledgement(self) -> None:
-        """Play the short voice wake acknowledgement before the mic-open cue."""
-        try:
-            import random
-
-            sound_name = random.choice(("mmm1", "mmm2"))
-            await self.tts.play_sound_now(sound_name)
-        except Exception as exc:
-            logger.debug("Could not play wake acknowledgement: %s", exc)
-
     async def _play_sound_reliably(self, sound_name: str) -> bool:
         """Play a cue with one retry and an audible Windows fallback."""
         for attempt in range(2):
@@ -185,9 +175,10 @@ class AidenAssistant:
         return False
 
     async def _play_activation_ready_cue(self, from_hotkey: bool) -> None:
-        """Play acknowledgement (for wake word) followed by the speak-now cue."""
-        if not from_hotkey:
-            await self._play_wake_acknowledgement()
+        """Play one neutral cue once the microphone is ready for speech."""
+        # Keep wake acknowledgement silent.  The old spoken "mmm" samples
+        # were played on every detected wake phrase, including false positives,
+        # which made missed commands sound like a second activation.
         await self._play_sound_reliably("activation")
 
     async def _play_continuous_command_confirmation(self) -> None:
@@ -609,6 +600,9 @@ class AidenAssistant:
                     return "I couldn't move Spotify to that device."
                 return message or "I couldn't complete that on Spotify."
 
+            if data_type == "jellyfin":
+                return message or "I couldn't control Jellyfin playback."
+
             if data_type == "browser_media":
                 params = result.get("params") or {}
                 action = (params.get("action") or "").lower()
@@ -726,7 +720,6 @@ class AidenAssistant:
         from src.utils.websocket_broadcast import broadcast_voice_status
 
         duck_state = None
-        duck_state_consumed = False
 
         # Prepare media ducking before the mic-open cue so STT can start as soon
         # as the sound finishes instead of doing this work afterward.
@@ -752,9 +745,6 @@ class AidenAssistant:
             mic_ready = await asyncio.to_thread(self.stt.refresh_microphone)
             if not mic_ready:
                 logger.warning("STT microphone refresh failed; attempting normal listen")
-            # The acknowledgement confirms the wake word, then activation.mp3
-            # is the precise speak-now cue.
-            await self._play_activation_ready_cue(from_hotkey)
         
         import time as _time
         _t0 = _time.monotonic()
@@ -762,7 +752,6 @@ class AidenAssistant:
         try:
             # ── Step 1: STT ──────────────────────────────────────────────
             _t_stt_start = _time.monotonic()
-            duck_state_consumed = True
             if captured_command and wake_detection is not None:
                 success, user_text, error = await self.stt.transcribe_captured_pcm(
                     wake_detection.command_audio or b"",
@@ -775,12 +764,13 @@ class AidenAssistant:
                     mic_ready = await asyncio.to_thread(self.stt.refresh_microphone)
                     if not mic_ready:
                         logger.warning("STT microphone refresh failed; attempting normal listen")
-                    await self._play_activation_ready_cue(from_hotkey=False)
                     self._is_listening = True
                     success, user_text, error = await self.stt.transcribe(
                         play_activation_sound=False,
                         duck_state=duck_state,
                         media_already_ducked=True,
+                        restore_media=False,
+                        ready_cue=lambda: self._play_activation_ready_cue(from_hotkey=False),
                     )
                     self._is_listening = False
             else:
@@ -789,6 +779,8 @@ class AidenAssistant:
                     play_activation_sound=False,
                     duck_state=duck_state,
                     media_already_ducked=True,
+                    restore_media=False,
+                    ready_cue=lambda: self._play_activation_ready_cue(from_hotkey),
                 )
                 self._is_listening = False
             logger.info("[TIMING] STT: %.0f ms", (_time.monotonic() - _t_stt_start) * 1000)
@@ -844,12 +836,18 @@ class AidenAssistant:
             # Broadcast idle status on error
             await broadcast_voice_status("idle", speaking=False, active=False)
         finally:
-            if duck_state is not None and not duck_state_consumed:
+            if duck_state is not None:
                 try:
                     from src.media.media_router import get_media_router
+                    # The media state belongs to this whole voice interaction,
+                    # not just microphone capture.  Keeping it paused until
+                    # the queued reply is audible prevents music from fighting
+                    # Aiden's response and reliably resumes only what Aiden
+                    # paused once the interaction is complete.
+                    await self._wait_for_voice_output()
                     await get_media_router().restore_after_listening(duck_state)
                 except Exception as exc:
-                    logger.debug(f"STT media restore skipped after activation failure: {exc}")
+                    logger.debug(f"Voice interaction media restore skipped: {exc}")
             self._is_listening = False
             self.is_processing = False
             # Broadcast idle status when conversation ends
@@ -867,6 +865,25 @@ class AidenAssistant:
                             ww_manager.detector.resume()
             except Exception as e:
                 logger.debug(f"Could not resume wake word detector: {e}")
+
+    async def _wait_for_voice_output(self) -> None:
+        """Wait for background response generation and queued playback to end."""
+        # _process_user_message intentionally starts some replies in the
+        # background. Yielding once lets those tasks register themselves before
+        # inspecting the set, preventing a queue-empty race that could resume
+        # music before the reply has even been generated.
+        await asyncio.sleep(0)
+        current_task = asyncio.current_task()
+        speak_tasks = [
+            task for task in self._speak_tasks
+            if task is not current_task and not task.done()
+        ]
+        if speak_tasks:
+            _, pending = await asyncio.wait(speak_tasks, timeout=60.0)
+            if pending:
+                logger.warning("Timed out waiting for response generation before media restore.")
+
+        await self.tts.wait_until_done(timeout=60.0)
 
     def request_immediate_stop(self) -> bool:
         """Best-effort synchronous stop for hotkey threads."""

@@ -113,7 +113,7 @@ system_prompt: |
   - ups_control: {"type": "ups_control", "params": {"action": "confirm_shutdown|cancel_shutdown|get_status"}}
   - shell_command: {"type": "shell_command", "params": {"command": "taskkill /F /IM app.exe"}}
   - system_control: {"type": "system_control", "params": {"action": "wifi.turn_on|wifi.turn_off|wifi.disconnect_current|bluetooth.turn_on|bluetooth.turn_off|system.airplane_mode_on|system.airplane_mode_off|power.enable_saving_mode|power.enable_balanced_mode|display.set_brightness|display.turn_off_screen|audio.mute|audio.unmute|audio.toggle_mute|audio.set_volume|audio.volume_up|audio.volume_down|audio.set_output|system.battery_status|system.cpu_usage|system.gpu_status", "level": 50, "target": "speaker|headphone"}}
-  - media_control: {"type": "media_control", "params": {"action": "play|pause|resume|next|previous|play_pause|seek_forward|seek_backward|mute|unmute|set_volume|play_track|play_playlist|play_liked_songs|transfer|get_current_track", "target": "spotify|youtube|youtube_music", "query": "song or playlist name", "volume": 50, "device_name": "desktop"}}
+  - media_control: {"type": "media_control", "params": {"action": "play|pause|resume|next|previous|play_pause|seek_forward|seek_backward|mute|unmute|set_volume|play_track|play_playlist|play_liked_songs|transfer|get_current_track", "target": "spotify|jellyfin|youtube|youtube_music", "query": "song or playlist name", "volume": 50, "device_name": "desktop"}}
   - self_termination: {"type": "self_termination", "params": {}}
   - restart_application: {"type": "restart_application", "params": {}}
 
@@ -179,6 +179,7 @@ system_prompt: |
   - If the user simply says "play Spotify" or "play something on Spotify", you can use {"action": "play", "target": "spotify"} (defaults to Liked Songs) or {"action": "play_liked_songs", "target": "spotify"}.
   - If the user says "play <song/artist/genre> on Spotify", ALWAYS create media_control {"action": "play_track", "target": "spotify", "query": "<user text>"} rather than asking a follow-up.
   - When user asks "what song is this?", "what's playing?", "identify this song", "what am I listening to?", use {"action": "get_current_track", "target": "spotify"}.
+  - For Jellyfin-specific requests ("pause Jellyfin", "resume my Jellyfin movie"), use media_control with target:"jellyfin". Jellyfin supports play/resume and pause for existing playback sessions.
   
   DEVICE PREFERENCE & AUTO-TRANSFER:
   - DEFAULT DEVICE: When NO device mentioned, playback defaults to PC/Desktop (Computer type device).
