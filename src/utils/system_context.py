@@ -9,6 +9,7 @@ import glob
 import psutil
 import json
 import logging
+from itertools import islice
 from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
 from difflib import get_close_matches
@@ -286,7 +287,7 @@ class SystemContextProvider:
             
             # Format for AI - provide app names WITH paths for better context
             app_list = []
-            for key, app in sorted(apps.items(), key=lambda x: x[1]['display_name'].lower()):
+            for key, app in islice(sorted(apps.items(), key=lambda x: x[1]['display_name'].lower()), 80):
                 name = app["display_name"]
                 exe_path = app.get("exe_path", "")
                 install_path = app.get("install_path", "")
