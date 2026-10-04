@@ -6,10 +6,13 @@ from typing import Any, Optional
 import httpx
 
 from src.utils.config import get_settings
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class JellyfinError(Exception):
-    pass
+    """Jellyfin could not complete a playback request."""
 
 
 class JellyfinClient:
@@ -50,6 +53,44 @@ class JellyfinClient:
                 response.raise_for_status()
         except httpx.HTTPError as exc:
             raise JellyfinError("Jellyfin did not accept the playback command.") from exc
+
+    @staticmethod
+    def _can_control(session: dict[str, Any]) -> bool:
+        return bool(session.get("Id") and session.get("NowPlayingItem")) and session.get("SupportsMediaControl", True)
+
+    async def get_playing_session_ids(self) -> list[str]:
+        return [session["Id"] for session in await self.get_sessions()
+                if self._can_control(session) and (session.get("PlayState") or {}).get("IsPaused") is False]
+
+    async def get_paused_session_ids(self) -> list[str]:
+        return [session["Id"] for session in await self.get_sessions()
+                if self._can_control(session) and (session.get("PlayState") or {}).get("IsPaused") is True]
+
+    async def pause_session(self, session_id: str) -> None:
+        await self.set_paused(session_id, paused=True)
+
+    async def resume_session(self, session_id: str) -> None:
+        await self.set_paused(session_id, paused=False)
+
+    async def pause_playing_sessions(self) -> list[str]:
+        paused_ids = []
+        for session_id in await self.get_playing_session_ids():
+            try:
+                await self.pause_session(session_id)
+                paused_ids.append(session_id)
+            except JellyfinError as exc:
+                logger.debug("Could not pause Jellyfin session %s: %s", session_id, exc)
+        return paused_ids
+
+    async def resume_sessions(self, session_ids: list[str]) -> list[str]:
+        resumed_ids = []
+        for session_id in session_ids:
+            try:
+                await self.resume_session(session_id)
+                resumed_ids.append(session_id)
+            except JellyfinError as exc:
+                logger.debug("Could not resume Jellyfin session %s: %s", session_id, exc)
+        return resumed_ids
 
     async def search_movies(self, query: str) -> list[dict[str, Any]]:
         """Find movies in the Jellyfin library by title."""

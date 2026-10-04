@@ -390,7 +390,7 @@ class CommandExecutor:
             return False, None
 
     async def _handle_media_control(self, params: Dict[str, Any]) -> tuple[bool, Optional[dict]]:
-        """Route media commands to Spotify or browser controllers."""
+        """Route media commands to Spotify, Jellyfin, or browser controllers."""
         action = params.get("action")
         if not action:
             logger.error("Media control missing action parameter.")

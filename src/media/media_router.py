@@ -150,11 +150,18 @@ class MediaRouter:
             logger.debug(f"Spotify ducking skipped: {exc}")
 
         try:
-            remaining = _SPOTIFY_DUCK_DEADLINE_SECONDS - (loop.time() - readiness_started)
-            if remaining > 0:
-                state["jellyfin_session_ids"] = await asyncio.wait_for(jellyfin_duck_task, timeout=remaining)
+            if jellyfin_duck_task.done():
+                state["jellyfin_session_ids"] = jellyfin_duck_task.result()
             else:
-                jellyfin_duck_task.cancel()
+                remaining = _SPOTIFY_DUCK_DEADLINE_SECONDS - (loop.time() - readiness_started)
+                if remaining <= 0:
+                    jellyfin_duck_task.cancel()
+                    try:
+                        await jellyfin_duck_task
+                    except asyncio.CancelledError:
+                        pass
+                    raise TimeoutError
+                state["jellyfin_session_ids"] = await asyncio.wait_for(jellyfin_duck_task, timeout=remaining)
         except Exception as exc:
             logger.debug(f"Jellyfin ducking skipped: {exc}")
 
@@ -206,16 +213,10 @@ class MediaRouter:
         return True, device_id
 
     async def _duck_jellyfin_for_listening(self) -> list[str]:
-        if not self.jellyfin_client.is_enabled():
+        client = getattr(self, "jellyfin_client", None)
+        if client is None or not client.is_enabled():
             return []
-        paused_ids = []
-        for session in await self.jellyfin_client.get_sessions():
-            if session.get("NowPlayingItem") and not session.get("PlayState", {}).get("IsPaused", True):
-                session_id = session.get("Id")
-                if session_id:
-                    await self.jellyfin_client.set_paused(session_id, paused=True)
-                    paused_ids.append(session_id)
-        return paused_ids
+        return await client.pause_playing_sessions()
 
     @staticmethod
     def _find_jellyfin_player(sessions: list[dict]) -> Optional[dict]:
@@ -272,8 +273,9 @@ class MediaRouter:
             logger.debug(f"Browser media restore skipped: {exc}")
 
         try:
-            for session_id in state.get("jellyfin_session_ids") or []:
-                await self.jellyfin_client.set_paused(session_id, paused=False)
+            session_ids = state.get("jellyfin_session_ids") or []
+            if session_ids:
+                await self.jellyfin_client.resume_sessions(session_ids)
             if state.get("jellyfin_session_ids"):
                 logger.info("Resumed Jellyfin after voice interaction.")
         except Exception as exc:
