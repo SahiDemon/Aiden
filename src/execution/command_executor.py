@@ -18,6 +18,22 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+_SCHEDULABLE_COMMAND_TYPES = {
+    "launch_app", "kill_process", "system_command", "system_control",
+    "fan_control", "media_control", "wake_word_control", "ups_control",
+    "shell_command",
+}
+_LEGACY_MEDIA_ACTIONS = {
+    "play", "pause", "resume", "next", "previous", "set_volume",
+    "play_track", "play_playlist", "play_liked_songs", "transfer",
+    "get_current_track", "identify", "what_song",
+}
+_SCHEDULE_METADATA_KEYS = {
+    "action", "duration_seconds", "user_id", "conversation_id", "command",
+    "command_params", "params",
+}
+
+
 class CommandExecutor:
     """
     Execute commands from AI with proper routing and error handling
@@ -36,6 +52,7 @@ class CommandExecutor:
         """Initialize timer scheduler (async)"""
         if not self.timer_scheduler:
             self.timer_scheduler = await get_timer_scheduler()
+            self.timer_scheduler.set_command_executor(self.execute)
     
     def set_esp32_client(self, esp32_client):
         """Set ESP32 client for smart home control"""
@@ -181,7 +198,7 @@ class CommandExecutor:
             return results
 
     def _normalize_execution_order(self, commands: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Put audio output switching before playback commands."""
+        """Order dependent actions, with system power actions last."""
         if len(commands) < 2:
             return commands
 
@@ -198,12 +215,15 @@ class CommandExecutor:
                 if media_action in {"play", "resume", "play_track", "play_playlist", "play_liked_songs"}:
                     return 1
 
+            if command_type == "system_command" and action in {"shutdown", "restart", "sleep", "hibernate", "lock"}:
+                return 3
+
             return 2
 
         ordered = sorted(enumerate(commands), key=lambda item: (priority(item[1]), item[0]))
         normalized = [command for _, command in ordered]
         if normalized != commands:
-            logger.info("Reordered commands so audio output changes happen before media playback.")
+            logger.info("Reordered dependent commands before playback or system power actions.")
         return normalized
     
     async def _handle_launch_app(self, params: Dict[str, Any]) -> bool:
@@ -400,7 +420,7 @@ class CommandExecutor:
         """Handle ESP32 fan control command.
 
         For power, speed, mode, osc, and timer commands the ESP32 exposes
-        simple shortcut GET routes (e.g. GET /power, GET /speed/3).  We use
+        simple shortcut GET routes (e.g. GET /off, GET /speed/3).  We use
         direct_toggle() which fires a SINGLE HTTP request with no pre/post
         state checks, keeping latency to <200 ms on LAN.
 
@@ -421,8 +441,14 @@ class CommandExecutor:
 
         if control_id == "power" or (legacy_action and legacy_action.lower() in
                 {"on", "off", "turn_on", "turn_off", "stop", "toggle"}):
-            # Always just toggle /power — no status pre-check needed
-            shortcut_path = "/power"
+            power_target = (target or str(legacy_action or "")).lower()
+            if power_target in {"on", "turn_on"}:
+                target, shortcut_path = "on", "/on"
+            elif power_target in {"off", "turn_off", "stop"}:
+                target, shortcut_path = "off", "/off"
+            else:
+                shortcut_path = "/power"
+            control_id = "power"
         elif control_id in {"speed", "mode", "timer", "osc"} and target is not None:
             shortcut_path = f"/{control_id}/{target}"
         elif control_id in {"speed", "mode", "timer", "osc"} and not target:
@@ -441,6 +467,8 @@ class CommandExecutor:
                 }
             payload = dict(result)
             payload["type"] = "fan_control"
+            payload["control_id"] = control_id
+            payload["target"] = target
             return True, payload
 
         # ── Slow path: full metadata-aware request ────────────────────────
@@ -689,16 +717,39 @@ class CommandExecutor:
 
     
     async def _handle_scheduled_command(self, params: Dict[str, Any]) -> tuple[bool, Optional[str]]:
-        """Handle scheduled command (timer) creation"""
+        """Schedule a normal supported command without blocking future requests."""
         if not self.timer_scheduler:
             await self.initialize_timer_scheduler()
         
-        action = params.get("action", "").lower()
+        action = str(params.get("action", "")).lower()
+        command_data = params.get("command")
         duration_seconds = params.get("duration_seconds", 0)
         user_id = params.get("user_id", "default")
         conversation_id = params.get("conversation_id")
-        
-        if not action:
+
+        # Older prompt revisions emitted abbreviated timer objects such as
+        # {action: "play", target: "spotify"} or
+        # {action: "kill_process", name: "notepad.exe"}.  Convert those
+        # into the canonical nested command before validating, so valid user
+        # requests do not fail merely because a model used an older schema.
+        if command_data is None and action:
+            command_data = self._normalize_legacy_scheduled_command(action, params)
+
+        if command_data is not None:
+            if (
+                not isinstance(command_data, dict)
+                or not command_data.get("type")
+                or not isinstance(command_data.get("params", {}), dict)
+            ):
+                return False, "Scheduled command must include a command with a type"
+            command_type = str(command_data["type"]).lower()
+            if command_type in {"scheduled_command", "cancel_timer", "self_termination", "restart_application"}:
+                return False, f"Cannot schedule command type: {command_type}"
+            if command_type not in _SCHEDULABLE_COMMAND_TYPES:
+                return False, f"Unsupported scheduled command type: {command_type}"
+            command_data = {"type": command_type, "params": command_data.get("params", {})}
+            action = command_type
+        elif not action:
             logger.error("No action provided for scheduled command")
             return False, "No action specified"
         
@@ -707,13 +758,16 @@ class CommandExecutor:
                 f"scheduled_command received duration_seconds={duration_seconds} for action='{action}'. "
                 "Treating as immediate system_command."
             )
-            # Treat as an immediate action — just run it now
+            # Treat a zero-delay request as the equivalent immediate command.
+            if command_data is not None:
+                result = await self.execute(command_data, conversation_id)
+                return result["success"], result.get("response_data")
             return await self._handle_system_command({"action": action}), None
 
         
-        # Validate action
+        # Legacy power timers remain valid in their existing compact format.
         valid_actions = ["shutdown", "restart", "sleep", "hibernate", "lock"]
-        if action not in valid_actions:
+        if command_data is None and action not in valid_actions:
             logger.error(f"Invalid action: {action}. Valid actions: {valid_actions}")
             return False, f"Invalid action. Valid actions: {', '.join(valid_actions)}"
         
@@ -722,7 +776,8 @@ class CommandExecutor:
                 action=action,
                 duration_seconds=duration_seconds,
                 user_id=user_id,
-                conversation_id=conversation_id
+                conversation_id=conversation_id,
+                command_data=command_data,
             )
             
             if timer:
@@ -734,6 +789,31 @@ class CommandExecutor:
         except Exception as e:
             logger.error(f"Error creating timer: {e}")
             return False, f"Error creating timer: {str(e)}"
+
+    @staticmethod
+    def _normalize_legacy_scheduled_command(action: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Translate supported pre-nested timer shapes into normal commands."""
+        legacy_params = params.get("command_params")
+        if legacy_params is None:
+            legacy_params = params.get("params")
+        direct_params = {
+            key: value for key, value in params.items()
+            if key not in _SCHEDULE_METADATA_KEYS
+        }
+
+        if action in _SCHEDULABLE_COMMAND_TYPES:
+            command_params = legacy_params if isinstance(legacy_params, dict) else direct_params
+            return {"type": action, "params": command_params}
+
+        # Some models abbreviated media_control to its media action. Keep the
+        # requested provider and query intact rather than treating it as a
+        # legacy power timer.
+        if action in _LEGACY_MEDIA_ACTIONS:
+            command_params = dict(legacy_params) if isinstance(legacy_params, dict) else direct_params
+            command_params.setdefault("action", action)
+            return {"type": "media_control", "params": command_params}
+
+        return None
     
     async def _handle_cancel_timer(self, params: Dict[str, Any]) -> bool:
         """Handle timer cancellation"""

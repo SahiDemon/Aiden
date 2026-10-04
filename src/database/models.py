@@ -105,11 +105,14 @@ class UserPreferences(Base):
 
 
 class ScheduledTimer(Base):
-    """Scheduled system timers for shutdown, hibernate, etc."""
+    """A persisted delayed command, including legacy power-action timers."""
     __tablename__ = "scheduled_timers"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     action = Column(String(50), nullable=False)  # shutdown, hibernate, restart, etc.
+    # The complete command to run when the timer elapses.  ``None`` represents
+    # a legacy power timer whose action is handled by TimerScheduler directly.
+    command_data = Column(JSONB, nullable=True)
     scheduled_time = Column(DateTime, nullable=False)  # When to execute
     duration_seconds = Column(Integer, nullable=False)  # Original duration in seconds
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
@@ -122,6 +125,7 @@ class ScheduledTimer(Base):
         return {
             "id": str(self.id),
             "action": self.action,
+            "command_data": self.command_data,
             "scheduled_time": self.scheduled_time.isoformat() if self.scheduled_time else None,
             "duration_seconds": self.duration_seconds,
             "created_at": self.created_at.isoformat() if self.created_at else None,

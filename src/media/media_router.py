@@ -4,11 +4,15 @@ Media router that prioritizes Spotify or browser-based media control.
 from __future__ import annotations
 
 import asyncio
+from difflib import SequenceMatcher
+import re
+import unicodedata
 from typing import Optional, Tuple
 
 # from src.execution.app_launcher import get_app_launcher  <-- Moved to inside method to avoid circular import
 from src.media.audio_session_ducker import get_audio_session_ducker
 from src.media.browser_media_controller import get_browser_media_controller
+from src.media.jellyfin_client import JellyfinClient, JellyfinError, get_jellyfin_client
 from src.media.spotify_client import (
     SpotifyClient,
     SpotifyError,
@@ -26,13 +30,44 @@ _SPOTIFY_DUCK_DEADLINE_SECONDS = 0.6
 # player after a cold launch or OAuth reauthorization. Poll quickly at first,
 # then back off while allowing up to 30 seconds for device registration.
 _SPOTIFY_DESKTOP_POLL_DELAYS_SECONDS = (1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0, 5.0, 5.0)
+_JELLYFIN_PLAYER_POLL_DELAYS_SECONDS = (1.0, 1.0, 2.0, 2.0, 3.0, 3.0)
+
+
+def _normalized_jellyfin_title(value: str) -> str:
+    ascii_text = unicodedata.normalize("NFKD", value or "").encode("ascii", "ignore").decode("ascii")
+    normalized = " ".join(re.findall(r"[a-z0-9]+", ascii_text.casefold()))
+    return re.sub(r"^(?:the|a|an) ", "", normalized)
+
+
+def _select_jellyfin_title(query: str, candidates: list[dict], allowed_types: set[str]) -> Optional[dict]:
+    """Prefer the named title; use a typo match only when it is unambiguous."""
+    wanted = _normalized_jellyfin_title(query)
+    eligible = [item for item in candidates if item.get("Id") and item.get("Type") in allowed_types]
+    exact = [item for item in eligible if _normalized_jellyfin_title(item.get("Name", "")) == wanted]
+    if len(exact) == 1:
+        return exact[0]
+    if len(exact) > 1:
+        return None
+
+    ranked = sorted(
+        ((SequenceMatcher(None, wanted, _normalized_jellyfin_title(item.get("Name", ""))).ratio(), item)
+         for item in eligible),
+        key=lambda pair: pair[0],
+        reverse=True,
+    )
+    if not ranked or ranked[0][0] < 0.86:
+        return None
+    if len(ranked) > 1 and ranked[0][0] - ranked[1][0] < 0.08:
+        return None
+    return ranked[0][1]
 
 
 class MediaRouter:
-    """Routes media commands to Spotify or browser controllers."""
+    """Routes media commands to Spotify, Jellyfin, or browser controllers."""
 
     def __init__(self):
         self.spotify_client: SpotifyClient = get_spotify_client()
+        self.jellyfin_client: JellyfinClient = get_jellyfin_client()
         self.browser_controller = get_browser_media_controller()
         self.settings = get_settings()
         from src.execution.app_launcher import get_app_launcher
@@ -52,6 +87,8 @@ class MediaRouter:
             return await self.browser_controller.control(action_alias(action), target, query)
         if target == "spotify":
             return await self._handle_spotify(action, query, entity_type, volume, device_name)
+        if target == "jellyfin":
+            return await self._handle_jellyfin(action, query)
         # Generic route: prefer Spotify if actively playing
         if await self._spotify_is_active():
             return await self._handle_spotify(action, query, entity_type, volume, device_name)
@@ -62,6 +99,8 @@ class MediaRouter:
         state = {
             "spotify_was_playing": False,
             "spotify_device_id": None,
+            "jellyfin_session_ids": [],
+            "browser_media": {"toggled_handles": []},
             "muted_app_sessions": {"muted_sessions": []},
         }
 
@@ -71,6 +110,13 @@ class MediaRouter:
         loop = asyncio.get_running_loop()
         readiness_started = loop.time()
         spotify_duck_task = asyncio.create_task(self._duck_spotify_for_listening())
+        jellyfin_duck_task = asyncio.create_task(self._duck_jellyfin_for_listening())
+        browser_controller = getattr(self, "browser_controller", None)
+        browser_duck_task = (
+            asyncio.create_task(browser_controller.duck_for_listening())
+            if browser_controller is not None
+            else None
+        )
 
         # Let the Spotify coroutine initiate its request, then perform local
         # COM audio-session work on the owning Windows event-loop thread.
@@ -103,6 +149,40 @@ class MediaRouter:
         except Exception as exc:
             logger.debug(f"Spotify ducking skipped: {exc}")
 
+        try:
+            remaining = _SPOTIFY_DUCK_DEADLINE_SECONDS - (loop.time() - readiness_started)
+            if remaining > 0:
+                state["jellyfin_session_ids"] = await asyncio.wait_for(jellyfin_duck_task, timeout=remaining)
+            else:
+                jellyfin_duck_task.cancel()
+        except Exception as exc:
+            logger.debug(f"Jellyfin ducking skipped: {exc}")
+
+        if browser_duck_task is not None:
+            try:
+                if browser_duck_task.done():
+                    state["browser_media"] = browser_duck_task.result()
+                else:
+                    remaining = _SPOTIFY_DUCK_DEADLINE_SECONDS - (loop.time() - readiness_started)
+                    if remaining <= 0:
+                        browser_duck_task.cancel()
+                        try:
+                            await browser_duck_task
+                        except asyncio.CancelledError:
+                            pass
+                        raise TimeoutError
+                    state["browser_media"] = await asyncio.wait_for(
+                        browser_duck_task,
+                        timeout=remaining,
+                    )
+            except TimeoutError:
+                logger.debug(
+                    "Browser media ducking exceeded %.1fs readiness deadline; continuing without it.",
+                    _SPOTIFY_DUCK_DEADLINE_SECONDS,
+                )
+            except Exception as exc:
+                logger.debug(f"Browser media ducking skipped: {exc}")
+
         return state
 
     async def _duck_spotify_for_listening(self) -> Tuple[bool, Optional[str]]:
@@ -125,6 +205,51 @@ class MediaRouter:
         logger.info("Paused Spotify for STT listening window.")
         return True, device_id
 
+    async def _duck_jellyfin_for_listening(self) -> list[str]:
+        if not self.jellyfin_client.is_enabled():
+            return []
+        paused_ids = []
+        for session in await self.jellyfin_client.get_sessions():
+            if session.get("NowPlayingItem") and not session.get("PlayState", {}).get("IsPaused", True):
+                session_id = session.get("Id")
+                if session_id:
+                    await self.jellyfin_client.set_paused(session_id, paused=True)
+                    paused_ids.append(session_id)
+        return paused_ids
+
+    @staticmethod
+    def _find_jellyfin_player(sessions: list[dict]) -> Optional[dict]:
+        return next(
+            (session for session in sessions if session.get("Id") and session.get("SupportsRemoteControl", True)),
+            None,
+        )
+
+    async def _ensure_jellyfin_player(self, sessions: list[dict]) -> tuple[Optional[dict], list[dict]]:
+        """Launch the desktop player and wait for it to register with Jellyfin."""
+        player = self._find_jellyfin_player(sessions)
+        if player:
+            return player, sessions
+
+        try:
+            launched = await self.app_launcher.launch_app("jellyfin")
+        except Exception as exc:
+            logger.debug("Could not launch Jellyfin Media Player: %s", exc)
+            launched = False
+        if not launched:
+            return None, sessions
+
+        for delay in _JELLYFIN_PLAYER_POLL_DELAYS_SECONDS:
+            await asyncio.sleep(delay)
+            try:
+                sessions = await self.jellyfin_client.get_sessions()
+            except JellyfinError:
+                continue
+            player = self._find_jellyfin_player(sessions)
+            if player:
+                logger.info("Jellyfin Media Player connected after launch.")
+                return player, sessions
+        return None, sessions
+
     async def restore_after_listening(self, state: Optional[dict]) -> None:
         """Restore media playback after STT completes."""
         if not state:
@@ -138,11 +263,122 @@ class MediaRouter:
             logger.debug(f"App-session restore skipped: {exc}")
 
         try:
+            browser_controller = getattr(self, "browser_controller", None)
+            if browser_controller is not None:
+                await browser_controller.restore_after_listening(
+                    state.get("browser_media") or {}
+                )
+        except Exception as exc:
+            logger.debug(f"Browser media restore skipped: {exc}")
+
+        try:
+            for session_id in state.get("jellyfin_session_ids") or []:
+                await self.jellyfin_client.set_paused(session_id, paused=False)
+            if state.get("jellyfin_session_ids"):
+                logger.info("Resumed Jellyfin after voice interaction.")
+        except Exception as exc:
+            logger.debug(f"Jellyfin restore skipped: {exc}")
+
+        try:
             if state.get("spotify_was_playing"):
                 await self.spotify_client.play(device_id=state.get("spotify_device_id"))
                 logger.info("Resumed Spotify after STT listening window.")
         except Exception as exc:
             logger.debug(f"Spotify restore skipped: {exc}")
+
+    async def _handle_jellyfin(self, action: str, query: Optional[str] = None) -> Tuple[bool, dict]:
+        if not self.jellyfin_client.is_enabled():
+            return False, {"type": "jellyfin", "message": "Jellyfin isn't set up yet."}
+        # The general command schema uses play_track for a titled media item.
+        if action == "play_track":
+            action = "play_title"
+        if action not in {"pause", "play", "resume", "play_title", "play_movie", "play_series"}:
+            return False, {"type": "jellyfin", "message": "I can play movies or shows, or pause and resume Jellyfin."}
+        try:
+            sessions = await self.jellyfin_client.get_sessions()
+            if action in {"play_title", "play_movie", "play_series"}:
+                if not query:
+                    return False, {"type": "jellyfin", "message": "Tell me which title to play on Jellyfin."}
+                allowed_types = {"Movie", "Series"} if action == "play_title" else {"Movie" if action == "play_movie" else "Series"}
+                types = tuple(sorted(allowed_types))
+                candidates = await self.jellyfin_client.search_titles(query, item_types=types)
+                title = _select_jellyfin_title(query, candidates, allowed_types)
+                if title is None or _normalized_jellyfin_title(title.get("Name", "")) != _normalized_jellyfin_title(query):
+                    # SearchTerm can rank partial matches ahead of an exact
+                    # library title, and sometimes returns duplicate series.
+                    # Compare against the catalog before trusting a typo hit.
+                    catalog = await self.jellyfin_client.list_titles(item_types=types)
+                    title = _select_jellyfin_title(query, catalog, allowed_types)
+                if title is None:
+                    return False, {"type": "jellyfin", "message": f"I couldn't find {query} in Jellyfin."}
+
+                item = title
+                resume_ticks = 0
+                resuming = False
+
+                # A series needs a signed-in Jellyfin window to find its next
+                # episode.  Previously this check happened first, which meant
+                # a request could fail without even opening Jellyfin.
+                player, sessions = await self._ensure_jellyfin_player(sessions)
+                if not player:
+                    return False, {"type": "jellyfin", "message": "Jellyfin isn't ready yet. Open it, then try again."}
+
+                if title["Type"] == "Series":
+                    viewer = player.get("UserId") or next(
+                        (session.get("UserId") for session in sessions if session.get("UserId")),
+                        None,
+                    )
+                    # Next Up is Jellyfin's own answer for "what should I
+                    # watch next?"  A partially watched older episode is only
+                    # a fallback, since it can otherwise override the user's
+                    # current place in a series.
+                    if viewer:
+                        item = await self.jellyfin_client.get_next_up_episode(viewer, title["Id"])
+                    if item is None or item is title:
+                        resume_items = (
+                            await self.jellyfin_client.get_resume_episodes(viewer, title["Id"])
+                            if viewer else []
+                        )
+                        in_progress = [
+                            episode for episode in resume_items
+                            if episode.get("Id") and episode.get("SeriesId") == title["Id"]
+                            and not (episode.get("UserData") or {}).get("Played")
+                            and int((episode.get("UserData") or {}).get("PlaybackPositionTicks") or 0) > 0
+                        ]
+                        if in_progress:
+                            item = max(in_progress, key=lambda episode: (episode.get("UserData") or {}).get("LastPlayedDate") or "")
+                            resume_ticks = int((item.get("UserData") or {}).get("PlaybackPositionTicks") or 0)
+                            resuming = True
+                    if item is None or item is title:
+                        item = await self.jellyfin_client.get_first_episode(viewer, title["Id"])
+                    if item is None:
+                        return False, {"type": "jellyfin", "message": f"I found {title['Name']}, but I couldn't find an episode to start."}
+                if resuming:
+                    await self.jellyfin_client.play_item(player["Id"], item["Id"], start_position_ticks=resume_ticks)
+                else:
+                    await self.jellyfin_client.play_item(player["Id"], item["Id"])
+
+                if title["Type"] == "Series":
+                    season = item.get("ParentIndexNumber")
+                    number = item.get("IndexNumber")
+                    episode_label = f"S{season} E{number}" if season is not None and number is not None else item.get("Name", "an episode")
+                    verb = "Resuming" if resuming else "Playing"
+                    return True, {"type": "jellyfin", "message": f"{verb} {title['Name']} {episode_label} on Jellyfin."}
+                year = title.get("ProductionYear")
+                label = f"{title['Name']} ({year})" if year else title["Name"]
+                return True, {"type": "jellyfin", "message": f"Playing {label} on Jellyfin."}
+            targets = [s for s in sessions if s.get("NowPlayingItem") and s.get("Id")]
+            if not targets:
+                return False, {"type": "jellyfin", "message": "I can't find anything playing in Jellyfin right now."}
+            paused = action == "pause"
+            for session in targets:
+                if bool(session.get("PlayState", {}).get("IsPaused", False)) != paused:
+                    await self.jellyfin_client.set_paused(session["Id"], paused=paused)
+            message = "Jellyfin paused." if paused else "Jellyfin playback resumed."
+            return True, {"type": "jellyfin", "message": message}
+        except JellyfinError as exc:
+            logger.warning("Jellyfin request failed: %s", exc)
+            return False, {"type": "jellyfin", "message": "I couldn't reach Jellyfin just now. Please try again."}
 
     async def _spotify_is_active(self) -> bool:
         if not self.spotify_client.is_enabled():

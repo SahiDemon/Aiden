@@ -22,7 +22,7 @@ import io
 import time
 import struct
 import threading
-from typing import Callable, Optional, Tuple, List
+from typing import Awaitable, Callable, Optional, Tuple, List
 
 import speech_recognition as sr
 try:
@@ -216,6 +216,7 @@ class STTEngine:
         # Initialize persistent microphone to eliminate startup latency
         self._persistent_mic = None
         self._init_persistent_mic()
+        self._last_activation_refresh = time.monotonic()
         selected_device_name = self._get_selected_device_name()
         logger.info(
             "STT input device: %s",
@@ -270,22 +271,21 @@ class STTEngine:
         acknowledgement, so reopening the stream before that cue ensures the
         cue only plays once the microphone is genuinely ready.
         """
-        previous_mic = self._persistent_mic
-        self._persistent_mic = None
-
-        try:
-            if previous_mic is not None:
-                from src.utils.audio_lock import AUDIO_DEVICE_LOCK
-
-                with AUDIO_DEVICE_LOCK:
-                    previous_mic.__exit__(None, None, None)
-            logger.info("STT: Refreshing persistent microphone after wake activation")
-        except Exception as exc:
-            # Continue with a new stream even if Windows already invalidated
-            # the old one while the device was idle.
-            logger.debug("STT: Could not close stale microphone stream: %s", exc)
-
+        idle_seconds = time.monotonic() - getattr(
+            self, "_last_activation_refresh", time.monotonic()
+        )
+        self._last_activation_refresh = time.monotonic()
+        was_idle = self._persistent_mic is None
+        self.close()
+        logger.info("STT: Refreshing microphone after wake activation (idle %.0fs)", idle_seconds)
         self._init_persistent_mic()
+        # The first stream after wake-word handoff has timed out even seconds
+        # after startup, while the next reopen captures speech. Rearm before
+        # the cue whenever STT was idle, not only after a long wall-clock gap.
+        if (was_idle or idle_seconds >= 20 * 60) and self._persistent_mic is not None:
+            logger.info("STT: Rearming first microphone stream before speak-now cue")
+            self.close()
+            self._init_persistent_mic()
         return self._persistent_mic is not None
 
     def _ensure_mic(self) -> sr.Microphone:
@@ -334,7 +334,9 @@ class STTEngine:
         play_activation_sound: bool = True,
         duck_state: Optional[dict] = None,
         media_already_ducked: bool = False,
+        restore_media: bool = True,
         preserve_recent_audio: bool = False,
+        ready_cue: Optional[Callable[[], Awaitable[object]]] = None,
     ) -> Tuple[bool, Optional[str], Optional[str]]:
         """
         Listen and transcribe speech to text.
@@ -353,11 +355,17 @@ class STTEngine:
                 except Exception as exc:
                     logger.debug(f"STT media ducking unavailable: {exc}")
 
-            # Play activation sound after prep and before opening the microphone.
-            if play_activation_sound:
+            # Convert the legacy flag into a cue callback. The capture worker
+            # is armed before this callback runs, so audio cannot be lost in
+            # the thread-start gap immediately after the sound.
+            if ready_cue is None and play_activation_sound:
                 from src.speech.tts import get_tts_engine
                 tts = get_tts_engine()
-                await tts.play_sound_now("activation")
+
+                async def play_default_ready_cue() -> object:
+                    return await tts.play_sound_now("activation")
+
+                ready_cue = play_default_ready_cue
 
             # Reset Silero's per-stream state before each listen session
             if self._silero:
@@ -368,20 +376,43 @@ class STTEngine:
             # acknowledgement/beep audio has been flushed from its buffer.
             loop = asyncio.get_running_loop()
             listening_ready = asyncio.Event()
+            capture_armed = asyncio.Event()
+            start_capture = threading.Event() if ready_cue is not None else None
 
             def signal_listening_ready() -> None:
                 loop.call_soon_threadsafe(listening_ready.set)
+
+            def signal_capture_armed() -> None:
+                loop.call_soon_threadsafe(capture_armed.set)
 
             listen_task = asyncio.create_task(
                 asyncio.to_thread(
                     self._listen_sync,
                     signal_listening_ready,
                     preserve_recent_audio,
+                    start_capture,
+                    signal_capture_armed,
                 )
             )
             ready_task = asyncio.create_task(listening_ready.wait())
+            armed_task = asyncio.create_task(capture_armed.wait())
 
             try:
+                if ready_cue is not None:
+                    armed_or_finished, _ = await asyncio.wait(
+                        {listen_task, armed_task},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if armed_task in armed_or_finished:
+                        logger.info("STT: Capture worker armed; playing speak-now cue")
+                        try:
+                            await ready_cue()
+                        finally:
+                            # The worker has drained acknowledgement/cue audio
+                            # continuously and can begin VAD on the next frame.
+                            start_capture.set()
+                        logger.info("STT: Speak-now cue finished; microphone is listening")
+
                 done, _ = await asyncio.wait(
                     {listen_task, ready_task},
                     return_when=asyncio.FIRST_COMPLETED,
@@ -395,8 +426,12 @@ class STTEngine:
 
                 success, audio, error = await listen_task
             finally:
+                if start_capture is not None:
+                    start_capture.set()
                 if not ready_task.done():
                     ready_task.cancel()
+                if not armed_task.done():
+                    armed_task.cancel()
 
             if self._stop_requested.is_set():
                 logger.info("STT: Stop requested after audio capture — treating listen as cancelled")
@@ -451,7 +486,7 @@ class STTEngine:
             return False, None, str(e)
         finally:
             try:
-                if active_duck_state is not None:
+                if restore_media and active_duck_state is not None:
                     from src.media.media_router import get_media_router
                     await get_media_router().restore_after_listening(active_duck_state)
             except Exception as exc:
@@ -546,6 +581,9 @@ class STTEngine:
         speech_started = False
         silence_duration = 0.0
         speech_duration = 0.0
+        frames_read = 0
+        energetic_frames = 0
+        vad_speech_frames = 0
         start_time = time.time()
         frame_duration_s = self.frame_duration_ms / 1000.0
         trailing_flags = collections.deque(maxlen=self._trailing_window_frames)
@@ -569,6 +607,13 @@ class STTEngine:
 
             # Timeout waiting for speech to start
             if not speech_started and elapsed > self.timeout:
+                logger.warning(
+                    "STT VAD: No speech start after %.1fs (frames=%d, energetic=%d, vad_speech=%d)",
+                    elapsed,
+                    frames_read,
+                    energetic_frames,
+                    vad_speech_frames,
+                )
                 raise sr.WaitTimeoutError("listening timed out while waiting for speech to start")
 
             # Read one frame from the microphone
@@ -583,11 +628,17 @@ class STTEngine:
                 continue
 
             frame = raw[:self.frame_bytes]
+            frames_read += 1
+            frame_samples = np.frombuffer(frame, dtype=np.int16).astype(np.float32)
+            if np.sqrt(np.mean(frame_samples * frame_samples)) >= 30.0:
+                energetic_frames += 1
 
             try:
                 is_speech = self._classify_frame(frame, webrtc_vad)
             except Exception:
                 is_speech = False
+            if is_speech:
+                vad_speech_frames += 1
 
             if not speech_started:
                 # ---- WAITING FOR SPEECH ----
@@ -685,6 +736,8 @@ class STTEngine:
         self,
         on_listening_ready: Optional[Callable[[], None]] = None,
         preserve_recent_audio: bool = False,
+        start_capture: Optional[threading.Event] = None,
+        on_capture_armed: Optional[Callable[[], None]] = None,
     ) -> Tuple[bool, Optional[sr.AudioData], Optional[str]]:
         """Synchronous listen operation (runs in thread pool)"""
         try:
@@ -692,23 +745,23 @@ class STTEngine:
             logger.debug(f"STT: Persistent microphone ready ({self.sample_rate}Hz)")
 
             try:
-                # Flush buffered acknowledgement/beep audio before advertising
-                # readiness. Optional pre-roll is retained only for callers that
-                # explicitly want to capture speech started before the ready cue.
-                try:
-                    if hasattr(source.stream, 'read'):
-                        avail = source.stream.get_read_available()
-                        max_keep_samples = int(self.sample_rate * 0.4) if preserve_recent_audio else 0
-                        if avail > max_keep_samples:
-                            to_discard = avail - max_keep_samples
-                            source.stream.read(to_discard, exception_on_overflow=False)
-                            logger.debug(
-                                "STT: Discarded %d buffered samples, preserved %d recent samples",
-                                to_discard,
-                                avail - to_discard,
-                            )
-                except Exception as e:
-                    logger.debug(f"STT: Could not flush stream: {e}")
+                # Flush anything captured before this listen. SpeechRecognition
+                # wraps the native PyAudio stream, so get_read_available() must
+                # be read from pyaudio_stream while audio is consumed through
+                # the wrapper's one-argument read().
+                self._discard_buffered_audio(source, preserve_recent_audio)
+
+                if start_capture is not None:
+                    if on_capture_armed:
+                        on_capture_armed()
+
+                    # Keep draining while the acknowledgement and final beep
+                    # play. This worker is already scheduled, so setting the
+                    # event at the end of the beep transitions immediately to
+                    # VAD without a window that can swallow the user's words.
+                    while not start_capture.is_set():
+                        self._discard_buffered_audio(source, preserve_recent_audio=False)
+                        start_capture.wait(0.01)
 
                 if on_listening_ready:
                     on_listening_ready()
@@ -734,6 +787,30 @@ class STTEngine:
                 self._persistent_mic = None
             return False, None, str(e)
 
+    def _discard_buffered_audio(self, source, preserve_recent_audio: bool) -> int:
+        """Discard queued microphone samples and return the number consumed."""
+        try:
+            stream = source.stream
+            native_stream = getattr(stream, "pyaudio_stream", stream)
+            get_available = getattr(native_stream, "get_read_available", None)
+            if get_available is None:
+                return 0
+
+            available = int(get_available())
+            max_keep_samples = int(self.sample_rate * 0.4) if preserve_recent_audio else 0
+            to_discard = max(0, available - max_keep_samples)
+            if to_discard:
+                stream.read(to_discard)
+                logger.debug(
+                    "STT: Discarded %d buffered samples, preserved %d recent samples",
+                    to_discard,
+                    available - to_discard,
+                )
+            return to_discard
+        except Exception as exc:
+            logger.debug("STT: Could not flush stream: %s", exc)
+            return 0
+
 
     # ------------------------------------------------------------------
     # Control
@@ -753,14 +830,17 @@ class STTEngine:
 
     def close(self):
         """Release persistent microphone resources."""
-        if self._persistent_mic:
+        mic = self._persistent_mic
+        self._persistent_mic = None
+        if mic is not None:
             try:
-                self._persistent_mic.__exit__(None, None, None)
+                from src.utils.audio_lock import AUDIO_DEVICE_LOCK
+
+                with AUDIO_DEVICE_LOCK:
+                    mic.__exit__(None, None, None)
                 logger.info("STT: Persistent microphone released")
             except Exception as e:
-                logger.warning(f"STT: Error releasing persistent microphone: {e}")
-            finally:
-                self._persistent_mic = None
+                logger.warning("STT: Error releasing persistent microphone: %s", e)
 
 
 # Global instance

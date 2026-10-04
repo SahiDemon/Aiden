@@ -167,10 +167,90 @@ api_server_task: Optional[asyncio.Task] = None
 overlay_launcher: Optional[object] = None
 ups_monitor: Optional[object] = None
 media_idle_monitor: Optional[object] = None
+cloudflare_tunnel_process: Optional[object] = None
 shutdown_event = threading.Event()
 restart_event = threading.Event()
 main_loop: Optional[asyncio.AbstractEventLoop] = None
 voice_pipeline_ready = False
+
+# Aiden can be launched from the Startup shortcut, the tray, or the manual
+# launcher. Keep the final protection here, next to the actual voice
+# pipeline, so a second launch cannot create another listener or voice.
+_AIDEN_INSTANCE_MUTEX_HANDLE = None
+_AIDEN_INSTANCE_MUTEX_NAME = "Global\\AidenAI_Main_Instance_Mutex"
+
+
+def _acquire_single_aiden_instance() -> bool:
+    """Return True only for the one process allowed to run Aiden."""
+    global _AIDEN_INSTANCE_MUTEX_HANDLE
+    if sys.platform != "win32":
+        return True
+
+    try:
+        import ctypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p)
+        kernel32.CreateMutexW.restype = ctypes.c_void_p
+        kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+        kernel32.CloseHandle.restype = ctypes.c_bool
+
+        ctypes.set_last_error(0)
+        handle = kernel32.CreateMutexW(None, True, _AIDEN_INSTANCE_MUTEX_NAME)
+        if not handle:
+            logger.warning("Could not create the Aiden single-instance guard")
+            return False
+        if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+            kernel32.CloseHandle(handle)
+            return False
+
+        _AIDEN_INSTANCE_MUTEX_HANDLE = handle
+        return True
+    except Exception as exc:
+        logger.warning("Could not verify Aiden's single-instance guard: %s", exc)
+        return False
+
+
+async def _cloudflare_tunnel_is_ready(port: int) -> bool:
+    """Return whether cloudflared has at least one active edge connection."""
+    def _readiness_check() -> bool:
+        import json
+        from urllib.request import urlopen
+
+        try:
+            with urlopen(f"http://127.0.0.1:{port}/ready", timeout=1.0) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            return response.status == 200 and int(payload.get("readyConnections", 0)) > 0
+        except Exception:
+            return False
+
+    return await asyncio.to_thread(_readiness_check)
+
+
+async def _find_ready_cloudflare_tunnel(preferred_port: int) -> Optional[int]:
+    """Find an existing local cloudflared connector before starting another."""
+    # Cloudflared's default metrics range is 20241–20245. Include Aiden's
+    # configured port so app-managed connectors have a stable health endpoint.
+    ports = [preferred_port, *range(20241, 20246)]
+    unique_ports = list(dict.fromkeys(ports))
+    readiness = await asyncio.gather(
+        *(_cloudflare_tunnel_is_ready(port) for port in unique_ports)
+    )
+    return next((port for port, is_ready in zip(unique_ports, readiness) if is_ready), None)
+
+
+async def _verify_cloudflare_tunnel_start(process: object, metrics_port: int, log_path: Path) -> None:
+    """Log a clear result once a newly launched connector has had time to connect."""
+    await asyncio.sleep(5)
+    if getattr(process, "poll")() is not None:
+        logger.error("Cloudflare Tunnel exited during startup; see %s", log_path)
+    elif await _cloudflare_tunnel_is_ready(metrics_port):
+        logger.info("Cloudflare Tunnel connected and ready (metrics: 127.0.0.1:%s)", metrics_port)
+    else:
+        logger.warning(
+            "Cloudflare Tunnel is running but has no active edge connection yet; see %s",
+            log_path,
+        )
 
 
 def _set_high_priority():
@@ -307,7 +387,7 @@ def handle_stop_listening():
 
 async def initialize_services():
     """Initialize all Aiden services"""
-    global assistant, wake_word_detector, wake_word_manager, hotkey_listener, toggle_hotkey_listener, stop_listening_hotkey_listener, api_server_task, overlay_launcher, ups_monitor, media_idle_monitor, main_loop, voice_pipeline_ready
+    global assistant, wake_word_detector, wake_word_manager, hotkey_listener, toggle_hotkey_listener, stop_listening_hotkey_listener, api_server_task, overlay_launcher, ups_monitor, media_idle_monitor, cloudflare_tunnel_process, main_loop, voice_pipeline_ready
     
     # Store the main event loop for thread-safe async calls
     main_loop = asyncio.get_running_loop()
@@ -354,6 +434,10 @@ async def initialize_services():
             # Wake handling will retry and use the Windows cue plus visible
             # overlay, but make the degraded startup state explicit.
             logger.warning("⚠️ activation.mp3 unavailable; Windows cue fallback is armed")
+        # Pre-warming verifies the input at startup, but keeping that stream
+        # open alongside the wake detector for hours makes the first STT read
+        # after idle unreliable on some Windows USB microphones.
+        await asyncio.to_thread(assistant.stt.close)
         
         # 3. Start API server
         logger.info(f"Starting API server on {settings.api.host}:{settings.api.port}...")
@@ -401,9 +485,44 @@ async def initialize_services():
                     "or on PATH."
                 )
             else:
-                logger.info("Auto-starting the configured Cloudflare Tunnel")
-                creation_flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
-                subprocess.Popen([str(cloudflared_path), "tunnel", "run", "--token", cf_token], creationflags=creation_flags)
+                metrics_port = settings.app.cloudflare_tunnel_metrics_port
+                existing_port = await _find_ready_cloudflare_tunnel(metrics_port)
+                if existing_port is not None:
+                    logger.info(
+                        "Cloudflare Tunnel is already connected (metrics: 127.0.0.1:%s); "
+                        "not starting a duplicate connector.",
+                        existing_port,
+                    )
+                else:
+                    log_path = Path(project_root) / "logs" / "cloudflared.log"
+                    log_path.parent.mkdir(parents=True, exist_ok=True)
+                    logger.info("Starting the configured Cloudflare Tunnel")
+                    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                    tunnel_environment = os.environ.copy()
+                    # Supplying the token by environment avoids exposing this
+                    # credential in a process listing.
+                    tunnel_environment["TUNNEL_TOKEN"] = cf_token
+                    cloudflare_tunnel_process = subprocess.Popen(
+                        [
+                            str(cloudflared_path),
+                            "tunnel",
+                            "--no-autoupdate",
+                            "--logfile",
+                            str(log_path),
+                            "--metrics",
+                            f"127.0.0.1:{metrics_port}",
+                            "run",
+                        ],
+                        creationflags=creation_flags,
+                        env=tunnel_environment,
+                    )
+                    asyncio.create_task(
+                        _verify_cloudflare_tunnel_start(
+                            cloudflare_tunnel_process,
+                            metrics_port,
+                            log_path,
+                        )
+                    )
         except Exception as cf_err:
             logger.warning(f"Could not auto-start Cloudflare tunnel: {cf_err}")
         
@@ -607,7 +726,7 @@ async def initialize_services():
 
 async def cleanup():
     """Cleanup all services"""
-    global wake_word_detector, hotkey_listener, toggle_hotkey_listener, stop_listening_hotkey_listener, api_server_task, overlay_launcher, ups_monitor, media_idle_monitor
+    global wake_word_detector, hotkey_listener, toggle_hotkey_listener, stop_listening_hotkey_listener, api_server_task, overlay_launcher, ups_monitor, media_idle_monitor, cloudflare_tunnel_process
     
     logger.info("=" * 70)
     logger.info("SHUTTING DOWN AIDEN")
@@ -656,6 +775,19 @@ async def cleanup():
             logger.info("Stopping Media Idle monitor...")
             media_idle_monitor.stop()
 
+        # Only stop the connector this Aiden instance started. A previously
+        # installed service or an already-running replica is intentionally
+        # left alone.
+        if cloudflare_tunnel_process and cloudflare_tunnel_process.poll() is None:
+            logger.info("Stopping Aiden-managed Cloudflare Tunnel...")
+            cloudflare_tunnel_process.terminate()
+            try:
+                await asyncio.wait_for(asyncio.to_thread(cloudflare_tunnel_process.wait), timeout=5)
+            except asyncio.TimeoutError:
+                logger.warning("Cloudflare Tunnel did not stop in time; terminating it.")
+                cloudflare_tunnel_process.kill()
+            cloudflare_tunnel_process = None
+
         logger.info("Closing STT engine...")
         from src.speech.stt import reset_stt_engine
         reset_stt_engine()
@@ -674,6 +806,10 @@ def signal_handler(signum, frame):
 
 def main():
     """Main entry point"""
+    if not _acquire_single_aiden_instance():
+        logger.info("Aiden is already running; skipping the duplicate launch.")
+        return 0
+
     try:
         shutdown_event.clear()
         restart_event.clear()

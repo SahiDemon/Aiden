@@ -3,6 +3,7 @@ Main Aiden Assistant Orchestrator
 Coordinates all components for intelligent voice interaction
 """
 import asyncio
+from difflib import SequenceMatcher
 import json
 import logging
 import re
@@ -26,6 +27,307 @@ logger = get_logger(__name__)
 def _normalize_intent_text(text: str) -> str:
     normalized = re.sub(r"[^a-z0-9\s]", " ", (text or "").lower())
     return " ".join(normalized.split())
+
+
+_SYSTEM_ACTION_TERMS = {
+    "lock": ("lock",),
+    "shutdown": ("shutdown", "shut down", "turn off the computer", "turn off computer", "turn off the pc"),
+    "restart": ("restart", "reboot"),
+    "sleep": ("sleep", "put the computer to sleep", "put computer to sleep", "put the pc to sleep"),
+    "hibernate": ("hibernate",),
+}
+
+_AIDEN_EXIT_TERMS = (
+    "exit aiden", "quit aiden", "close aiden", "stop aiden", "kill aiden",
+    "kill python", "terminate yourself", "shut down aiden", "shutdown aiden",
+)
+_AIDEN_RESTART_TERMS = (
+    "restart yourself", "restart aiden", "reboot aiden", "restart the assistant",
+)
+
+
+def is_explicit_system_action_requested(user_text: str, action: str) -> bool:
+    """Require an explicit power-action phrase before executing it.
+
+    This is a final guard against a model inventing a lock, shutdown, restart,
+    sleep, or hibernate action while answering an unrelated request.
+    """
+    normalized = _normalize_intent_text(user_text)
+    return any(term in normalized for term in _SYSTEM_ACTION_TERMS.get(action.lower(), ()))
+
+
+def remove_unrequested_system_commands(user_text: str, commands: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]], List[str]]:
+    """Remove system power actions that were not explicitly said by the user."""
+    allowed: List[Dict[str, Any]] = []
+    blocked_actions: List[str] = []
+    normalized_request = _normalize_intent_text(user_text)
+
+    for command in commands:
+        command_type = (command.get("type") or "").lower()
+        params = command.get("params") or {}
+        action = ""
+
+        if command_type == "system_command":
+            action = str(params.get("action") or "").lower()
+        elif command_type == "scheduled_command":
+            action = str(params.get("action") or "").lower()
+            nested_command = params.get("command")
+            if isinstance(nested_command, dict) and (nested_command.get("type") or "").lower() == "system_command":
+                action = str((nested_command.get("params") or {}).get("action") or "").lower()
+        elif command_type == "self_termination":
+            action = "exit Aiden"
+        elif command_type == "restart_application":
+            action = "restart Aiden"
+
+        unrequested_power = action in _SYSTEM_ACTION_TERMS and not is_explicit_system_action_requested(user_text, action)
+        unrequested_exit = action == "exit Aiden" and not any(term in normalized_request for term in _AIDEN_EXIT_TERMS)
+        unrequested_restart = action == "restart Aiden" and not any(term in normalized_request for term in _AIDEN_RESTART_TERMS)
+        if unrequested_power or unrequested_exit or unrequested_restart:
+            logger.error("Blocked unrequested system action '%s' for: %s", action, user_text)
+            blocked_actions.append(action)
+            continue
+
+        allowed.append(command)
+
+    return allowed, blocked_actions
+
+
+def infer_delayed_close_command(user_text: str) -> Optional[Dict[str, Any]]:
+    """Read one clear delayed close request, including a spoken time correction."""
+    normalized = _normalize_intent_text(user_text)
+    match = re.search(
+        r"\b(?:close|quit|exit|stop)\s+(?:the\s+)?(?P<target>[a-z0-9 ._-]+?)\s+(?:in|after)\s+(?P<amount>\d+|one|a|an)\s*(?P<unit>second|seconds|minute|minutes|hour|hours)\b",
+        normalized,
+    )
+    if not match:
+        return None
+
+    remainder = normalized[match.end():]
+    if re.search(r"\b(?:and|then)\s+(?:turn|open|close|quit|exit|stop|play|pause|lock|shut|restart)\b", remainder):
+        return None
+
+    target = match.group("target").strip()
+    if (
+        not target
+        or target in {"it", "this", "that", "app", "application"}
+        or re.search(r"\b(?:and|then|now)\b", target)
+    ):
+        return None
+
+    # Speech often includes a self-correction: "after five minutes, no,
+    # one minute." Use the last affirmative time, never a negated time.
+    duration_matches = list(re.finditer(
+        r"\b(?P<amount>\d+|one|a|an)\s*(?P<unit>second|seconds|minute|minutes|hour|hours)\b",
+        normalized[match.start("amount"):],
+    ))
+    corrected_duration = duration_matches[0]
+    for candidate in duration_matches[1:]:
+        preceding = normalized[match.start("amount"):][max(0, candidate.start() - 12):candidate.start()].strip()
+        if not re.search(r"\bnot\s*$", preceding):
+            corrected_duration = candidate
+
+    amount_text = corrected_duration.group("amount")
+    amount = 1 if amount_text in {"one", "a", "an"} else int(amount_text)
+    unit = corrected_duration.group("unit")
+    multiplier = 3600 if unit.startswith("hour") else 60 if unit.startswith("minute") else 1
+    duration_seconds = amount * multiplier
+
+    return {
+        "type": "scheduled_command",
+        "params": {
+            "duration_seconds": duration_seconds,
+            "command": {"type": "kill_process", "params": {"name": target}},
+        },
+    }
+
+
+def _keep_delayed_close_as_one_action(
+    user_text: str, commands: List[Dict[str, Any]]
+) -> tuple[List[Dict[str, Any]], Optional[str]]:
+    """Keep one clearly spoken delayed close as one scheduled action."""
+    delayed = infer_delayed_close_command(user_text)
+    if not delayed:
+        return commands, None
+
+    target = delayed["params"]["command"]["params"]["name"]
+    return [delayed], _delayed_close_reply(target, delayed["params"]["duration_seconds"])
+
+
+def _delayed_close_reply(target: str, delay_seconds: int) -> str:
+    target = target.removesuffix(".exe")
+    if delay_seconds % 3600 == 0:
+        value, unit = delay_seconds // 3600, "hour"
+    elif delay_seconds % 60 == 0:
+        value, unit = delay_seconds // 60, "minute"
+    else:
+        value, unit = delay_seconds, "second"
+    return f"I'll close {target.title()} in {value} {unit}{'' if value == 1 else 's'}."
+
+
+def _is_jellyfin_provider_name(name: str) -> bool:
+    """Allow a minor speech-to-text spelling error in an explicit provider."""
+    return SequenceMatcher(None, name.casefold(), "jellyfin").ratio() >= 0.85
+
+
+def _has_explicit_jellyfin_provider(user_text: str) -> bool:
+    match = re.search(r"\bon\s+([\w-]+)[?!.,]*\s*$", user_text, flags=re.IGNORECASE)
+    return bool(match and _is_jellyfin_provider_name(match.group(1)))
+
+
+def _is_capability_refusal(response_text: str) -> bool:
+    """Identify an AI claim that it cannot perform an action before trying it."""
+    return bool(re.search(
+        r"\b(?:can'?t|cannot|unable|not able|don'?t have|do not have)\b",
+        response_text or "",
+        flags=re.IGNORECASE,
+    ))
+
+
+def _needs_action_repair(user_text: str, ai_response: Dict[str, Any]) -> bool:
+    """Retry contradictory AI plans without silently discarding their commands."""
+    commands = ai_response.get("commands") or []
+    response = str(ai_response.get("response") or "")
+    return bool(
+        (commands and (ai_response.get("expecting_followup") or _is_capability_refusal(response)))
+        or (
+            not commands
+            and ai_response.get("intent") in {"command", "multi_command", "system_command"}
+            and not ai_response.get("expecting_followup")
+        )
+        or (
+            ai_response.get("intent") in {"command", "multi_command", "system_command"}
+            and _is_capability_refusal(response)
+        )
+        or (
+            _is_capability_refusal(response)
+            and (
+                _has_explicit_jellyfin_provider(user_text)
+                or any(provider in _normalize_intent_text(user_text) for provider in ("spotify", "youtube"))
+            )
+        )
+    )
+
+
+def _has_jellyfin_play_command(commands: List[Dict[str, Any]]) -> bool:
+    return any(
+        isinstance(command, dict)
+        and command.get("type") == "media_control"
+        and (command.get("params") or {}).get("target") == "jellyfin"
+        and (command.get("params") or {}).get("action") in {"play_title", "play_movie", "play_series"}
+        and bool((command.get("params") or {}).get("query"))
+        for command in commands
+    )
+
+
+def _validated_ai_commands(raw_commands: Any) -> List[Dict[str, Any]]:
+    """Reject incomplete tool calls, while allowing runnable partial requests."""
+    if not isinstance(raw_commands, list):
+        return []
+
+    validated: List[Dict[str, Any]] = []
+    for command in raw_commands:
+        if not isinstance(command, dict) or not isinstance(command.get("params"), dict):
+            continue
+        command_type = command.get("type")
+        if not isinstance(command_type, str):
+            continue
+        params = command["params"]
+        action = params.get("action")
+
+        if command_type == "media_control":
+            if not isinstance(action, str) or not action.strip():
+                continue
+            target = params.get("target")
+            if target is not None and not isinstance(target, str):
+                continue
+            if target is not None and target not in {"spotify", "jellyfin", "youtube", "youtube_music"}:
+                continue
+            if action in {"play_title", "play_movie", "play_series"} and target != "jellyfin":
+                continue
+            if action in {"play_title", "play_movie", "play_series", "play_track", "play_playlist"}:
+                if not isinstance(params.get("query"), str) or not params["query"].strip():
+                    continue
+            if action == "transfer" and not isinstance(params.get("device_name"), str):
+                continue
+            if action == "set_volume" and params.get("volume", params.get("level")) is None:
+                continue
+        elif command_type == "launch_app":
+            if not any(
+                isinstance(params.get(key), str) and params[key].strip()
+                for key in ("name", "app_name", "app", "application")
+            ):
+                continue
+        elif command_type == "kill_process":
+            if not isinstance(params.get("name"), str) or not params["name"].strip():
+                continue
+        elif command_type in {"system_command", "system_control", "wake_word_control", "ups_control"}:
+            if not isinstance(action, str) or not action.strip():
+                continue
+        elif command_type == "scheduled_command":
+            try:
+                duration_seconds = float(params.get("duration_seconds"))
+            except (TypeError, ValueError):
+                continue
+            if not 0 < duration_seconds <= 31_536_000:
+                continue
+            nested = params.get("command")
+            if nested is not None:
+                if (
+                    not isinstance(nested, dict)
+                    or nested.get("type") in {"scheduled_command", "cancel_timer", "self_termination", "restart_application"}
+                    or not _validated_ai_commands([nested])
+                ):
+                    continue
+            elif action not in {"shutdown", "restart", "sleep", "hibernate", "lock"}:
+                continue
+            command = {**command, "params": {**params, "duration_seconds": duration_seconds}}
+        elif command_type == "shell_command":
+            if not isinstance(params.get("command"), str) or not params["command"].strip():
+                continue
+        elif command_type == "fan_control":
+            if not (params.get("control_id") or params.get("operation") or action):
+                continue
+        elif command_type not in {"fan_control", "cancel_timer", "self_termination", "restart_application"}:
+            continue
+
+        validated.append(command)
+
+    return validated
+
+
+def extract_jellyfin_movie_request(user_text: str) -> Optional[str]:
+    """Return a likely movie title from a short, unqualified play request."""
+    normalized = _normalize_intent_text(user_text)
+    # This shortcut runs before the LLM. It must never override an explicit
+    # provider choice such as Spotify just because the words after "play" also
+    # look like a possible film title.
+    explicit_non_jellyfin_providers = {
+        "spotify", "youtube", "youtube music", "soundcloud", "apple music",
+        "amazon music", "tidal", "deezer",
+    }
+    if any(provider in normalized for provider in explicit_non_jellyfin_providers):
+        return None
+
+    match = re.match(
+        r"^\s*(?:can you |could you |please )?play\s+(.+?)[?!.,]*\s*$",
+        user_text or "",
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    title = match.group(1).strip().rstrip("?!., ")
+    provider_match = re.match(r"^(.+?)\s+on\s+([\w-]+)$", title, flags=re.IGNORECASE)
+    if provider_match and _is_jellyfin_provider_name(provider_match.group(2)):
+        title = provider_match.group(1).strip()
+    if title.lower() in {"music", "something", "a song", "some music", "spotify"}:
+        return None
+    return title or None
+
+
+def should_retry_listen_after_idle(error: Optional[str]) -> bool:
+    """Retry one capture window after the common first-command idle failure."""
+    normalized = (error or "").strip().lower()
+    return normalized == "timeout" or "no speech" in normalized
 
 
 def infer_simple_fan_command(user_text: str) -> Optional[Dict[str, Any]]:
@@ -99,7 +401,7 @@ def build_fan_spoken_response(payload: Any) -> Optional[str]:
             return f"The fan is already {target}."
         if confirmed_state == target:
             return f"The fan is {target}."
-        return "I'm trying to turn the fan on." if target == "on" else "I'm trying to turn the fan off."
+        return f"I sent the command to turn the fan {target}."
 
     if control_id == "speed" and target:
         return f"Fan speed set to {target}."
@@ -609,6 +911,14 @@ class AidenAssistant:
                     return "I couldn't move Spotify to that device."
                 return message or "I couldn't complete that on Spotify."
 
+            if data_type == "jellyfin":
+                lowered = message.casefold()
+                if "viewer" in lowered or "watch progress" in lowered:
+                    return "I found the show, but I couldn't tell which episode you were on. Open Jellyfin once, then ask me again."
+                if "player" in lowered or "session" in lowered:
+                    return "Jellyfin isn't ready yet. Open it, then try again."
+                return message or "I couldn't play that in Jellyfin."
+
             if data_type == "browser_media":
                 params = result.get("params") or {}
                 action = (params.get("action") or "").lower()
@@ -690,6 +1000,52 @@ class AidenAssistant:
             return f"I completed part of that, but {failure_messages[0][0].lower()}{failure_messages[0][1:]}"
 
         return f"I completed part of that, but {' '.join(failure_messages[:2])}"
+
+    def _response_after_execution(
+        self,
+        proposed_response: str,
+        execution_results: List[Dict[str, Any]],
+    ) -> str:
+        """Use real command outcomes instead of a model's unverified claim."""
+        if not execution_results:
+            return "I couldn't confirm that action completed."
+        failure = self._build_failure_followup(execution_results)
+        if failure:
+            return failure
+
+        result_messages: List[str] = []
+        for result in execution_results:
+            data = result.get("response_data")
+            if isinstance(data, dict):
+                message = str(data.get("message") or "").strip()
+            elif isinstance(data, str):
+                message = data.strip()
+            else:
+                message = ""
+            # The scheduler returns an internal action label such as
+            # "launch_app".  The planned reply already says the useful part
+            # in ordinary language, so never read that implementation detail.
+            if result.get("command") == "scheduled_command" and message.casefold().startswith("timer created:"):
+                continue
+            if result.get("command") == "fan_control" and message.casefold().rstrip(".!") in {
+                "signal sent", "toggle signal sent", "command sent", "done",
+            }:
+                continue
+            if message and message not in result_messages:
+                result_messages.append(message)
+
+        if len(execution_results) == 1 and result_messages:
+            return result_messages[0]
+
+        response = (proposed_response or "").strip()
+        if _is_capability_refusal(response):
+            response = "Done."
+        if not response:
+            response = "Done."
+        for message in result_messages:
+            if message.casefold() not in response.casefold():
+                response = f"{response} {message}".strip()
+        return response
     
     async def handle_voice_activation(
         self,
@@ -723,10 +1079,24 @@ class AidenAssistant:
 
         self.is_processing = True
 
+        # The wake detector releases its PortAudio stream on another thread.
+        # Wait for that handoff before reopening STT so the first command does
+        # not land on a stale/silent stream after a long idle period.
+        try:
+            from src.core.wake_word_manager import get_wake_word_manager
+            manager = get_wake_word_manager()
+            detector = manager.detector if manager else None
+            wait_for_release = getattr(detector, "wait_until_stream_released", None)
+            if callable(wait_for_release):
+                released = await asyncio.to_thread(wait_for_release, 0.5)
+                if not released:
+                    logger.warning("Wake-word microphone did not release before STT handoff")
+        except Exception as exc:
+            logger.debug("Wake-word stream handoff check skipped: %s", exc)
+
         from src.utils.websocket_broadcast import broadcast_voice_status
 
         duck_state = None
-        duck_state_consumed = False
 
         # Prepare media ducking before the mic-open cue so STT can start as soon
         # as the sound finishes instead of doing this work afterward.
@@ -752,9 +1122,6 @@ class AidenAssistant:
             mic_ready = await asyncio.to_thread(self.stt.refresh_microphone)
             if not mic_ready:
                 logger.warning("STT microphone refresh failed; attempting normal listen")
-            # The acknowledgement confirms the wake word, then activation.mp3
-            # is the precise speak-now cue.
-            await self._play_activation_ready_cue(from_hotkey)
         
         import time as _time
         _t0 = _time.monotonic()
@@ -762,7 +1129,6 @@ class AidenAssistant:
         try:
             # ── Step 1: STT ──────────────────────────────────────────────
             _t_stt_start = _time.monotonic()
-            duck_state_consumed = True
             if captured_command and wake_detection is not None:
                 success, user_text, error = await self.stt.transcribe_captured_pcm(
                     wake_detection.command_audio or b"",
@@ -775,12 +1141,13 @@ class AidenAssistant:
                     mic_ready = await asyncio.to_thread(self.stt.refresh_microphone)
                     if not mic_ready:
                         logger.warning("STT microphone refresh failed; attempting normal listen")
-                    await self._play_activation_ready_cue(from_hotkey=False)
                     self._is_listening = True
                     success, user_text, error = await self.stt.transcribe(
                         play_activation_sound=False,
                         duck_state=duck_state,
                         media_already_ducked=True,
+                        restore_media=False,
+                        ready_cue=lambda: self._play_activation_ready_cue(from_hotkey=False),
                     )
                     self._is_listening = False
             else:
@@ -789,6 +1156,25 @@ class AidenAssistant:
                     play_activation_sound=False,
                     duck_state=duck_state,
                     media_already_ducked=True,
+                    restore_media=False,
+                    ready_cue=lambda: self._play_activation_ready_cue(from_hotkey),
+                )
+                self._is_listening = False
+
+            # Some USB audio drivers produce one silent capture immediately
+            # after an extended idle period, even though wake-word detection
+            # worked. Reopen the stream once and keep listening without
+            # requiring the user to say "Hey Aiden" again.
+            if not success and should_retry_listen_after_idle(error):
+                logger.info("STT first capture was silent; rearming microphone for one recovery listen")
+                await asyncio.to_thread(self.stt.refresh_microphone)
+                self._is_listening = True
+                success, user_text, error = await self.stt.transcribe(
+                    play_activation_sound=False,
+                    duck_state=duck_state,
+                    media_already_ducked=True,
+                    restore_media=False,
+                    ready_cue=lambda: self._play_activation_ready_cue(from_hotkey=False),
                 )
                 self._is_listening = False
             logger.info("[TIMING] STT: %.0f ms", (_time.monotonic() - _t_stt_start) * 1000)
@@ -844,12 +1230,24 @@ class AidenAssistant:
             # Broadcast idle status on error
             await broadcast_voice_status("idle", speaking=False, active=False)
         finally:
-            if duck_state is not None and not duck_state_consumed:
+            # Wake detection owns the microphone while idle. Do not leave an
+            # STT stream open for hours until the next wake-word handoff.
+            try:
+                await asyncio.to_thread(self.stt.close)
+            except Exception as exc:
+                logger.warning("Could not release STT microphone after voice turn: %s", exc)
+            if duck_state is not None:
                 try:
                     from src.media.media_router import get_media_router
+                    # The media state belongs to this whole voice interaction,
+                    # not just microphone capture.  Keeping it paused until
+                    # the queued reply is audible prevents music from fighting
+                    # Aiden's response and reliably resumes only what Aiden
+                    # paused once the interaction is complete.
+                    await self._wait_for_voice_output()
                     await get_media_router().restore_after_listening(duck_state)
                 except Exception as exc:
-                    logger.debug(f"STT media restore skipped after activation failure: {exc}")
+                    logger.debug(f"Voice interaction media restore skipped: {exc}")
             self._is_listening = False
             self.is_processing = False
             # Broadcast idle status when conversation ends
@@ -867,6 +1265,25 @@ class AidenAssistant:
                             ww_manager.detector.resume()
             except Exception as e:
                 logger.debug(f"Could not resume wake word detector: {e}")
+
+    async def _wait_for_voice_output(self) -> None:
+        """Wait for background response generation and queued playback to end."""
+        # _process_user_message intentionally starts some replies in the
+        # background. Yielding once lets those tasks register themselves before
+        # inspecting the set, preventing a queue-empty race that could resume
+        # music before the reply has even been generated.
+        await asyncio.sleep(0)
+        current_task = asyncio.current_task()
+        speak_tasks = [
+            task for task in self._speak_tasks
+            if task is not current_task and not task.done()
+        ]
+        if speak_tasks:
+            _, pending = await asyncio.wait(speak_tasks, timeout=60.0)
+            if pending:
+                logger.warning("Timed out waiting for response generation before media restore.")
+
+        await self.tts.wait_until_done(timeout=60.0)
 
     def request_immediate_stop(self) -> bool:
         """Best-effort synchronous stop for hotkey threads."""
@@ -944,7 +1361,11 @@ class AidenAssistant:
         Dynamically check if the AI returned a dead-end refusal or deferral phrase for a question
         without providing any executable commands.
         """
-        if not ai_response or ai_response.get("commands"):
+        if (
+            not ai_response
+            or ai_response.get("commands")
+            or ai_response.get("intent") in {"command", "multi_command", "system_command"}
+        ):
             return False
         
         response_text = (ai_response.get("response") or "").strip().lower()
@@ -1066,44 +1487,88 @@ class AidenAssistant:
                     logger.warning("AI failed to provide an answer on retry. Dynamically falling back to Google Search.")
                     ai_response = self._build_search_fallback_response(user_text)
 
+            if _needs_action_repair(user_text, ai_response):
+                logger.warning("AI action plan contradicted its response; requesting one corrected plan")
+                repair_messages = await self.context_manager.build_messages(
+                    user_text, context, needs_context=needs_context
+                )
+                repair_messages.append({
+                    "role": "system",
+                    "content": (
+                        "Re-evaluate the user's action request and return one consistent JSON plan. "
+                        "Available media_control targets include Jellyfin and Spotify. "
+                        "Treat an obvious speech-to-text spelling error in a provider name as that provider. "
+                        "If a title and provider are clear, emit the playback command rather than a capability disclaimer. "
+                        "Set expecting_followup only when a required detail is genuinely missing. "
+                        "Do not claim an action succeeded or failed; the application will report the tool result."
+                    ),
+                })
+                repaired_response = await llm.chat(repair_messages)
+                if repaired_response:
+                    original_commands = _validated_ai_commands(ai_response.get("commands"))
+                    repaired_commands = _validated_ai_commands(repaired_response.get("commands"))
+                    if repaired_commands or not original_commands:
+                        ai_response = repaired_response
+                    else:
+                        # A retry must not erase a complete action the first
+                        # pass found. Execution will supply the final answer.
+                        logger.warning("AI repair omitted a runnable command; keeping the original plan")
+                        ai_response = {
+                            **ai_response,
+                            "response": "I'll try that now.",
+                            "expecting_followup": False,
+                        }
+
+            # AI decides first. If it still misses a plainly specified local
+            # title/provider after the repair pass, use the typed media action
+            # as a narrow recovery path, not a free-form shell command.
+            jellyfin_title = extract_jellyfin_movie_request(user_text)
+            if (
+                jellyfin_title
+                and _has_explicit_jellyfin_provider(user_text)
+                and not _has_jellyfin_play_command(_validated_ai_commands(ai_response.get("commands")))
+            ):
+                logger.warning("AI missed explicit Jellyfin playback after repair; using media action fallback")
+                ai_response = {
+                    **ai_response,
+                    "intent": "command",
+                    "commands": [{
+                        "type": "media_control",
+                        "params": {"action": "play_title", "target": "jellyfin", "query": jellyfin_title},
+                    }],
+                    "response": f"I'll try {jellyfin_title} on Jellyfin.",
+                    "expecting_followup": False,
+                    "needs_context": [],
+                }
+
             # Parse AI response
             intent = ai_response.get("intent", "unknown")
-            commands = ai_response.get("commands", [])
-            response_text = ai_response.get("response", "Done")
+            raw_commands = ai_response.get("commands", [])
+            commands = _validated_ai_commands(raw_commands)
+            response_text = str(ai_response.get("response") or "Done.")
             update_context = ai_response.get("update_context", True)
+            if isinstance(raw_commands, list) and len(commands) < len(raw_commands):
+                logger.warning("Rejected %d incomplete AI command(s)", len(raw_commands) - len(commands))
+                if not commands:
+                    if not str(response_text).strip().endswith("?"):
+                        response_text = "What details should I use for that action?"
+                    ai_response["expecting_followup"] = True
+
+            commands, delayed_reply = _keep_delayed_close_as_one_action(user_text, commands)
+            if delayed_reply:
+                response_text = delayed_reply
+                ai_response["expecting_followup"] = False
+                logger.warning("Corrected a split or mistimed delayed-close plan")
             
             logger.info(f"AI INTENT: {intent}")
             logger.info(f"AI COMMANDS: {len(commands)}")
             logger.info(f"AI RESPONSE: {response_text}")
-            
-            # Broadcast assistant response to dashboard
-            try:
-                from src.utils.websocket_broadcast import broadcast_message
-                await broadcast_message("message", {
-                    "role": "assistant",
-                    "content": response_text,
-                    "timestamp": __import__('datetime').datetime.now().isoformat()
-                })
-            except Exception:
-                pass  # Non-critical
-            
-            # Trust the AI's decision on whether to expect follow-up
+
             expecting_followup = ai_response.get("expecting_followup", False)
 
-            # Safety gate: if the AI is asking a clarification question, do not execute commands yet.
-            # This prevents accidental actions like launching placeholder apps while waiting for user detail.
-            if expecting_followup and commands:
-                logger.warning(
-                    "Safety gate triggered: blocking %d command(s) because follow-up clarification is pending",
-                    len(commands),
-                )
-                ai_response["blocked_commands"] = commands
-                commands = []
-                ai_response["commands"] = []
-            
-            # Execute commands concurrently if any
+            # A follow-up question can coexist with an executable command
+            # (e.g. "open Chrome, and what else?"). Do not discard the command.
             if commands:
-                # Broadcast commands as actions to the UI
                 try:
                     from src.utils.websocket_broadcast import broadcast_message
                     for cmd in commands:
@@ -1115,90 +1580,40 @@ class AidenAssistant:
                 except Exception as e:
                     logger.error(f"Failed to broadcast actions: {e}")
 
-                has_self_termination = any(cmd.get("type") == "self_termination" for cmd in commands)
-                should_delay_response = has_self_termination or any(
-                    self.executor.command_requires_post_response(cmd)
-                    for cmd in commands
-                )
+                execution_results = await self.executor.execute_multiple(commands)
+                for result in execution_results:
+                    if not result.get("success", False):
+                        logger.warning(
+                            "Command failed (%s): %s",
+                            result.get("command"),
+                            result.get("error") or result.get("response_data"),
+                        )
+                response_text = self._response_after_execution(response_text, execution_results)
 
-                initial_tts_task = None
-                if should_delay_response or expecting_followup:
-                    execution_results = await self.executor.execute_multiple(commands)
-                else:
-                    initial_tts_task = asyncio.create_task(self._speak_async(response_text, source=source))
-                    execution_results = await self.executor.execute_multiple(commands)
-                
-                # Merge dynamic command responses (battery/cpu/gpu stats) into spoken text
-                original_response = response_text
-                response_text = self._merge_command_responses(response_text, execution_results)
-                
-                # Check for fan/ESP32 responses — only override spoken text if
-                # TTS hasn't started yet (i.e. we were in delay-response mode).
-                # When initial_tts_task is already running, the AI text is already
-                # being spoken so we don't interrupt it with the device message.
-                esp32_payloads = [
-                    r.get("response_data")
-                    for r in execution_results
-                    if r.get("command") == "fan_control" and r.get("response_data")
-                ]
-                if esp32_payloads:
-                    esp32_feedback = esp32_payloads[0]
-                    device_message = esp32_feedback.get("message", "") if isinstance(esp32_feedback, dict) else esp32_feedback
-                    logger.info(f"📡 ESP32 Response: {device_message}")
-                    if initial_tts_task is None:  # Only override if we haven't spoken yet
-                        deterministic_fan_response = build_fan_spoken_response(esp32_feedback)
+                if len(execution_results) == 1 and execution_results[0].get("success"):
+                    fan_result = execution_results[0]
+                    if fan_result.get("command") == "fan_control" and fan_result.get("response_data"):
+                        deterministic_fan_response = build_fan_spoken_response(fan_result["response_data"])
                         if deterministic_fan_response:
                             response_text = deterministic_fan_response
 
-                # Check for failures and turn them into honest spoken feedback
-                failed = [r for r in execution_results if not r.get("success", False)]
-                if failed:
-                    for r in failed:
-                        err_payload = r.get("response_data")
-                        err_msg = (err_payload or {}).get("message") if isinstance(err_payload, dict) else None
-                        logger.warning(f"Command failed ({r.get('command')}): {err_msg or r.get('error')}")
+            # Present the verified outcome once, after the action has run.
+            ai_response["commands"] = commands
+            ai_response["response"] = response_text
+            try:
+                from src.utils.websocket_broadcast import broadcast_message
+                await broadcast_message("message", {
+                    "role": "assistant",
+                    "content": response_text,
+                    "timestamp": __import__('datetime').datetime.now().isoformat(),
+                })
+            except Exception:
+                pass
 
-                failure_followup = self._build_failure_followup(execution_results)
-
-                # Broadcast the final response if we delayed it, or if it changed
-                if should_delay_response or expecting_followup or response_text != original_response:
-                    try:
-                        from src.utils.websocket_broadcast import broadcast_message
-                        await broadcast_message("message", {
-                            "role": "assistant",
-                            "content": response_text,
-                            "timestamp": __import__('datetime').datetime.now().isoformat()
-                        })
-                    except Exception:
-                        pass  # Non-critical
-
-                if should_delay_response or expecting_followup:
-                    await self._speak_async(response_text, source=source)
-                elif initial_tts_task:
-                    await initial_tts_task
-
-                if failure_followup:
-                    try:
-                        from src.utils.websocket_broadcast import broadcast_message
-                        await broadcast_message("message", {
-                            "role": "assistant",
-                            "content": failure_followup,
-                            "timestamp": __import__('datetime').datetime.now().isoformat()
-                        })
-                    except Exception:
-                        pass  # Non-critical
-
-                    if expecting_followup:
-                        await self._speak_async(failure_followup, source=source)
-                    else:
-                        asyncio.create_task(self._speak_async(failure_followup, source=source))
+            if commands or expecting_followup:
+                await self._speak_async(response_text, source=source)
             else:
-                # No commands, just respond
-                # Wait for TTS if we're expecting follow-up, otherwise background
-                if expecting_followup:
-                    await self._speak_async(response_text, source=source)  # Wait for TTS
-                else:
-                    asyncio.create_task(self._speak_async(response_text, source=source))  # Background
+                asyncio.create_task(self._speak_async(response_text, source=source))
             
             # Update context if needed
             if update_context:

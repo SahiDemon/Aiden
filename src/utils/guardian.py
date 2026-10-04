@@ -59,6 +59,43 @@ SENTINEL_PATH = PROJECT_ROOT / "src" / "temp" / ".guardian_stop"
 # ---------------------------------------------------------------------------
 PID_FILE = PROJECT_ROOT / "src" / "temp" / ".aiden.pid"
 
+# The PowerShell launcher returns immediately in normal mode, so its mutex
+# cannot protect the lifetime of the hidden guardian. Keep a mutex in the
+# guardian itself to guarantee that only one watchdog (and therefore one
+# Aiden voice pipeline) can run at a time.
+_GUARDIAN_MUTEX_HANDLE = None
+_GUARDIAN_MUTEX_NAME = "Global\\AidenAI_Guardian_Mutex"
+
+
+def _acquire_single_guardian_mutex() -> bool:
+    """Acquire the process-lifetime guardian mutex on Windows."""
+    global _GUARDIAN_MUTEX_HANDLE
+    if sys.platform != "win32":
+        return True
+
+    try:
+        import ctypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p)
+        kernel32.CreateMutexW.restype = ctypes.c_void_p
+        kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+        kernel32.CloseHandle.restype = ctypes.c_bool
+        ctypes.set_last_error(0)
+        handle = kernel32.CreateMutexW(None, True, _GUARDIAN_MUTEX_NAME)
+        if not handle:
+            log.warning("Could not create the Aiden guardian mutex")
+            return False
+        if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+            kernel32.CloseHandle(handle)
+            log.info("Another Aiden guardian is already running; exiting duplicate launcher.")
+            return False
+        _GUARDIAN_MUTEX_HANDLE = handle
+        return True
+    except Exception as exc:
+        log.warning("Could not verify single guardian instance: %s", exc)
+        return False
+
 
 def signal_guardian_stop() -> None:
     """Write the guardian sentinel file to prevent auto-restart on intentional exit."""
@@ -399,5 +436,7 @@ def _parse_args() -> tuple[bool, list[str]]:
 
 if __name__ == "__main__":
     _setup_signals()
+    if not _acquire_single_guardian_mutex():
+        sys.exit(0)
     debug_mode, forwarded = _parse_args()
     run_guardian(debug=debug_mode, extra_args=forwarded)

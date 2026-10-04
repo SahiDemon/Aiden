@@ -1,4 +1,9 @@
-from src.core.assistant import build_fan_spoken_response, infer_simple_fan_command
+from src.core.assistant import (
+    AidenAssistant,
+    build_fan_spoken_response,
+    extract_jellyfin_movie_request,
+    infer_simple_fan_command,
+)
 
 
 def test_infer_simple_fan_command_handles_common_variants():
@@ -76,5 +81,24 @@ def test_build_fan_spoken_response_uses_attempt_wording_when_unconfirmed():
                 "device": {"summary": {"state": "on"}},
             }
         )
-        == "I'm trying to turn the fan off."
+        == "I sent the command to turn the fan off."
     )
+
+
+def test_multi_action_reply_does_not_read_raw_esp32_signal():
+    assistant = AidenAssistant.__new__(AidenAssistant)
+    reply = assistant._response_after_execution(
+        "Turning off the fan and hibernating the computer.",
+        [
+            {"command": "fan_control", "success": True, "response_data": {"message": "Signal sent."}},
+            {"command": "system_command", "success": True, "response_data": None},
+        ],
+    )
+
+    assert reply == "Turning off the fan and hibernating the computer."
+
+
+def test_jellyfin_shortcut_never_claims_an_explicit_spotify_request():
+    assert extract_jellyfin_movie_request("Can you play Bad News by Aries on Spotify?") is None
+    assert extract_jellyfin_movie_request("play something on Spotify using speakers") is None
+    assert extract_jellyfin_movie_request("play Arrival on Jellyfin") == "Arrival"

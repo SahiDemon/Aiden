@@ -5,7 +5,7 @@ Manage scheduled system commands with async task management
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Optional, Dict, List, Callable
+from typing import Optional, Dict, List, Callable, Any, Awaitable
 from uuid import UUID
 
 from src.utils.logger import get_logger
@@ -18,12 +18,13 @@ logger = get_logger(__name__)
 
 
 class TimerScheduler:
-    """Async timer scheduler for system commands"""
+    """Async scheduler for persisted delayed commands and legacy power timers."""
     
     def __init__(self):
         self.active_tasks: Dict[str, asyncio.Task] = {}
         self.system_controller = get_system_controller()
         self._shutdown = False
+        self._command_executor: Optional[Callable[[Dict[str, Any], Optional[str]], Awaitable[Dict[str, Any]]]] = None
         
         # Action mappings
         self.action_handlers = {
@@ -33,6 +34,13 @@ class TimerScheduler:
             "hibernate": self.system_controller.hibernate,
             "lock": self.system_controller.lock_screen
         }
+
+    def set_command_executor(
+        self,
+        executor: Callable[[Dict[str, Any], Optional[str]], Awaitable[Dict[str, Any]]],
+    ) -> None:
+        """Provide the normal command path used by delayed non-power actions."""
+        self._command_executor = executor
     
     async def start(self):
         """Start the timer scheduler and restore active timers"""
@@ -66,13 +74,14 @@ class TimerScheduler:
         action: str,
         duration_seconds: int,
         user_id: str = "default",
-        conversation_id: Optional[str] = None
+        conversation_id: Optional[str] = None,
+        command_data: Optional[Dict[str, Any]] = None,
     ) -> Optional[ScheduledTimer]:
         """
         Create a new timer
         
         Args:
-            action: Action to perform (shutdown, hibernate, etc.)
+            action: Human-readable action identifier used for cancellation/UI.
             duration_seconds: Delay in seconds
             user_id: User ID
             conversation_id: Optional conversation ID
@@ -80,8 +89,12 @@ class TimerScheduler:
         Returns:
             Created timer or None if failed
         """
-        if action not in self.action_handlers:
+        if command_data is None and action not in self.action_handlers:
             logger.error(f"Unknown action: {action}")
+            return None
+
+        if command_data is not None and not command_data.get("type"):
+            logger.error("Scheduled command has no command type")
             return None
         
         if duration_seconds <= 0:
@@ -98,7 +111,8 @@ class TimerScheduler:
             scheduled_time=scheduled_time,
             duration_seconds=duration_seconds,
             user_id=user_id,
-            conversation_id=conversation_id
+            conversation_id=conversation_id,
+            command_data=command_data,
         )
         
         if not timer:
@@ -110,6 +124,11 @@ class TimerScheduler:
         
         # Broadcast update
         await self._broadcast_timer_update()
+        await self._broadcast_timer_event(
+            timer,
+            "scheduled",
+            f"Scheduled {self._describe_timer(timer)}.",
+        )
         
         logger.info(f"Created timer: {action} in {duration_seconds}s (ID: {timer.id})")
         return timer
@@ -238,29 +257,15 @@ class TimerScheduler:
             if self._shutdown:
                 return
             
-            # Execute the action
-            handler = self.action_handlers.get(timer.action)
-            if not handler:
-                error_msg = f"Unknown action: {timer.action}"
+            await self._broadcast_timer_event(timer, "fired", f"Running scheduled {self._describe_timer(timer)}.")
+            success, error_msg = await self._run_timer_action(timer)
+            await self._complete_timer(timer, error_msg if not success else None)
+            if success:
+                logger.info(f"Timer {timer.id} executed successfully: {timer.action}")
+                await self._broadcast_timer_event(timer, "completed", f"Completed scheduled {self._describe_timer(timer)}.")
+            else:
                 logger.error(error_msg)
-                await self._complete_timer(timer, error_msg)
-                return
-            
-            logger.info(f"Executing timer action: {timer.action}")
-            
-            try:
-                success = await handler()
-                if success:
-                    await self._complete_timer(timer)
-                    logger.info(f"Timer {timer.id} executed successfully: {timer.action}")
-                else:
-                    error_msg = f"Action {timer.action} failed"
-                    await self._complete_timer(timer, error_msg)
-                    logger.error(error_msg)
-            except Exception as e:
-                error_msg = f"Error executing {timer.action}: {str(e)}"
-                await self._complete_timer(timer, error_msg)
-                logger.error(error_msg)
+                await self._broadcast_timer_event(timer, "failed", f"Scheduled {self._describe_timer(timer)} failed.")
         
         except asyncio.CancelledError:
             logger.info(f"Timer {timer.id} was cancelled")
@@ -284,6 +289,55 @@ class TimerScheduler:
             await db_client.complete_timer(str(timer.id), error_message)
         except Exception as e:
             logger.error(f"Error completing timer {timer.id}: {e}")
+
+    async def _run_timer_action(self, timer: ScheduledTimer) -> tuple[bool, Optional[str]]:
+        """Run one timer through either the legacy handler or command executor."""
+        command_data = timer.command_data
+        try:
+            if command_data:
+                if not self._command_executor:
+                    # Timers restored on startup may become due before the
+                    # first interactive command initializes the executor.
+                    from src.execution.command_executor import get_command_executor
+                    self.set_command_executor(get_command_executor().execute)
+                result = await self._command_executor(command_data, timer.conversation_id)
+                if result.get("success"):
+                    return True, None
+                response_data = result.get("response_data")
+                detail = (
+                    response_data.get("message")
+                    if isinstance(response_data, dict)
+                    else None
+                )
+                return False, detail or result.get("error") or f"Scheduled {timer.action} action failed"
+
+            handler = self.action_handlers.get(timer.action)
+            if not handler:
+                return False, f"Unknown action: {timer.action}"
+            success = await handler()
+            return success, None if success else f"Action {timer.action} failed"
+        except Exception as exc:
+            return False, f"Error executing {timer.action}: {exc}"
+
+    @staticmethod
+    def _describe_timer(timer: ScheduledTimer) -> str:
+        command = timer.command_data or {}
+        command_type = command.get("type") or timer.action
+        params = command.get("params") or {}
+        action = params.get("action") or params.get("operation") or params.get("target")
+        return f"{command_type.replace('_', ' ')}{f' ({action})' if action else ''}"
+
+    async def _broadcast_timer_event(self, timer: ScheduledTimer, event: str, message: str) -> None:
+        """Notify connected clients when a delayed command changes lifecycle state."""
+        payload = {"event": event, "timer": timer.to_dict(), "message": message}
+        try:
+            await broadcast_message("timer_event", payload)
+            await broadcast_message(
+                "message",
+                {"role": "assistant", "content": message, "timestamp": datetime.now().isoformat()},
+            )
+        except Exception as exc:
+            logger.error(f"Error broadcasting timer event: {exc}")
     
     async def _broadcast_timer_update(self):
         """Broadcast timer updates to connected clients"""

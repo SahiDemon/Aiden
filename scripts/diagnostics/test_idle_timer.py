@@ -1,66 +1,79 @@
-import time
+"""Watch Aiden's real idle and media checks, then lock after 60 eligible seconds.
+
+This standalone diagnostic does not change saved auto-shutdown settings or
+call the shutdown command.
+"""
+
 import ctypes
-from ctypes import Structure, c_uint, sizeof
+import sys
+import time
+from pathlib import Path
 
-class LASTINPUTINFO(Structure):
-    _fields_ = [
-        ("cbSize", c_uint),
-        ("dwTime", c_uint),
-    ]
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-def get_idle_time_seconds() -> float:
-    try:
-        lii = LASTINPUTINFO()
-        lii.cbSize = sizeof(LASTINPUTINFO)
-        if ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lii)):
-            # Handle potential signed/unsigned difference
-            tick_count = ctypes.windll.kernel32.GetTickCount()
-            # Unsigned 32-bit subtraction to handle wrap-around
-            millis = (tick_count - lii.dwTime) & 0xFFFFFFFF
-            return max(0.0, millis / 1000.0)
-    except Exception as e:
-        print(f"Error: {e}")
-    return 0.0
+from src.utils.check_media_status import check_jellyfin, inspect_audio_devices
+from src.utils.media_idle_monitor import MediaIdleMonitor
 
-def run_test():
-    print("=" * 65)
-    print("         AIDEN IDLE TIMER DIAGNOSTIC RUNNER (1 MINUTE)")
-    print("=" * 65)
-    print("Instructions:")
-    print("  1. Leave your mouse and keyboard completely untouched.")
-    print("  2. Watch the timer go up to 60 seconds.")
-    print("  3. If it resets back to 0, something on your PC is simulating input.")
-    print("=" * 65)
-    
-    max_idle = 0.0
-    previous_idle = 0.0
-    
-    for sec in range(1, 75): # Go up to 75 seconds
-        time.sleep(1.0)
-        idle = get_idle_time_seconds()
-        
-        # Track max idle time reached
-        if idle > max_idle:
-            max_idle = idle
-            
-        # Detect resets
-        if idle < previous_idle and previous_idle > 1.5:
-            print(f"⚠️ [RESET DETECTED] Timer fell from {previous_idle:.1f}s to {idle:.1f}s!")
-            print("   -> This means Windows detected mouse/keyboard/joystick activity.")
-            
-        print(f"  [{sec:02d}s elapsed] Current Idle Time: {idle:.1f} seconds")
-        
-        if idle >= 60.0:
-            print("\n🎉 [SUCCESS] You have successfully stayed idle for 60 seconds!")
-            print("    Aiden's auto-shutdown would trigger now.")
-            break
-            
-        previous_idle = idle
+
+THRESHOLD_SECONDS = 60.0
+TEST_SECONDS = 75
+
+
+def print_media_blockers() -> None:
+    jellyfin_playing, jellyfin_details = check_jellyfin()
+    audio_playing, _, audio_triggers = inspect_audio_devices()
+    if jellyfin_playing or audio_playing:
+        print("Media blockers:", flush=True)
+        if jellyfin_playing:
+            for detail in jellyfin_details:
+                if detail.startswith("Jellyfin Active:"):
+                    print(f"  {detail}", flush=True)
+        for detail in audio_triggers:
+            print(f"  {detail}", flush=True)
     else:
-        print(f"\n❌ [FAIL] Did not reach 60 seconds of idle. Max idle reached was {max_idle:.1f} seconds.")
-        print("   If you did not touch the mouse/keyboard, a background app or device driver")
-        print("   is sending invisible inputs to keep your PC awake.")
-        print("=" * 65)
+        print("No media blockers detected.", flush=True)
+
+
+def run_test() -> None:
+    monitor = MediaIdleMonitor()
+    print("=" * 72)
+    print("AIDEN IDLE + MEDIA DIAGNOSTIC: LOCK TEST AT 60 SECONDS")
+    print("Leave the mouse and keyboard untouched. The saved 40-minute shutdown")
+    print("setting stays as it is. This test can only lock the PC, never shut it down.")
+    print("=" * 72, flush=True)
+    print_media_blockers()
+
+    previous_idle = monitor.get_idle_time_seconds()
+    max_idle = previous_idle
+    ever_media_blocked = False
+    for elapsed in range(1, TEST_SECONDS + 1):
+        time.sleep(1)
+        idle = monitor.get_idle_time_seconds()
+        media_playing = monitor.is_media_playing()
+        max_idle = max(max_idle, idle)
+        ever_media_blocked |= media_playing
+
+        if idle < previous_idle - 1.5:
+            print(f"RESET: Windows idle time fell from {previous_idle:.1f}s to {idle:.1f}s.", flush=True)
+
+        reason = "media detected" if media_playing else "eligible"
+        print(f"[{elapsed:02d}s] Windows idle: {idle:5.1f}s | Aiden: {reason}", flush=True)
+
+        if idle >= THRESHOLD_SECONDS and not media_playing:
+            print("60-second idle condition met and no media detected. Locking now.", flush=True)
+            if not ctypes.windll.user32.LockWorkStation():
+                raise OSError("Windows LockWorkStation failed")
+            return
+        previous_idle = idle
+
+    print(f"Test ended. Highest idle time: {max_idle:.1f}s.", flush=True)
+    if ever_media_blocked:
+        print_media_blockers()
+    if max_idle < THRESHOLD_SECONDS:
+        print("Windows idle time never reached 60 seconds. An input reset prevented the lock.", flush=True)
+    elif ever_media_blocked:
+        print("Aiden detected media at the threshold, which prevented the lock.", flush=True)
+
 
 if __name__ == "__main__":
     run_test()

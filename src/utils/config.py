@@ -171,6 +171,15 @@ class AppConfig(BaseSettings):
         default="",
         validation_alias=AliasChoices("cloudflare_tunnel_token", "CLOUDFLARE_TUNNEL_TOKEN"),
     )
+    cloudflare_tunnel_metrics_port: int = Field(
+        default=20240,
+        ge=1,
+        le=65535,
+        validation_alias=AliasChoices(
+            "cloudflare_tunnel_metrics_port",
+            "CLOUDFLARE_TUNNEL_METRICS_PORT",
+        ),
+    )
 
 
     @field_validator("debug", mode="before")

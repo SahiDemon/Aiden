@@ -4,6 +4,7 @@ Async PostgreSQL database client using SQLAlchemy
 """
 import asyncio
 import logging
+import time
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
@@ -28,6 +29,7 @@ class NeonDBClient:
         self.settings = get_settings()
         self.engine = None
         self.session_maker = None
+        self.next_reconnect_at = 0.0
         
     async def connect(self):
         """Initialize database connection"""
@@ -79,18 +81,29 @@ class NeonDBClient:
                 raise
             
             logger.info("Connected to Neon DB successfully!")
+            self.next_reconnect_at = 0.0
             
         except asyncio.TimeoutError:
             logger.error("Neon DB connection timed out")
             logger.warning("Database features will be unavailable, but Aiden will continue running")
-            self.engine = None
-            self.session_maker = None
+            await self._reset_failed_connection()
         except Exception as e:
             logger.error(f"Failed to connect to Neon DB: {e}")
             logger.warning("Database features will be unavailable, but Aiden will continue running")
             # Don't raise - allow app to continue without database
-            self.engine = None
-            self.session_maker = None
+            await self._reset_failed_connection()
+
+    async def _reset_failed_connection(self) -> None:
+        """Release a failed engine and space out later connection attempts."""
+        engine = self.engine
+        self.engine = None
+        self.session_maker = None
+        self.next_reconnect_at = time.monotonic() + 30
+        if engine is not None:
+            try:
+                await engine.dispose()
+            except Exception as exc:
+                logger.warning("Could not dispose failed Neon DB engine: %s", exc)
 
     def _build_asyncpg_url(self, raw_url: str) -> str:
         """Normalize Neon connection strings for asyncpg."""
@@ -132,7 +145,7 @@ class NeonDBClient:
             logger.info("Disconnected from Neon DB")
     
     async def create_tables(self):
-        """Create all tables if they don't exist"""
+        """Create tables and apply the small backwards-compatible timer migration."""
         if not self.engine:
             logger.warning("Database not connected - skipping table creation")
             return
@@ -140,6 +153,13 @@ class NeonDBClient:
         try:
             async with self.engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
+                # ``create_all`` deliberately does not alter existing tables.
+                # Older installations have scheduled_timers without this column,
+                # so add it in-place before the scheduler tries to load timers.
+                await conn.execute(text(
+                    "ALTER TABLE scheduled_timers "
+                    "ADD COLUMN IF NOT EXISTS command_data JSONB"
+                ))
             logger.info("Database tables created/verified")
         except Exception as e:
             logger.error(f"Error creating tables: {e}")
@@ -410,7 +430,8 @@ class NeonDBClient:
         scheduled_time,
         duration_seconds: int,
         user_id: str = "default",
-        conversation_id: Optional[str] = None
+        conversation_id: Optional[str] = None,
+        command_data: Optional[Dict[str, Any]] = None,
     ) -> Optional[ScheduledTimer]:
         """Create a new scheduled timer"""
         async with self.session() as session:
@@ -421,7 +442,8 @@ class NeonDBClient:
                 scheduled_time=scheduled_time,
                 duration_seconds=duration_seconds,
                 user_id=user_id,
-                conversation_id=conversation_id
+                conversation_id=conversation_id,
+                command_data=command_data,
             )
             session.add(timer)
             await session.flush()
@@ -501,15 +523,23 @@ class NeonDBClient:
 
 # Global client instance
 _db_client: Optional[NeonDBClient] = None
+_db_connect_lock = asyncio.Lock()
 
 
 async def get_db_client() -> NeonDBClient:
-    """Get or create global database client"""
+    """Get the client, retrying a failed startup connection after cooldown."""
     global _db_client
-    if _db_client is None:
-        _db_client = NeonDBClient()
-        await _db_client.connect()
-        await _db_client.create_tables()
+    if _db_client is None or (
+        _db_client.session_maker is None
+        and time.monotonic() >= _db_client.next_reconnect_at
+    ):
+        async with _db_connect_lock:
+            if _db_client is None:
+                _db_client = NeonDBClient()
+            if _db_client.session_maker is None and time.monotonic() >= _db_client.next_reconnect_at:
+                await _db_client.connect()
+                if _db_client.session_maker is not None:
+                    await _db_client.create_tables()
     return _db_client
 
 

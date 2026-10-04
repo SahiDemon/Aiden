@@ -45,6 +45,8 @@ class AppLauncher:
             "code": ["Code.exe", "Visual Studio Code"],
             "code.exe": ["Code.exe", "Visual Studio Code"],
             "spotify": ["Spotify.exe"],
+            "jellyfin": [r"C:\Program Files\Jellyfin\Jellyfin Media Player\JellyfinMediaPlayer.exe", "JellyfinMediaPlayer.exe"],
+            "jellyfin media player": [r"C:\Program Files\Jellyfin\Jellyfin Media Player\JellyfinMediaPlayer.exe", "JellyfinMediaPlayer.exe"],
             "discord": ["Discord.exe"],
             "calculator": ["calc.exe"],
             "calc": ["calc.exe"],
@@ -587,6 +589,5 @@ def get_app_launcher() -> AppLauncher:
     if _app_launcher is None:
         _app_launcher = AppLauncher()
     return _app_launcher
-
 
 

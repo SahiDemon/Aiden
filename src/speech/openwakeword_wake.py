@@ -133,6 +133,8 @@ class OpenWakeWordDetector:
             maxlen=max(8, int(1_600 / _FRAME_MS))
         )
         self._ready_event = threading.Event()
+        self._stream_released = threading.Event()
+        self._stream_released.set()
         self._startup_error: Optional[str] = None
 
         self._thread: Optional[threading.Thread] = None
@@ -221,8 +223,18 @@ class OpenWakeWordDetector:
     def pause(self) -> None:
         with self._lock:
             self._paused = True
+            # STT must not reopen this device before this detector closes its
+            # PortAudio stream, especially after a long idle period.
+            if self._stream is not None:
+                self._stream_released.clear()
+            else:
+                self._stream_released.set()
             # Reset debounce so the same utterance can't re-fire after resume.
             self._last_trigger_time = time.monotonic()
+
+    def wait_until_stream_released(self, timeout: float = 0.5) -> bool:
+        """Wait for the paused detector to release its microphone stream."""
+        return self._stream_released.wait(timeout)
 
     def resume(self) -> None:
         with self._lock:
@@ -415,6 +427,7 @@ class OpenWakeWordDetector:
                 pass
             finally:
                 self._pa = None
+            self._stream_released.set()
 
     def _supervisor_loop(self) -> None:
         restart_times: list[float] = []
