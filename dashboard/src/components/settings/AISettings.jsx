@@ -105,7 +105,7 @@ const AISettings = ({ settings, onChange }) => {
             <Input
               value={settings.user_name || ''}
               onChange={(e) => onChange('user_name', e.target.value)}
-              placeholder="Boss"
+              placeholder="Sir"
             />
             <p className="text-xs text-muted-foreground">
               How Aiden should address you

@@ -8,10 +8,14 @@ import ConversationHistory from './components/chat/ConversationHistory'
 import CollapsibleSidebar from './components/layout/CollapsibleSidebar'
 import SettingsDialog from './components/settings/SettingsDialog'
 import TimerDisplay from './components/TimerDisplay'
+import SystemStats from './components/system/SystemStats'
+import SmartDeviceCard from './components/smart-home/SmartDeviceCard'
+import BottomNav from './components/layout/BottomNav'
 import useWebSocket from './hooks/useWebSocket'
 import api from './lib/api'
 
 function App() {
+  const [activeTab, setActiveTab] = useState('chat')
   const [showSettings, setShowSettings] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
   const [conversationMessages, setConversationMessages] = useState([])
@@ -172,10 +176,7 @@ function App() {
     <div className="min-h-screen gradient-bg relative overflow-hidden">
       <Toaster 
         position="top-right" 
-        containerStyle={{
-          top: '5rem', // Move down to avoid navbar overlap
-          right: '1rem',
-        }}
+        containerClassName="!top-4 md:!top-20 !right-4"
         toastOptions={{
           className: 'liquid-glass-card',
           style: {
@@ -188,24 +189,29 @@ function App() {
         }} 
       />
 
-      {/* Collapsible Sidebar */}
-      <CollapsibleSidebar
-        connected={connected}
-        systemMetrics={systemMetrics}
-        deviceUpdates={deviceUpdates}
-        onShowHistory={() => setShowHistory(true)}
-        onShowSettings={() => setShowSettings(true)}
-      />
+      {/* Collapsible Sidebar - Hidden on Mobile */}
+      <div className="hidden md:block">
+        <CollapsibleSidebar
+          connected={connected}
+          systemMetrics={systemMetrics}
+          deviceUpdates={deviceUpdates}
+          onShowHistory={() => setShowHistory(true)}
+          onShowSettings={() => setShowSettings(true)}
+        />
+      </div>
 
-      {/* Header - Fixed at top with proper z-index */}
-      <header className="fixed top-0 left-0 right-0 liquid-glass-navbar flex items-center justify-between px-6">
+      {/* Header - Hidden on Mobile, Fixed at top on Desktop */}
+      <header className="hidden md:flex fixed top-0 left-0 right-0 liquid-glass-navbar items-center justify-between px-6">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shadow-lg">
-            <span className="text-white font-bold text-lg">A</span>
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shadow-lg border border-blue-400/30">
+            <span className="text-white font-bold text-lg" style={{ fontFamily: "'Space Grotesk', 'Inter', sans-serif" }}>A</span>
           </div>
           <div>
-            <h1 className="text-xl font-bold bg-gradient-to-r from-blue-400 to-blue-300 bg-clip-text text-transparent">
-              Aiden AI
+            <h1 
+              className="text-xl font-black tracking-widest bg-gradient-to-r from-white via-blue-100 to-blue-300 bg-clip-text text-transparent"
+              style={{ fontFamily: "'Space Grotesk', 'Inter', sans-serif" }}
+            >
+              AIDEN
             </h1>
           </div>
         </div>
@@ -236,8 +242,8 @@ function App() {
         </div>
       </header>
 
-      {/* Main Content - Account for navbar height */}
-      <main className="pt-16 h-screen pl-15">
+      {/* Main Content - Account for navbar height on desktop, bottom nav height on mobile */}
+      <main className="md:pt-16 md:pl-15 h-[100dvh] pb-20 md:pb-0 overflow-hidden">
         <div className="h-full">
           {isLoading ? (
             <div className="flex items-center justify-center h-full">
@@ -246,15 +252,38 @@ function App() {
               </div>
             </div>
           ) : (
-            <ChatInterface
-              messages={conversationMessages}
-              voiceActivity={voiceActivity}
-              connected={connected}
-              speakingText={speakingText}
-            />
+            <>
+              <div className={`h-full ${activeTab === 'chat' ? 'block' : 'hidden md:block'}`}>
+                <ChatInterface
+                  messages={conversationMessages}
+                  voiceActivity={voiceActivity}
+                  connected={connected}
+                  speakingText={speakingText}
+                />
+              </div>
+              <div className={`h-full ${activeTab === 'activity' ? 'block' : 'hidden'} md:hidden overflow-y-auto p-4 space-y-4 pb-28`}>
+                <SmartDeviceCard
+                  connected={connected}
+                  deviceUpdates={deviceUpdates}
+                  compact={false}
+                />
+                <SystemStats
+                  connected={connected}
+                  systemMetrics={systemMetrics}
+                  compact={false}
+                />
+              </div>
+            </>
           )}
         </div>
       </main>
+
+      {/* Mobile Bottom Navigation */}
+      <BottomNav 
+        activeTab={activeTab} 
+        setActiveTab={setActiveTab} 
+        onShowSettings={() => setShowSettings(true)}
+      />
 
       {/* Settings Dialog */}
       <SettingsDialog

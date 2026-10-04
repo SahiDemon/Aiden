@@ -18,6 +18,22 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+_SCHEDULABLE_COMMAND_TYPES = {
+    "launch_app", "kill_process", "system_command", "system_control",
+    "fan_control", "media_control", "wake_word_control", "ups_control",
+    "shell_command",
+}
+_LEGACY_MEDIA_ACTIONS = {
+    "play", "pause", "resume", "next", "previous", "set_volume",
+    "play_track", "play_playlist", "play_liked_songs", "transfer",
+    "get_current_track", "identify", "what_song",
+}
+_SCHEDULE_METADATA_KEYS = {
+    "action", "duration_seconds", "user_id", "conversation_id", "command",
+    "command_params", "params",
+}
+
+
 class CommandExecutor:
     """
     Execute commands from AI with proper routing and error handling
@@ -36,6 +52,7 @@ class CommandExecutor:
         """Initialize timer scheduler (async)"""
         if not self.timer_scheduler:
             self.timer_scheduler = await get_timer_scheduler()
+            self.timer_scheduler.set_command_executor(self.execute)
     
     def set_esp32_client(self, esp32_client):
         """Set ESP32 client for smart home control"""
@@ -99,11 +116,17 @@ class CommandExecutor:
                 case "wake_word_control":
                     success = await self._handle_wake_word_control(params)
                 
+                case "ups_control":
+                    success, response_data = await self._handle_ups_control(params)
+                
                 case "shell_command":
                     success, error_message = await self._handle_shell_command(params)
                 
                 case "self_termination":
                     success, response_data = await self._handle_self_termination()
+
+                case "restart_application":
+                    success, response_data = await self._handle_restart_application()
                 
                 case _:
                     logger.warning(f"Unknown command type: {command_type}")
@@ -157,6 +180,8 @@ class CommandExecutor:
         Returns:
             List of result dictionaries with success status and details
         """
+        commands = self._normalize_execution_order(commands)
+
         if sequential:
             results = []
             for command in commands:
@@ -171,6 +196,35 @@ class CommandExecutor:
             ]
             results = await asyncio.gather(*tasks)
             return results
+
+    def _normalize_execution_order(self, commands: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Order dependent actions, with system power actions last."""
+        if len(commands) < 2:
+            return commands
+
+        def priority(command: Dict[str, Any]) -> int:
+            command_type = command.get("type")
+            params = command.get("params") or {}
+            action = str(params.get("action") or "").lower()
+
+            if command_type == "system_control" and action == "audio.set_output":
+                return 0
+
+            if command_type == "media_control":
+                media_action = str(params.get("action") or "").lower()
+                if media_action in {"play", "resume", "play_track", "play_playlist", "play_liked_songs"}:
+                    return 1
+
+            if command_type == "system_command" and action in {"shutdown", "restart", "sleep", "hibernate", "lock"}:
+                return 3
+
+            return 2
+
+        ordered = sorted(enumerate(commands), key=lambda item: (priority(item[1]), item[0]))
+        normalized = [command for _, command in ordered]
+        if normalized != commands:
+            logger.info("Reordered dependent commands before playback or system power actions.")
+        return normalized
     
     async def _handle_launch_app(self, params: Dict[str, Any]) -> bool:
         """Handle app launch command"""
@@ -234,7 +288,7 @@ class CommandExecutor:
         return await self.process_manager.kill_process(base_name, pid=pid)
     
     async def _handle_system_command(self, params: Dict[str, Any]) -> bool:
-        """Handle system command (lock, shutdown, restart, sleep)"""
+        """Handle system command (lock, shutdown, restart, sleep, empty_recycle_bin)"""
         action = params.get("action", "").lower()
         
         match action:
@@ -248,6 +302,8 @@ class CommandExecutor:
                 return await self.system_controller.sleep()
             case "hibernate":
                 return await self.system_controller.hibernate()
+            case "empty_recycle_bin" | "clear_recycle_bin":
+                return await self.system_controller.empty_recycle_bin()
             case _:
                 logger.error(f"Unknown system action: {action}")
                 return False
@@ -314,6 +370,12 @@ class CommandExecutor:
                         logger.error(f"Invalid volume level: {level}")
                         return False, {"type": "audio", "message": "Invalid volume level."}
                     return await self.system_controller.control_volume("set_volume", numeric_level)
+                case "audio.set_output":
+                    target = params.get("target")
+                    if not target:
+                        logger.error("Audio target missing for set_output")
+                        return False, {"type": "audio", "message": "Audio target missing (speaker/headphone)."}
+                    return await self.system_controller.set_audio_output(target)
                 case "system.battery_status":
                     return await self.system_controller.get_battery_status()
                 case "system.cpu_usage":
@@ -328,7 +390,7 @@ class CommandExecutor:
             return False, None
 
     async def _handle_media_control(self, params: Dict[str, Any]) -> tuple[bool, Optional[dict]]:
-        """Route media commands to Spotify or browser controllers."""
+        """Route media commands to Spotify, Jellyfin, or browser controllers."""
         action = params.get("action")
         if not action:
             logger.error("Media control missing action parameter.")
@@ -354,31 +416,82 @@ class CommandExecutor:
         )
         return success, payload
     
-    async def _handle_fan_control(self, params: Dict[str, Any]) -> tuple[bool, Optional[str]]:
-        """Handle ESP32 fan control command"""
+    async def _handle_fan_control(self, params: Dict[str, Any]) -> tuple[bool, Optional[dict]]:
+        """Handle ESP32 fan control command.
+
+        For power, speed, mode, osc, and timer commands the ESP32 exposes
+        simple shortcut GET routes (e.g. GET /off, GET /speed/3).  We use
+        direct_toggle() which fires a SINGLE HTTP request with no pre/post
+        state checks, keeping latency to <200 ms on LAN.
+
+        Falls back to the full execute_control_request() path for anything
+        that can't be mapped to a shortcut route.
+        """
         if not self.esp32_client:
             logger.warning("ESP32 client not configured - fan control unavailable")
             logger.info("To enable fan control, configure ESP32 settings in .env file")
             return False, None
-        
-        operation = params.get("operation", "").lower()
-        
-        match operation:
-            case "on" | "turn_on" | "increase" | "speed_up" | "faster" | "high":
-                # /on endpoint - cycles through speeds (1 → 2 → 3)
-                success, response = await self.esp32_client.turn_on()
-                return success, response
-            case "off" | "turn_off" | "stop":
-                # /off endpoint
-                success, response = await self.esp32_client.turn_off()
-                return success, response
-            case "mode" | "change_mode" | "switch_mode":
-                # /mode endpoint
-                success, response = await self.esp32_client.change_mode()
-                return success, response
-            case _:
-                logger.error(f"Unknown fan operation: {operation}")
-                return False, None
+
+        control_id = params.get("control_id")
+        target = str(params.get("target")) if params.get("target") is not None else None
+        legacy_action = params.get("operation") or params.get("action")
+
+        # ── Fast path: map to a shortcut GET route ────────────────────────
+        shortcut_path: Optional[str] = None
+
+        if control_id == "power" or (legacy_action and legacy_action.lower() in
+                {"on", "off", "turn_on", "turn_off", "stop", "toggle"}):
+            power_target = (target or str(legacy_action or "")).lower()
+            if power_target in {"on", "turn_on"}:
+                target, shortcut_path = "on", "/on"
+            elif power_target in {"off", "turn_off", "stop"}:
+                target, shortcut_path = "off", "/off"
+            else:
+                shortcut_path = "/power"
+            control_id = "power"
+        elif control_id in {"speed", "mode", "timer", "osc"} and target is not None:
+            shortcut_path = f"/{control_id}/{target}"
+        elif control_id in {"speed", "mode", "timer", "osc"} and not target:
+            # cycle / toggle with no explicit target → hit the base route
+            shortcut_path = f"/{control_id}"
+
+        if shortcut_path is not None:
+            result = await self.esp32_client.direct_toggle(shortcut_path)
+            if not result.get("success"):
+                logger.error("ESP32 fan control failed: %s", result.get("error"))
+                return False, {
+                    "type": "fan_control",
+                    "message": result.get("error") or "I couldn't control the fan.",
+                    "control_id": control_id,
+                    "target": target,
+                }
+            payload = dict(result)
+            payload["type"] = "fan_control"
+            payload["control_id"] = control_id
+            payload["target"] = target
+            return True, payload
+
+        # ── Slow path: full metadata-aware request ────────────────────────
+        result = await self.esp32_client.execute_control_request(
+            control_id=control_id,
+            target=target,
+            action=params.get("action"),
+            legacy_action=params.get("operation"),
+        )
+
+        if not result.get("success"):
+            logger.error("ESP32 fan control failed: %s", result.get("error"))
+            return False, {
+                "type": "fan_control",
+                "message": result.get("error") or "I couldn't control the fan.",
+                "control_id": result.get("control_id"),
+                "target": result.get("target"),
+                "device": result.get("device"),
+            }
+
+        payload = dict(result)
+        payload["type"] = "fan_control"
+        return True, payload
     
     async def _handle_wake_word_control(self, params: Dict[str, Any]) -> bool:
         """Handle wake word control command (enable/disable/toggle)"""
@@ -401,6 +514,83 @@ class CommandExecutor:
             case _:
                 logger.error(f"Unknown wake word control action: {action}")
                 return False
+    
+    async def _handle_ups_control(self, params: Dict[str, Any]) -> tuple[bool, Optional[dict]]:
+        """
+        Handle UPS-related commands (shutdown confirmation/cancellation)
+        
+        Args:
+            params: {
+                "action": "confirm_shutdown" | "cancel_shutdown" | "get_status"
+            }
+            
+        Returns:
+            Tuple of (success, response_data)
+        """
+        action = params.get("action", "").lower()
+        
+        try:
+            from src.utils.ups_handler import get_ups_handler
+            ups_handler = get_ups_handler()
+            
+            match action:
+                case "confirm_shutdown" | "yes" | "shutdown" | "proceed":
+                    if ups_handler.is_waiting_for_response():
+                        ups_handler.user_confirmed_shutdown(True)
+                        logger.info("✅ User confirmed UPS shutdown")
+                        return True, None
+                    else:
+                        logger.warning("Not waiting for UPS shutdown confirmation")
+                        return False, None
+                
+                case "cancel_shutdown" | "no" | "cancel" | "abort":
+                    if ups_handler.is_waiting_for_response():
+                        ups_handler.user_confirmed_shutdown(False)
+                        logger.info("❌ User cancelled UPS shutdown")
+                        return True, None
+                    else:
+                        logger.warning("Not waiting for UPS shutdown confirmation")
+                        return False, None
+                
+                case "get_status" | "status":
+                    # Get UPS status
+                    from src.utils.ups_monitor import get_ups_monitor
+                    ups_monitor = get_ups_monitor()
+                    status = ups_monitor.get_status()
+                    logger.info(f"UPS Status: {status}")
+                    
+                    # Format a nice message for the user
+                    mode = status.get("mode", "unknown")
+                    battery_pct = status.get("battery_percentage", 0)
+                    battery_v = status.get("battery_voltage", 0.0)
+                    load_pct = status.get("load_percentage", 0)
+                    time_on_battery = status.get("time_on_battery_minutes")
+                    
+                    if mode == "ac_online":
+                        message = f"We're plugged in and running on power. Battery is at {battery_pct}% ({battery_v:.1f}V), and we're drawing {load_pct}% load."
+                    elif mode == "battery":
+                        if time_on_battery and time_on_battery >= 2:
+                            message = f"We've been on battery for {time_on_battery} minutes. Battery is at {battery_pct}% ({battery_v:.1f}V), load is {load_pct}%. I'll need to shut down soon if power isn't restored."
+                        else:
+                            message = f"We're on battery power right now. Battery is at {battery_pct}% ({battery_v:.1f}V). I just asked if you want to shutdown."
+                    else:
+                        message = f"UPS status unknown. Battery: {battery_pct}% ({battery_v:.1f}V), Load: {load_pct}%"
+                    
+                    # Return enriched response
+                    response_data = {
+                        "type": "ups_status",
+                        "message": message,
+                        **status
+                    }
+                    return True, response_data
+                
+                case _:
+                    logger.warning(f"Unknown UPS control action: {action}")
+                    return False, None
+        
+        except Exception as e:
+            logger.error(f"Error handling UPS control: {e}", exc_info=True)
+            return False, None
     
     async def _handle_shell_command(self, params: Dict[str, Any]) -> tuple[bool, Optional[str]]:
         """Handle arbitrary shell command"""
@@ -445,15 +635,17 @@ class CommandExecutor:
         
         # Play dramatic outro sound
         try:
-            import pygame
-            sound_path = os.path.join(os.getcwd(), "sounds", "dramatic_outro.mp3")
-            if os.path.exists(sound_path):
+            import pygame  # type: ignore[import-untyped]
+            from src.utils.paths import resource_path
+
+            sound_path = resource_path("sounds", "dramatic_outro.mp3")
+            if sound_path.exists():
                 if not pygame.mixer.get_init():
                     pygame.mixer.init()
                 
                 # Use Sound object instead of music stream to allow mixing with TTS
                 # TTS uses the music channel, so this allows them to play simultaneously
-                outro_sound = pygame.mixer.Sound(sound_path)
+                outro_sound = pygame.mixer.Sound(str(sound_path))
                 outro_sound.set_volume(0.5)  # Lower volume slightly so TTS is audible
                 outro_sound.play()
                 logger.info(f"Playing dramatic outro: {sound_path}")
@@ -466,6 +658,11 @@ class CommandExecutor:
             # Wait for sound (11s) + TTS overlap
             await asyncio.sleep(12)  
             logger.info("👋 Terminating process now.")
+            try:
+                from src.utils.guardian import signal_guardian_stop
+                signal_guardian_stop()
+            except Exception as e:
+                logger.warning(f"Could not write guardian stop sentinel: {e}")
             os._exit(0)  # Force exit
             
         asyncio.create_task(delayed_exit())
@@ -482,28 +679,95 @@ class CommandExecutor:
         # The assistant will merge this into the spoken response
         return True, {"type": "self_termination", "message": message}
 
+    async def _handle_restart_application(self) -> tuple[bool, Optional[dict]]:
+        """Handle application restart"""
+        import sys
+        import os
+        import asyncio
+        
+        logger.info("🔄 RESTART INITIATED: Restarting application...")
+        
+        async def delayed_restart():
+            # Wait for TTS to likely finish (3 seconds)
+            await asyncio.sleep(3)
+            logger.info(f"Re-launching: {sys.executable} {sys.argv}")
+            
+            # Attempt to release the single-instance mutex if we can? 
+            # No, we can't easily access the named mutex created in PowerShell from Python 
+            # without ctypes kernel32 calls, and we don't hold the handle anyway (PS does).
+            # The PS script will exit when we die, releasing the mutex.
+            # The NEW python process will start sans-mutex (unless we re-run the PS script, which is hard).
+            # Re-running just the python script is the standard way to "restart" a python app.
+            
+            try:
+                # Re-execute the current process
+                # os.execl(path, arg0, arg1, ...)
+                # path = executable
+                # arg0 = executable (convention)
+                # arg1... = arguments
+                os.execl(sys.executable, sys.executable, *sys.argv)
+            except Exception as e:
+                logger.error(f"Restart failed: {e}")
+                os._exit(1)
+
+        # Schedule the restart
+        asyncio.create_task(delayed_restart())
+        
+        return True, {"type": "restart_application", "message": "Restarting now..."}
+
     
     async def _handle_scheduled_command(self, params: Dict[str, Any]) -> tuple[bool, Optional[str]]:
-        """Handle scheduled command (timer) creation"""
+        """Schedule a normal supported command without blocking future requests."""
         if not self.timer_scheduler:
             await self.initialize_timer_scheduler()
         
-        action = params.get("action", "").lower()
+        action = str(params.get("action", "")).lower()
+        command_data = params.get("command")
         duration_seconds = params.get("duration_seconds", 0)
         user_id = params.get("user_id", "default")
         conversation_id = params.get("conversation_id")
-        
-        if not action:
+
+        # Older prompt revisions emitted abbreviated timer objects such as
+        # {action: "play", target: "spotify"} or
+        # {action: "kill_process", name: "notepad.exe"}.  Convert those
+        # into the canonical nested command before validating, so valid user
+        # requests do not fail merely because a model used an older schema.
+        if command_data is None and action:
+            command_data = self._normalize_legacy_scheduled_command(action, params)
+
+        if command_data is not None:
+            if (
+                not isinstance(command_data, dict)
+                or not command_data.get("type")
+                or not isinstance(command_data.get("params", {}), dict)
+            ):
+                return False, "Scheduled command must include a command with a type"
+            command_type = str(command_data["type"]).lower()
+            if command_type in {"scheduled_command", "cancel_timer", "self_termination", "restart_application"}:
+                return False, f"Cannot schedule command type: {command_type}"
+            if command_type not in _SCHEDULABLE_COMMAND_TYPES:
+                return False, f"Unsupported scheduled command type: {command_type}"
+            command_data = {"type": command_type, "params": command_data.get("params", {})}
+            action = command_type
+        elif not action:
             logger.error("No action provided for scheduled command")
             return False, "No action specified"
         
         if duration_seconds <= 0:
-            logger.error(f"Invalid duration: {duration_seconds}")
-            return False, "Invalid duration"
+            logger.warning(
+                f"scheduled_command received duration_seconds={duration_seconds} for action='{action}'. "
+                "Treating as immediate system_command."
+            )
+            # Treat a zero-delay request as the equivalent immediate command.
+            if command_data is not None:
+                result = await self.execute(command_data, conversation_id)
+                return result["success"], result.get("response_data")
+            return await self._handle_system_command({"action": action}), None
+
         
-        # Validate action
+        # Legacy power timers remain valid in their existing compact format.
         valid_actions = ["shutdown", "restart", "sleep", "hibernate", "lock"]
-        if action not in valid_actions:
+        if command_data is None and action not in valid_actions:
             logger.error(f"Invalid action: {action}. Valid actions: {valid_actions}")
             return False, f"Invalid action. Valid actions: {', '.join(valid_actions)}"
         
@@ -512,7 +776,8 @@ class CommandExecutor:
                 action=action,
                 duration_seconds=duration_seconds,
                 user_id=user_id,
-                conversation_id=conversation_id
+                conversation_id=conversation_id,
+                command_data=command_data,
             )
             
             if timer:
@@ -524,6 +789,31 @@ class CommandExecutor:
         except Exception as e:
             logger.error(f"Error creating timer: {e}")
             return False, f"Error creating timer: {str(e)}"
+
+    @staticmethod
+    def _normalize_legacy_scheduled_command(action: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Translate supported pre-nested timer shapes into normal commands."""
+        legacy_params = params.get("command_params")
+        if legacy_params is None:
+            legacy_params = params.get("params")
+        direct_params = {
+            key: value for key, value in params.items()
+            if key not in _SCHEDULE_METADATA_KEYS
+        }
+
+        if action in _SCHEDULABLE_COMMAND_TYPES:
+            command_params = legacy_params if isinstance(legacy_params, dict) else direct_params
+            return {"type": action, "params": command_params}
+
+        # Some models abbreviated media_control to its media action. Keep the
+        # requested provider and query intact rather than treating it as a
+        # legacy power timer.
+        if action in _LEGACY_MEDIA_ACTIONS:
+            command_params = dict(legacy_params) if isinstance(legacy_params, dict) else direct_params
+            command_params.setdefault("action", action)
+            return {"type": "media_control", "params": command_params}
+
+        return None
     
     async def _handle_cancel_timer(self, params: Dict[str, Any]) -> bool:
         """Handle timer cancellation"""
@@ -576,6 +866,18 @@ class CommandExecutor:
                 "get_current_track",
                 "identify",
                 "what_song",
+            }
+
+        # Fan control no longer blocks TTS — we speak optimistically and only
+        # append a failure message if the ESP32 actually rejects the command.
+        # (fan_control was here previously but has been moved to fast-path)
+        
+        # UPS control commands that return data
+        if command_type == "ups_control":
+            action = (command.get("params") or {}).get("action", "").lower()
+            return action in {
+                "get_status",
+                "status",
             }
         
         return False

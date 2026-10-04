@@ -6,6 +6,10 @@ import json
 import time
 import glob
 import shutil
+from pathlib import Path
+
+
+APP_CACHE_PATH = Path(__file__).resolve().parent / "src" / "temp" / "app_cache.json"
 
 # ---------- Helper: locate executable ----------
 def find_executable_in_path(app_name):
@@ -91,12 +95,13 @@ def build_app_index():
 
 # ---------- Step 5: Save/load ----------
 def cache_apps(apps):
-    with open("app_cache.json", "w", encoding="utf-8") as f:
+    APP_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with APP_CACHE_PATH.open("w", encoding="utf-8") as f:
         json.dump(apps, f, indent=2)
 
 def load_cached_apps():
-    if os.path.exists("app_cache.json"):
-        with open("app_cache.json", "r", encoding="utf-8") as f:
+    if APP_CACHE_PATH.exists():
+        with APP_CACHE_PATH.open("r", encoding="utf-8") as f:
             return json.load(f)
     return None
 

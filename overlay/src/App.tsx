@@ -6,10 +6,10 @@ import './App.css';
 type WaveState = 'listening' | 'thinking' | 'replying';
 
 function App() {
-  const { connected, overlayState, currentText, userInput } = useWebSocket();
+  const { connected, overlayState, currentText, userInput, sessionActive } = useWebSocket();
 
-  // Only show overlay when state is active (not idle)
-  const shouldShowOverlay = overlayState !== 'idle';
+  // Keep overlay visible for the full active task lifecycle.
+  const shouldShowOverlay = overlayState !== 'idle' || sessionActive;
   const waveState: WaveState = overlayState === 'idle' ? 'listening' : overlayState as WaveState;
 
   // Determine which text to display

@@ -7,13 +7,10 @@ import hashlib
 import logging
 from typing import Dict, Any, List, Optional
 import httpx
-import yaml
-from pathlib import Path
-
 from src.utils.config import get_settings
 from src.utils.logger import get_logger
-from src.utils.prompts_loader import load_prompts, get_system_prompt
 from src.database.redis_client import get_redis_client
+from src.utils.prompt_loader import get_prompt
 
 logger = get_logger(__name__)
 
@@ -30,12 +27,7 @@ class GroqClient:
         logger.info(f"Groq client initialized with model: {self.settings.groq.model}")
         
     def _load_system_prompt(self) -> str:
-        """Load system prompt from cached prompts.yaml"""
-        prompt = get_system_prompt()
-        if prompt:
-            return prompt
-        logger.warning("prompts.yaml not found or empty, using default prompt")
-        return self._get_default_prompt()
+        return get_prompt("system_prompt", self._get_default_prompt())
     
     def _get_default_prompt(self) -> str:
         """Default system prompt if file not found"""
@@ -245,6 +237,58 @@ class GroqClient:
         }, sort_keys=True)
         
         return hashlib.md5(context_str.encode()).hexdigest()
+        
+    async def transcribe_audio(self, audio_bytes: bytes) -> str:
+        """
+        Send raw WAV bytes to Groq's Whisper API.
+        Uses whisper-large-v3-turbo for ~3x faster transcription at equal accuracy.
+
+        Minimum audio gate: if the WAV data is too small (< 0.3s of audio) we
+        skip the API call entirely to avoid paying latency for silence/noise.
+        """
+        # --- Minimum audio gate ---
+        # WAV header = 44 bytes.  16kHz, 16-bit mono = 32000 bytes/second.
+        # 0.3 s threshold = 9600 bytes of PCM data.
+        MIN_AUDIO_BYTES = 44 + 9_600  # ~0.3 s guard
+        if len(audio_bytes) < MIN_AUDIO_BYTES:
+            logger.info(
+                f"STT: Audio too short ({len(audio_bytes)} bytes < {MIN_AUDIO_BYTES}) "
+                "— skipping Groq transcription (likely silence/noise)"
+            )
+            return ""
+        try:
+            headers = {"Authorization": f"Bearer {self.settings.groq.api_key}"}
+            # We must use multipart form-data
+            files = {
+                "file": ("audio.wav", audio_bytes, "audio/wav")
+            }
+            data = {
+                # whisper-large-v3-turbo: 3× faster than large-v3, virtually identical accuracy
+                "model": "whisper-large-v3-turbo",
+                "response_format": "json",
+                "language": "en"  # hardcode English for fastest inference
+            }
+            
+            logger.debug(f"Sending audio ({len(audio_bytes)} bytes) to Groq Whisper API...")
+            
+            response = await self.client.post(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                headers=headers,
+                files=files,
+                data=data,
+                timeout=15.0
+            )
+            
+            response.raise_for_status()
+            result = response.json()
+            text = result.get("text", "").strip()
+            
+            logger.info(f"Groq STT Result: '{text}'")
+            return text
+            
+        except Exception as e:
+            logger.error(f"Groq Whisper API error: {e}")
+            raise
     
     async def close(self):
         """Close HTTP client"""

@@ -73,6 +73,16 @@ A powerful voice-controlled AI assistant for Windows with context-aware conversa
 - **😴 Sleep Mode** - Put computer to sleep with timers
 - **💤 Hibernate** - Hibernate the system with timers
 
+### 🔋 UPS Power Monitoring ⚡NEW⚡
+- **🔌 Real-Time Power Detection** - Instantly detects AC vs Battery mode
+- **⏱️ Time-Based Alerts** - 3min, 4min, 5min warnings (not flaky battery %)
+- **🎙️ Voice Alerts** - Cool warnings at each milestone
+- **🤖 Smart Shutdown Coordination** - Asks for confirmation before shutdown
+- **🛡️ Automatic Protection** - Force shutdown after 5 minutes on battery
+- **⚡ Emergency Voltage Check** - Immediate shutdown if voltage critical (<22V)
+- **💾 Data Protection** - Predictable alerts give you time to save work
+- See [UPS monitoring guide](docs/guides/ups-monitoring.md) for details
+
 ### ⚙️ Advanced System Control
 - **📶 Wi-Fi Control**
   - Turn Wi-Fi on/off
@@ -279,7 +289,7 @@ REDIS_SOCKET_CONNECT_TIMEOUT=5
 
 # ===== Application Settings =====
 APP_NAME=Aiden
-USER_NAME=Boss
+USER_NAME=Sir
 WAKE_WORD=aiden
 HOTKEY=*
 DEBUG=false

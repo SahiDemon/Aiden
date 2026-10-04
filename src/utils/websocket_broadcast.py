@@ -19,15 +19,18 @@ def set_broadcast_callback(callback: Callable):
     logger.info("WebSocket broadcast callback configured")
 
 
-async def broadcast_voice_status(status: str, speaking: bool = False):
+async def broadcast_voice_status(status: str, speaking: bool = False, active: Optional[bool] = None):
     """Broadcast voice activity status to dashboard"""
     if _broadcast_callback:
         try:
-            logger.debug(f"Broadcasting voice status: {status}, speaking={speaking}")
-            await _broadcast_callback("voice_activity", {
+            payload = {
                 "status": status,
                 "speaking": speaking
-            })
+            }
+            if active is not None:
+                payload["active"] = active
+            logger.debug(f"Broadcasting voice status: {status}, speaking={speaking}, active={active}")
+            await _broadcast_callback("voice_activity", payload)
         except Exception as e:
             logger.error(f"Failed to broadcast voice status: {e}")
     else:
@@ -38,7 +41,7 @@ async def broadcast_message(message_type: str, data: Dict[str, Any]):
     """Broadcast generic message to dashboard"""
     if _broadcast_callback:
         try:
-            logger.info(f"Broadcasting message: type={message_type}, data={data}")
+            logger.debug(f"Broadcasting message: type={message_type}, data={data}")
             await _broadcast_callback(message_type, data)
         except Exception as e:
             logger.error(f"Failed to broadcast message: {e}")

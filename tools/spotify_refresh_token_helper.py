@@ -14,9 +14,12 @@ import webbrowser
 from typing import Optional
 
 import requests
+from dotenv import load_dotenv
 
-CLIENT_ID = ("")
-CLIENT_SECRET = ("")
+load_dotenv()
+
+CLIENT_ID = os.environ.get("SPOTIFY_CLIENT_ID", "")
+CLIENT_SECRET = os.environ.get("SPOTIFY_CLIENT_SECRET", "")
 REDIRECT_URI = "http://127.0.0.1:8888/callback"
 SCOPES = "user-read-playback-state user-modify-playback-state user-read-currently-playing"
 

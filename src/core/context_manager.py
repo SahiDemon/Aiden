@@ -6,16 +6,13 @@ import asyncio
 import uuid
 import logging
 import hashlib
-import re
-from pathlib import Path
 from typing import Dict, Any, List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from src.database.redis_client import get_redis_client
 from src.database.neon_client import get_db_client
 from src.utils.config import get_settings
 from src.utils.logger import get_logger
-from src.utils.prompts_loader import load_prompts, get_system_prompt
 
 logger = get_logger(__name__)
 
@@ -32,6 +29,10 @@ class ContextManager:
         self._summary_after_messages: int = 8  # when to start summarizing (earlier = less tokens)
         self._history_keep_after_summary: int = 6  # keep recent 3 exchanges (6 messages) after summarizing
         self._summary_max_chars: int = 600  # reduced cap for summary length
+        self._pending_clarification_grace_seconds: int = max(
+            5,
+            int(self.settings.speech.pending_clarification_grace_seconds),
+        )
         
     async def start_conversation(self, user_id: str = "default", mode: str = "voice") -> str:
         """
@@ -61,6 +62,11 @@ class ContextManager:
                 "last_entities": [],
                 "last_action": None,
                 "expecting_followup": False,
+                "pending_clarification": False,
+                "pending_intent": None,
+                "pending_slots": [],
+                "pending_question": "",
+                "pending_expires_at": None,
                 "history": [],
                 "summary": ""
             }
@@ -83,7 +89,11 @@ class ContextManager:
         """Save conversation to database in background (non-blocking)"""
         try:
             db = await get_db_client()
-            await db.create_conversation(user_id=user_id, mode=mode)
+            await db.create_conversation(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                mode=mode
+            )
         except Exception as e:
             logger.debug(f"Background DB save failed (non-critical): {e}")
     
@@ -91,6 +101,7 @@ class ContextManager:
         """Save messages to database in background (non-blocking)"""
         try:
             db = await get_db_client()
+            await db.ensure_conversation_exists(conversation_id=conversation_id)
             await db.add_message(
                 conversation_id=conversation_id,
                 role="user",
@@ -134,6 +145,10 @@ class ContextManager:
             context = await redis.get_context(conversation_id)
             
             if context:
+                # Auto-clear stale pending clarification state after grace window expires.
+                if context.get("pending_clarification") and not self._is_pending_clarification_active(context):
+                    self._clear_pending_clarification(context)
+                    await redis.save_context(conversation_id, context)
                 return context
             else:
                 logger.warning(f"No context found for conversation {conversation_id}")
@@ -169,7 +184,17 @@ class ContextManager:
             
             # Update history and apply summarization when long
             context["history"].append({"role": "user", "content": user_message})
-            context["history"].append({"role": "assistant", "content": ai_response.get("response", "")})
+            
+            import json
+            assistant_payload = {
+                "intent": ai_response.get("intent", "unknown"),
+                "commands": ai_response.get("commands", []),
+                "response": ai_response.get("response", "")
+            }
+            if ai_response.get("expecting_followup"):
+                assistant_payload["expecting_followup"] = True
+                
+            context["history"].append({"role": "assistant", "content": json.dumps(assistant_payload)})
 
             # If history exceeds threshold, summarize older part and keep recent tail
             if len(context["history"]) >= self._summary_after_messages:
@@ -201,6 +226,17 @@ class ContextManager:
             # Update context fields from AI response
             context["last_intent"] = ai_response.get("intent")
             context["expecting_followup"] = ai_response.get("expecting_followup", False)
+
+            # Track pending clarification separately from compressed summary/history.
+            # This state is used to keep execution decisions safe across turns.
+            if context["expecting_followup"]:
+                context["pending_clarification"] = True
+                context["pending_intent"] = ai_response.get("intent")
+                context["pending_slots"] = self._infer_pending_slots(ai_response.get("response", ""))
+                context["pending_question"] = ai_response.get("response", "")
+                context["pending_expires_at"] = self._next_pending_expiry_iso()
+            else:
+                self._clear_pending_clarification(context)
             
             # Extract entities from commands
             entities = []
@@ -233,7 +269,90 @@ class ContextManager:
             
         except Exception as e:
             logger.error(f"Error updating context: {e}")
-    
+            
+    async def inject_assistant_message(
+        self,
+        message: str,
+        expecting_followup: bool = False,
+        conversation_id: Optional[str] = None
+    ):
+        """
+        Inject an assistant message directly into the context
+        Useful for proactive alerts (like UPS) to ensure the AI has context
+        for the user's response.
+        """
+        conversation_id = conversation_id or self.current_conversation_id
+        
+        if not conversation_id:
+            conversation_id = await self.start_conversation(mode="voice")
+            
+        try:
+            # Get current context
+            context = await self.get_context(conversation_id)
+            
+            # Append message to history
+            import json
+            assistant_payload = {
+                "intent": "system_alert",
+                "commands": [],
+                "response": message
+            }
+            if expecting_followup:
+                assistant_payload["expecting_followup"] = True
+                
+            context["history"].append({"role": "assistant", "content": json.dumps(assistant_payload)})
+            
+            # Apply summarization if needed
+            if len(context["history"]) >= self._summary_after_messages:
+                logger.info(f"[CONTEXT] History exceeded threshold, triggering summarization...")
+                tail = context["history"][-self._history_keep_after_summary:]
+                head = context["history"][:-self._history_keep_after_summary]
+                existing_summary = context.get("summary", "") or ""
+                try:
+                    new_summary = await self._ai_summarize(head, existing_summary)
+                    if not new_summary:
+                        new_summary = self._summarize_messages(head, existing_summary)
+                except Exception as e:
+                    new_summary = self._summarize_messages(head, existing_summary)
+                context["summary"] = new_summary[: self._summary_max_chars]
+                context["history"] = tail
+
+            context["history"] = context["history"][-self._history_keep_after_summary:]
+            context["expecting_followup"] = expecting_followup
+
+            if expecting_followup:
+                context["pending_clarification"] = True
+                context["pending_question"] = message
+                context["pending_slots"] = self._infer_pending_slots(message)
+                context["pending_expires_at"] = self._next_pending_expiry_iso()
+            else:
+                self._clear_pending_clarification(context)
+            
+            # Save to redis
+            redis = await get_redis_client()
+            await redis.save_context(conversation_id, context)
+            
+            # Save to db in background
+            try:
+                db = await get_db_client()
+                async def _save_injected_message():
+                    await db.ensure_conversation_exists(conversation_id=conversation_id)
+                    await db.add_message(
+                        conversation_id=conversation_id,
+                        role="assistant",
+                        content=message,
+                        metadata={"injected": True}
+                    )
+
+                asyncio.create_task(_save_injected_message())
+            except Exception as e:
+                logger.debug(f"Background save failed: {e}")
+                
+            logger.debug(f"Injected assistant message to conversation {conversation_id}")
+            
+        except Exception as e:
+            logger.error(f"Error injecting assistant message: {e}")
+            
     async def end_conversation(self, conversation_id: Optional[str] = None):
         """
         End conversation and cleanup
@@ -321,8 +440,32 @@ class ContextManager:
             "last_entities": [],
             "last_action": None,
             "expecting_followup": False,
+            "pending_clarification": False,
+            "pending_intent": None,
+            "pending_slots": [],
+            "pending_question": "",
+            "pending_expires_at": None,
             "history": []
         }
+
+    async def refresh_pending_clarification_grace(self, conversation_id: Optional[str] = None) -> bool:
+        """Extend pending clarification grace so next hotkey can complete the slot-only reply."""
+        conversation_id = conversation_id or self.current_conversation_id
+        if not conversation_id:
+            return False
+
+        try:
+            context = await self.get_context(conversation_id)
+            if not context.get("pending_clarification"):
+                return False
+
+            context["pending_expires_at"] = self._next_pending_expiry_iso()
+            redis = await get_redis_client()
+            await redis.save_context(conversation_id, context)
+            return True
+        except Exception as e:
+            logger.debug(f"Could not refresh pending clarification grace: {e}")
+            return False
     
     async def is_followup(self, message: str, context: Dict[str, Any]) -> bool:
         """
@@ -373,8 +516,8 @@ class ContextManager:
         """
         messages = []
         
-        # Load system prompt from cached prompts.yaml (avoids repeated file I/O)
-        system_prompt = get_system_prompt()
+        from src.utils.prompt_loader import get_prompt
+        system_prompt = get_prompt("system_prompt", "You are Aiden, an intelligent Windows assistant.")
         
         # Get system context ONLY if AI requested it via needs_context
         system_context_str = ""
@@ -384,20 +527,25 @@ class ContextManager:
             try:
                 from src.utils.system_context import get_system_context
                 sys_ctx = get_system_context()
-                # Token-optimized: include only top fuzzy matches related to user's request
                 system_context_str = "\n\n## RELEVANT SYSTEM CONTEXT\n"
                 
                 query_hint = self._extract_query_from_text(user_text, context)
+                if not query_hint and context.get("expecting_followup"):
+                    t = (user_text or "").strip()
+                    if 2 < len(t) < 160:
+                        query_hint = t.lower()
+                apps_section = ""
+                proc_section = ""
+                proc_list: List[str] = []
                 
                 if "installed_apps" in needs_context:
                     if query_hint:
                         app_info = await sys_ctx.find_app(query_hint)
                         if app_info:
-                            system_context_str += "Installed app match: "
+                            apps_section += "Installed app match: "
                             display_name = app_info.get("display_name") or app_info.get("name") or query_hint
                             exe_path = app_info.get("exe_path", "")
                             install_path = app_info.get("install_path", "")
-                            # Try include Steam appid if applicable
                             steam_appid = None
                             try:
                                 from src.execution.app_launcher import get_app_launcher
@@ -406,28 +554,73 @@ class ContextManager:
                             except Exception:
                                 steam_appid = None
                             appid_str = f" | steam_appid: {steam_appid}" if steam_appid else ""
-                            system_context_str += f"{display_name} | exe: {exe_path} | path: {install_path}{appid_str}\n"
+                            apps_section += f"{display_name} | exe: {exe_path} | path: {install_path}{appid_str}\n"
                         else:
-                            system_context_str += f"No installed app match found for '{query_hint}'.\n"
+                            apps_section += f"No installed app match found for '{query_hint}'.\n"
                     else:
-                        system_context_str += "No app query inferred from user text.\n"
+                        apps_section += "No app query inferred from user text.\n"
                 
                 if "running_processes" in needs_context:
-                    if query_hint:
+                    all_procs = await sys_ctx.get_ai_context()
+                    proc_list = all_procs.get("running_processes", [])
+                    hint_block = ""
+                    if query_hint and not self._is_vague_query(user_text):
                         matches = await sys_ctx.find_process(query_hint)
                         if matches:
-                            top_matches = matches[:3]
-                            system_context_str += "Process matches: "
-                            descs = [f"{m.get('name','Unknown')} (PID {m.get('pid')}, {m.get('status','?')})" for m in top_matches]
-                            system_context_str += ", ".join(descs) + "\n"
-                        else:
-                            system_context_str += f"No running process match found for '{query_hint}'.\n"
-                    else:
-                        system_context_str += "No process query inferred from user text.\n"
+                            descs = [
+                                f"{m.get('name', 'Unknown')} (PID: {m.get('pid')})"
+                                for m in matches[:8]
+                            ]
+                            hint_block = (
+                                "Heuristic name/path matches for inferred query "
+                                f"'{query_hint}' (speech may be wrong — verify in table): "
+                                + "; ".join(descs) + "\n\n"
+                            )
+                    proc_section = (
+                        hint_block
+                        + "Running processes — choose kill_process targets ONLY from rows below. "
+                        "Use the exact `Name.exe (PID: N)` from a row. "
+                        "Match user phrases (game title, 'music player', etc.) using exe name AND "
+                        "the path tail after |.\n"
+                        + "\n".join(proc_list)
+                        + "\n"
+                    )
                 
-                # Hard cap to avoid token bloat from system context
-                if len(system_context_str) > 1500:
-                    system_context_str = system_context_str[:1497] + "..."
+                _MAX_APPS_CTX = 2500
+                _MAX_PROC_CTX = 28000
+                if len(apps_section) > _MAX_APPS_CTX:
+                    apps_section = apps_section[: _MAX_APPS_CTX - 3] + "..."
+                if len(proc_section) > _MAX_PROC_CTX:
+                    proc_section = proc_section[: _MAX_PROC_CTX - 3] + "..."
+                
+                system_context_str += apps_section + proc_section
+                
+                # #region agent log — only active when APP_DEBUG=true
+                if getattr(self.settings.app, "debug", False):
+                    try:
+                        import json as _json
+                        import time as _time
+                        _log_payload = {
+                            "sessionId": "a7b452",
+                            "timestamp": int(_time.time() * 1000),
+                            "location": "context_manager.py:build_messages",
+                            "message": "system_context_sizes",
+                            "hypothesisId": "H1_H2",
+                            "data": {
+                                "needs_context": needs_context,
+                                "proc_lines": len(proc_list) if "running_processes" in needs_context else 0,
+                                "apps_chars": len(apps_section),
+                                "proc_chars": len(proc_section),
+                                "total_chars": len(system_context_str),
+                                "query_hint": (query_hint or "")[:80],
+                            },
+                        }
+                        with open("debug-a7b452.log", "a", encoding="utf-8") as _df:
+                            _df.write(_json.dumps(_log_payload) + "\n")
+                    except Exception:
+                        pass
+                # #endregion
+                
                 logger.debug(f"System context provided: {needs_context}")
             
             except Exception as e:
@@ -457,6 +650,23 @@ class ContextManager:
             messages.append({
                 "role": "system",
                 "content": f"Conversation summary (for context): {summary_text}"
+            })
+
+        # Add structured pending clarification state as a hard constraint for decision safety.
+        if self._is_pending_clarification_active(context):
+            pending_intent = context.get("pending_intent") or "unknown"
+            pending_slots = context.get("pending_slots") or []
+            pending_question = context.get("pending_question") or ""
+            messages.append({
+                "role": "system",
+                "content": (
+                    "Pending clarification is active. "
+                    f"Intent: {pending_intent}. "
+                    f"Missing slots: {', '.join(pending_slots) if pending_slots else 'unspecified'}. "
+                    f"Assistant asked: {pending_question}. "
+                    "If user reply is short (for example, only an app name), treat it as the missing slot value and COMPLETE the original action. "
+                    "For example, if the original intent was to CLOSE an app and the user gives a name, you MUST close it — NOT open or launch it."
+                )
             })
 
         # Add conversation history if available
@@ -505,7 +715,12 @@ class ContextManager:
                 highlights.append(f"User: {content}")
             elif role == "assistant":
                 # If assistant follows a user, capture action intent
-                summary_line = content
+                try:
+                    import json
+                    parsed = json.loads(content)
+                    summary_line = parsed.get("response", content)
+                except Exception:
+                    summary_line = content
                 if len(summary_line) > 180:
                     summary_line = summary_line[:177] + "..."
                 highlights.append(f"Assistant: {summary_line}")
@@ -554,7 +769,15 @@ class ContextManager:
         slice_messages = messages[-12:]  # last up to 12 items of head
         for msg in slice_messages:
             role = msg.get("role", "user")
-            content = clip(msg.get("content", ""), 300)
+            content = msg.get("content", "")
+            if role == "assistant":
+                try:
+                    import json
+                    parsed = json.loads(content)
+                    content = parsed.get("response", content)
+                except Exception:
+                    pass
+            content = clip(content, 300)
             if not content:
                 continue
             prefix = "User" if role == "user" else "Assistant"
@@ -593,6 +816,18 @@ class ContextManager:
             logger.debug(f"AI summarization failed: {e}")
             return ""
 
+    def _is_vague_query(self, user_text: str) -> bool:
+        """Return True if the user's request is semantically vague (e.g. 'the app playing music')."""
+        text = (user_text or "").lower()
+        vague_patterns = [
+            "playing music", "playing audio", "playing sound",
+            "music player", "my music", "close my music",
+            "my game", "my browser", "my editor", "my chat app",
+            "that app", "the app",
+            "running game", "current game", "the game", "a game",
+        ]
+        return any(p in text for p in vague_patterns)
+
     def _extract_query_from_text(self, user_text: str, context: Dict[str, Any]) -> str:
         """
         Infer a simple query string (likely app or process name) from user text/history.
@@ -611,13 +846,59 @@ class ContextManager:
             if m:
                 candidate = m.group(1).strip()
                 # trim common extras
-                candidate = re.sub(r"\b(app|application|program)\b", "", candidate).strip()
-                return candidate
+                candidate = re.sub(r"\b(app|application|program|the|that|is|playing|music|audio|sound|my|game|browser)\b", "", candidate).strip()
+                if candidate:
+                    return candidate
         # Fallback to last_entities
         last_entities = context.get("last_entities") or []
         if last_entities:
             return str(last_entities[-1]).lower()
         return ""
+
+    def _infer_pending_slots(self, assistant_response: str) -> List[str]:
+        """Infer likely missing slots from assistant clarification question text."""
+        text = (assistant_response or "").strip().lower()
+        if not text:
+            return []
+        if "which app" in text or "what app" in text or "which application" in text:
+            return ["app_name"]
+        if "which process" in text or "what process" in text:
+            return ["process_name"]
+        if "which song" in text or "what song" in text:
+            return ["song_name"]
+        if "which game" in text or "what game" in text:
+            return ["process_name"]
+        if "which device" in text or "what device" in text:
+            return ["device_name"]
+        return []
+
+    def _next_pending_expiry_iso(self) -> str:
+        """Return ISO timestamp for pending clarification grace expiry."""
+        return (datetime.utcnow() + timedelta(seconds=self._pending_clarification_grace_seconds)).isoformat()
+
+    def _clear_pending_clarification(self, context: Dict[str, Any]):
+        """Clear pending clarification fields in-place."""
+        context["pending_clarification"] = False
+        context["pending_intent"] = None
+        context["pending_slots"] = []
+        context["pending_question"] = ""
+        context["pending_expires_at"] = None
+
+    def _is_pending_clarification_active(self, context: Dict[str, Any]) -> bool:
+        """Check whether pending clarification is still inside grace window."""
+        if not context.get("pending_clarification"):
+            return False
+
+        expires_at = context.get("pending_expires_at")
+        if not expires_at:
+            return True
+
+        try:
+            expires_dt = datetime.fromisoformat(str(expires_at))
+            return expires_dt > datetime.utcnow()
+        except Exception:
+            # If malformed, keep safe behavior and treat as active.
+            return True
 
 
 # Global context manager instance
@@ -630,4 +911,3 @@ def get_context_manager() -> ContextManager:
     if _context_manager is None:
         _context_manager = ContextManager()
     return _context_manager
-

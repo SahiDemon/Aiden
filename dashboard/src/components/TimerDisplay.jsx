@@ -1,325 +1,206 @@
-import React, { useState, useEffect } from 'react';
-import { X, Clock, AlertTriangle, Power } from 'lucide-react';
-import api from '../lib/api';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Clock3, Fan, Lock, Moon, Music2, Power, RotateCw, X } from 'lucide-react';
 import { toast } from 'react-hot-toast';
+import api from '../lib/api';
+
+const ACTION_DETAILS = {
+    shutdown: { label: 'Shut down computer', icon: Power },
+    restart: { label: 'Restart computer', icon: RotateCw },
+    sleep: { label: 'Put computer to sleep', icon: Moon },
+    hibernate: { label: 'Hibernate computer', icon: Moon },
+    lock: { label: 'Lock computer', icon: Lock },
+};
+
+const formatTime = (seconds) => {
+    if (seconds <= 0) return '00:00';
+
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+
+    return hours > 0
+        ? `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+        : `${minutes}:${secs.toString().padStart(2, '0')}`;
+};
+
+const titleCase = (value) => String(value || 'Scheduled action')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+
+const getTimerDetails = (timer) => {
+    const command = timer.command_data || {};
+    const params = command.params || {};
+    const commandType = command.type || timer.action;
+
+    if (commandType === 'fan_control') {
+        const target = params.target || params.operation || params.action;
+        const control = params.control_id || 'fan';
+        const label = control === 'power' && target
+            ? `Turn fan ${target}`
+            : target
+                ? `Set fan ${control} to ${target}`
+                : 'Control fan';
+        return { label, detail: 'Smart home', icon: Fan };
+    }
+
+    if (commandType === 'media_control') {
+        const action = titleCase(params.action || 'Control');
+        const target = titleCase(params.target || 'media');
+        return { label: `${action} ${target}`, detail: 'Media', icon: Music2 };
+    }
+
+    if (ACTION_DETAILS[commandType]) {
+        return { ...ACTION_DETAILS[commandType], detail: 'Computer' };
+    }
+
+    return { label: titleCase(commandType), detail: 'Scheduled action', icon: Clock3 };
+};
+
+const TimerRow = ({ timer, remaining, onCancel, cancelling }) => {
+    const { label, detail, icon: Icon } = getTimerDetails(timer);
+    const isImminent = remaining <= 60;
+
+    return (
+        <li className="rounded-2xl border border-white/[0.09] bg-white/[0.035] px-4 py-4 transition-colors hover:bg-white/[0.055]">
+            <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-sky-300/15 bg-sky-300/[0.07] text-sky-200">
+                    <Icon className="h-4 w-4" aria-hidden="true" />
+                </div>
+                <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-slate-100">{label}</p>
+                    <p className="mt-0.5 text-xs text-slate-400">{detail}</p>
+                </div>
+                <div className="text-right">
+                    <time className="block font-mono text-lg font-semibold tabular-nums tracking-tight text-sky-100">
+                        {formatTime(remaining)}
+                    </time>
+                    <span className={`text-[11px] font-medium ${isImminent ? 'text-amber-200' : 'text-slate-500'}`}>
+                        {isImminent ? 'Due shortly' : 'Scheduled'}
+                    </span>
+                </div>
+            </div>
+            <div className="mt-3 flex justify-end border-t border-white/[0.07] pt-3">
+                <button
+                    type="button"
+                    onClick={() => onCancel(timer.id)}
+                    disabled={cancelling}
+                    className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-400 transition-colors hover:bg-rose-400/10 hover:text-rose-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300/70 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                    {cancelling ? 'Cancelling…' : 'Cancel'}
+                </button>
+            </div>
+        </li>
+    );
+};
 
 const TimerDisplay = ({ timers = [], onTimerUpdate }) => {
     const [countdowns, setCountdowns] = useState({});
     const [expanded, setExpanded] = useState(false);
+    const [cancellingTimerId, setCancellingTimerId] = useState(null);
 
-    // Update countdowns from incoming timers
     useEffect(() => {
-        const initialCountdowns = {};
-        timers.forEach(timer => {
-            initialCountdowns[timer.id] = timer.remaining_seconds;
-        });
-        setCountdowns(initialCountdowns);
+        setCountdowns(Object.fromEntries(timers.map((timer) => [timer.id, timer.remaining_seconds])));
     }, [timers]);
 
-    // Countdown interval
     useEffect(() => {
-        if (timers.length === 0) return;
+        if (!timers.length) return undefined;
 
         const interval = setInterval(() => {
-            setCountdowns(prev => {
-                const newCountdowns = {};
-                
-                timers.forEach(timer => {
-                    const currentCountdown = prev[timer.id] ?? timer.remaining_seconds;
-                    const newValue = Math.max(0, currentCountdown - 1);
-                    newCountdowns[timer.id] = newValue;
-                });
-                
-                // Always return updated countdowns to properly display zero values
-                return newCountdowns;
-            });
+            setCountdowns((current) => Object.fromEntries(timers.map((timer) => [
+                timer.id,
+                Math.max(0, (current[timer.id] ?? timer.remaining_seconds) - 1),
+            ])));
         }, 1000);
 
         return () => clearInterval(interval);
     }, [timers]);
 
-    const formatTime = (seconds) => {
-        if (seconds <= 0) return "00:00";
-        
-        const hours = Math.floor(seconds / 3600);
-        const minutes = Math.floor((seconds % 3600) / 60);
-        const secs = seconds % 60;
-        
-        if (hours > 0) {
-            return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-        }
-        return `${minutes}:${secs.toString().padStart(2, '0')}`;
-    };
-
-    const getActionIcon = (action) => {
-        switch (action) {
-            case 'shutdown':
-                return <Power className="w-4 h-4" />;
-            case 'restart':
-                return <Power className="w-4 h-4" />;
-            case 'sleep':
-                return <Power className="w-4 h-4" />;
-            case 'hibernate':
-                return <Power className="w-4 h-4" />;
-            case 'lock':
-                return <Power className="w-4 h-4" />;
-            default:
-                return <Clock className="w-4 h-4" />;
-        }
-    };
-
-    const getActionColor = (action) => {
-        switch (action) {
-            case 'shutdown':
-                return { bg: 'bg-red-500/20', border: 'border-red-400/40', text: 'text-red-300', icon: 'text-red-400' };
-            case 'restart':
-                return { bg: 'bg-orange-500/20', border: 'border-orange-400/40', text: 'text-orange-300', icon: 'text-orange-400' };
-            case 'sleep':
-                return { bg: 'bg-blue-500/20', border: 'border-blue-400/40', text: 'text-blue-300', icon: 'text-blue-400' };
-            case 'hibernate':
-                return { bg: 'bg-purple-500/20', border: 'border-purple-400/40', text: 'text-purple-300', icon: 'text-purple-400' };
-            case 'lock':
-                return { bg: 'bg-cyan-500/20', border: 'border-cyan-400/40', text: 'text-cyan-300', icon: 'text-cyan-400' };
-            default:
-                return { bg: 'bg-gray-500/20', border: 'border-gray-400/40', text: 'text-gray-300', icon: 'text-gray-400' };
-        }
-    };
-
-    const getUrgencyBorder = (seconds) => {
-        if (seconds <= 60) return 'border-red-400/60 shadow-red-400/20';
-        if (seconds <= 300) return 'border-orange-400/50 shadow-orange-400/15';
-        return 'border-blue-400/40 shadow-blue-400/10';
-    };
+    const orderedTimers = useMemo(() => [...timers].sort((a, b) => {
+        const aRemaining = countdowns[a.id] ?? a.remaining_seconds;
+        const bRemaining = countdowns[b.id] ?? b.remaining_seconds;
+        return aRemaining - bRemaining;
+    }), [countdowns, timers]);
 
     const handleCancelTimer = async (timerId) => {
+        setCancellingTimerId(timerId);
         try {
             const response = await api.cancelTimer(timerId);
-            if (response.success) {
-                toast.success('Timer cancelled');
-                setCountdowns(prev => {
-                    const newCountdowns = { ...prev };
-                    delete newCountdowns[timerId];
-                    return newCountdowns;
-                });
-                onTimerUpdate?.();
-            } else {
-                toast.error('Failed to cancel timer');
-            }
+            if (!response.success) throw new Error('Cancellation failed');
+            toast.success('Timer cancelled');
+            onTimerUpdate?.();
         } catch (error) {
-            toast.error('Error cancelling timer');
-            console.error('Cancel timer error:', error);
+            toast.error('Could not cancel that timer');
+        } finally {
+            setCancellingTimerId(null);
         }
     };
 
-    const handleCancelAllTimers = async () => {
-        try {
-            const response = await api.cancelAllTimers();
-            if (response.success) {
-                toast.success('All timers cancelled');
-                setCountdowns({});
-                onTimerUpdate?.();
-            } else {
-                toast.error('Failed to cancel timers');
-            }
-        } catch (error) {
-            toast.error('Error cancelling timers');
-            console.error('Cancel all timers error:', error);
-        }
-    };
+    if (!timers.length) return null;
 
-    // Don't render if no timers
-    if (!timers || timers.length === 0) {
-        return null;
-    }
-
-    // Get the most urgent timer for compact display
-    const urgentTimer = timers.reduce((most, current) => {
-        const currentRemaining = countdowns[current.id] ?? current.remaining_seconds;
-        const mostRemaining = countdowns[most.id] ?? most.remaining_seconds;
-        return currentRemaining < mostRemaining ? current : most;
-    }, timers[0]);
-
-    const urgentRemaining = countdowns[urgentTimer.id] ?? urgentTimer.remaining_seconds;
-    const urgentColors = getActionColor(urgentTimer.action);
-    const urgentBorder = getUrgencyBorder(urgentRemaining);
+    const nextTimer = orderedTimers[0];
+    const nextRemaining = countdowns[nextTimer.id] ?? nextTimer.remaining_seconds;
+    const nextDetails = getTimerDetails(nextTimer);
+    const NextIcon = nextDetails.icon;
 
     return (
-        <div className="timer-display-container">
-            {/* Compact Timer Display */}
-            <div 
-                className={`timer-compact liquid-glass-card cursor-pointer transition-all duration-300 hover:scale-105 ${urgentBorder}`}
-                onClick={() => setExpanded(!expanded)}
-                style={{
-                    backdropFilter: 'blur(12px)',
-                    background: 'rgba(255, 255, 255, 0.05)',
-                    boxShadow: urgentRemaining <= 60 ? 
-                        '0 0 20px rgba(239, 68, 68, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)' :
-                        '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1)'
-                }}
-            >
-                <div className="flex items-center gap-4 p-4">
-                    <div className={`w-10 h-10 rounded-xl ${urgentColors.bg} ${urgentColors.border} border flex items-center justify-center ${urgentColors.icon}`}>
-                        {getActionIcon(urgentTimer.action)}
-                    </div>
-                    <div className="flex-1">
-                        <div className="text-sm font-medium text-white/90 uppercase tracking-wider mb-1">
-                            {urgentTimer.action}
-                        </div>
-                        <div className={`text-lg font-mono font-bold ${urgentColors.text}`}>
-                            {formatTime(urgentRemaining)}
-                        </div>
-                    </div>
-                    {timers.length > 1 && (
-                        <div className="bg-blue-500/20 border border-blue-400/30 text-blue-200 text-sm px-3 py-1 rounded-lg">
-                            +{timers.length - 1}
-                        </div>
-                    )}
-                </div>
-                {urgentRemaining <= 60 && (
-                    <div className="px-4 pb-4">
-                        <div className="flex items-center gap-2 text-sm text-red-300 bg-red-500/10 border border-red-400/20 rounded-lg px-3 py-2">
-                            <AlertTriangle className="w-4 h-4" />
-                            Executing soon
-                        </div>
-                    </div>
-                )}
-            </div>
-
-            {/* Expanded Timer List */}
-            {expanded && (
-                <div 
-                    className="timer-expanded liquid-glass-card mt-4"
-                    style={{
-                        backdropFilter: 'blur(12px)',
-                        background: 'rgba(255, 255, 255, 0.05)',
-                        boxShadow: '0 20px 40px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1)'
-                    }}
+        <section className="fixed left-1/2 top-5 z-50 w-[calc(100%_-_2rem)] max-w-sm -translate-x-1/2 md:left-auto md:right-6 md:top-24 md:w-80 md:translate-x-0" aria-label="Scheduled actions">
+            {!expanded ? (
+                <button
+                    type="button"
+                    onClick={() => setExpanded(true)}
+                    className="group w-full rounded-2xl border border-white/[0.12] bg-[#171d29]/95 p-4 text-left shadow-[0_18px_45px_rgba(0,0,0,0.28)] backdrop-blur-md transition duration-200 hover:-translate-y-0.5 hover:border-sky-200/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300/70 motion-reduce:transform-none"
+                    aria-expanded="false"
                 >
-                    <div className="flex items-center justify-between p-6 border-b border-white/10">
-                        <h3 className="text-lg font-semibold text-white flex items-center gap-3">
-                            <Clock className="w-5 h-5 text-blue-400" />
-                            Active Timers ({timers.length})
-                        </h3>
-                        <button
-                            onClick={() => setExpanded(false)}
-                            className="text-white/50 hover:text-white/80 transition-colors p-2 hover:bg-white/10 rounded-lg"
-                        >
-                            <X className="w-5 h-5" />
-                        </button>
-                    </div>
-                    
-                    <div className="p-6 space-y-4 max-h-80 overflow-y-auto">
-                        {timers.map(timer => {
-                            const remaining = countdowns[timer.id] ?? timer.remaining_seconds;
-                            const colors = getActionColor(timer.action);
-                            const borderClass = getUrgencyBorder(remaining);
-                            
-                            return (
-                                <div 
-                                    key={timer.id} 
-                                    className={`timer-item bg-white/5 rounded-xl p-5 border transition-all duration-300 hover:bg-white/8 ${borderClass}`}
-                                    style={{
-                                        boxShadow: remaining <= 60 ? 
-                                            '0 0 15px rgba(239, 68, 68, 0.15)' :
-                                            '0 4px 20px rgba(0, 0, 0, 0.2)'
-                                    }}
-                                >
-                                    <div className="flex items-center justify-between">
-                                        <div className="flex items-center gap-4">
-                                            <div className={`w-12 h-12 rounded-xl ${colors.bg} ${colors.border} border flex items-center justify-center ${colors.icon}`}>
-                                                {getActionIcon(timer.action)}
-                                            </div>
-                                            <div>
-                                                <div className="text-base font-medium text-white capitalize mb-1">
-                                                    {timer.action}
-                                                </div>
-                                                <div className={`text-xl font-mono font-bold ${colors.text}`}>
-                                                    {formatTime(remaining)}
-                                                </div>
-                                            </div>
-                                        </div>
-                                        
-                                        <button
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                handleCancelTimer(timer.id);
-                                            }}
-                                            className="bg-red-500/20 hover:bg-red-500/30 border border-red-400/40 text-red-300 px-6 py-3 rounded-xl text-sm font-medium transition-all duration-200 hover:scale-105"
-                                        >
-                                            Cancel
-                                        </button>
-                                    </div>
-                                    
-                                    {remaining <= 60 && (
-                                        <div className="mt-4 pt-4 border-t border-white/10">
-                                            <div className="flex items-center gap-2 text-sm text-red-300">
-                                                <AlertTriangle className="w-4 h-4" />
-                                                System will execute this action in less than 1 minute
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                            );
-                        })}
-                    </div>
-                    
-                    {timers.length > 1 && (
-                        <div className="p-6 border-t border-white/10">
-                            <button
-                                onClick={handleCancelAllTimers}
-                                className="w-full bg-red-500/20 hover:bg-red-500/30 border border-red-400/40 text-red-300 px-6 py-4 rounded-xl text-base font-medium transition-all duration-200 hover:scale-105"
-                            >
-                                Cancel All Timers
-                            </button>
+                    <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-sky-300/15 bg-sky-300/[0.07] text-sky-200">
+                            <NextIcon className="h-4 w-4" aria-hidden="true" />
                         </div>
+                        <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-semibold text-slate-100">{nextDetails.label}</p>
+                            <p className="mt-0.5 text-xs text-slate-400">
+                                {timers.length === 1 ? 'Scheduled action' : `${timers.length} scheduled actions`}
+                            </p>
+                        </div>
+                        <time className="font-mono text-xl font-semibold tabular-nums tracking-tight text-sky-100">
+                            {formatTime(nextRemaining)}
+                        </time>
+                    </div>
+                    {nextRemaining <= 60 && (
+                        <p className="mt-3 border-t border-white/[0.07] pt-3 text-xs font-medium text-amber-200">
+                            Due in under a minute
+                        </p>
                     )}
+                </button>
+            ) : (
+                <div className="overflow-hidden rounded-2xl border border-white/[0.12] bg-[#171d29]/95 shadow-[0_22px_55px_rgba(0,0,0,0.34)] backdrop-blur-md">
+                    <header className="flex items-center justify-between px-5 py-4">
+                        <div>
+                            <p className="text-sm font-semibold text-slate-100">Scheduled actions</p>
+                            <p className="mt-0.5 text-xs text-slate-400">{timers.length} active {timers.length === 1 ? 'timer' : 'timers'}</p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setExpanded(false)}
+                            className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-white/[0.07] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300/70"
+                            aria-label="Collapse scheduled actions"
+                        >
+                            <X className="h-4 w-4" aria-hidden="true" />
+                        </button>
+                    </header>
+                    <ul className="max-h-80 space-y-2 overflow-y-auto border-t border-white/[0.07] px-3 py-3" aria-live="polite">
+                        {orderedTimers.map((timer) => (
+                            <TimerRow
+                                key={timer.id}
+                                timer={timer}
+                                remaining={countdowns[timer.id] ?? timer.remaining_seconds}
+                                onCancel={handleCancelTimer}
+                                cancelling={cancellingTimerId === timer.id}
+                            />
+                        ))}
+                    </ul>
                 </div>
             )}
-
-            <style jsx>{`
-                .timer-display-container {
-                    position: fixed;
-                    top: 6rem;
-                    right: 1.5rem;
-                    z-index: 999;
-                    min-width: 320px;
-                    max-width: 400px;
-                }
-                
-                .timer-compact {
-                    border-radius: 1rem;
-                    border: 1px solid;
-                }
-                
-                .timer-expanded {
-                    border-radius: 1rem;
-                    border: 1px solid rgba(255, 255, 255, 0.15);
-                }
-                
-                .timer-item {
-                    border-width: 1px;
-                }
-                
-                /* Custom scrollbar for timer list */
-                .timer-expanded div::-webkit-scrollbar {
-                    width: 6px;
-                }
-                
-                .timer-expanded div::-webkit-scrollbar-track {
-                    background: rgba(255, 255, 255, 0.1);
-                    border-radius: 3px;
-                }
-                
-                .timer-expanded div::-webkit-scrollbar-thumb {
-                    background: rgba(255, 255, 255, 0.3);
-                    border-radius: 3px;
-                }
-                
-                .timer-expanded div::-webkit-scrollbar-thumb:hover {
-                    background: rgba(255, 255, 255, 0.4);
-                }
-            `}</style>
-        </div>
+        </section>
     );
 };
 

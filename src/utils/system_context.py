@@ -3,14 +3,16 @@ System Context Provider
 Provides AI with information about installed apps and running processes
 """
 import os
+import re
 import winreg
 import glob
 import psutil
 import json
 import logging
-import itertools
-from typing import Dict, List, Any, Optional
+from itertools import islice
+from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
+from difflib import get_close_matches
 
 from src.database.redis_client import get_redis_client
 from src.utils.logger import get_logger
@@ -21,7 +23,7 @@ logger = get_logger(__name__)
 class SystemContextProvider:
     """Provides system context (apps, processes) to AI for better decision making"""
     
-    CACHE_FILE = "system_context_cache.json"
+    CACHE_FILE = str(Path(__file__).resolve().parent.parent / "temp" / "system_context_cache.json")
     CACHE_TTL = 3600  # 1 hour in seconds
     
     def __init__(self):
@@ -62,7 +64,7 @@ class SystemContextProvider:
                         try:
                             redis = await get_redis_client()
                             await redis.set("system:installed_apps", json.dumps(cached_data), ex=self.CACHE_TTL)
-                        except:
+                        except Exception:
                             pass
                         return cached_data
             except Exception as e:
@@ -75,16 +77,18 @@ class SystemContextProvider:
         # 1. Built-in Windows apps
         apps.update(self._get_builtin_apps())
         
-        # 2. Registry-based apps
-        apps.update(self._get_registry_apps())
+        import asyncio
+        # 2. Registry-based apps (run in thread to prevent blocking event loop)
+        apps.update(await asyncio.to_thread(self._get_registry_apps))
         
-        # 3. Start menu shortcuts
-        apps.update(self._get_startmenu_apps())
+        # 3. Start menu shortcuts (run in thread to prevent blocking event loop)
+        apps.update(await asyncio.to_thread(self._get_startmenu_apps))
         
         logger.info(f"Found {len(apps)} installed applications")
         
         # Cache results
         try:
+            os.makedirs(os.path.dirname(self.CACHE_FILE), exist_ok=True)
             with open(self.CACHE_FILE, 'w', encoding='utf-8') as f:
                 json.dump(apps, f, indent=2)
         except Exception as e:
@@ -244,7 +248,9 @@ class SystemContextProvider:
                         processes.append({
                             "name": info.get('name', 'Unknown'),
                             "pid": info.get('pid'),
-                            "status": info.get('status', 'unknown')
+                            "status": info.get('status', 'unknown'),
+                            "exe": info.get('exe') or "",
+                            "memory_percent": round(float(info.get('memory_percent') or 0), 2),
                         })
                     else:
                         processes.append({
@@ -264,27 +270,6 @@ class SystemContextProvider:
         
         return processes
     
-    # Pre-compiled set for O(1) keyword lookups instead of O(n) list iteration
-    _PRIORITY_KEYWORDS = frozenset([
-        'chrome', 'firefox', 'edge', 'brave', 'opera',  # Browsers
-        'spotify', 'discord', 'teams', 'slack', 'zoom',  # Communication/Media
-        'vscode', 'code', 'pycharm', 'studio', 'notepad',  # Editors
-        'python', 'node', 'java', 'dotnet', 'powershell', 'cmd',  # Development
-        'obs', 'streamlabs', 'nvidia', 'radeon',  # Gaming/Recording
-        'steam', 'epic', 'origin', 'uplay', 'battle',  # Gaming platforms
-        'cursor', 'sublime', 'atom', 'brackets',  # More editors
-        'postman', 'docker', 'git',  # Dev tools
-        'excel', 'word', 'outlook', 'powerpoint',  # Office
-        'premiere', 'photoshop', 'illustrator', 'after effects',  # Adobe
-    ])
-
-    def _is_priority_process(self, proc_lower: str) -> bool:
-        """Check if process matches priority keywords using set lookups."""
-        for keyword in self._PRIORITY_KEYWORDS:
-            if keyword in proc_lower:
-                return True
-        return False
-
     async def get_ai_context(self) -> Dict[str, Any]:
         """
         Get system context formatted for AI
@@ -301,10 +286,8 @@ class SystemContextProvider:
             processes = await self.get_running_processes(simplified=True)
             
             # Format for AI - provide app names WITH paths for better context
-            # Sort by display name and limit to first 80 items using islice
-            app_items = sorted(apps.items(), key=lambda x: x[1]['display_name'].lower())
             app_list = []
-            for key, app in itertools.islice(app_items, 80):
+            for key, app in islice(sorted(apps.items(), key=lambda x: x[1]['display_name'].lower()), 80):
                 name = app["display_name"]
                 exe_path = app.get("exe_path", "")
                 install_path = app.get("install_path", "")
@@ -317,26 +300,101 @@ class SystemContextProvider:
                 else:
                     app_list.append(name)
             
-            # Prioritize common user apps that might be killed
-            priority_processes = []
-            other_processes = []
-            
+            # Prioritize common user apps with category annotations (one row per PID so kill is unambiguous)
+            category_map = [
+                (['chrome', 'firefox', 'msedge', 'brave', 'opera'], '[browser]'),
+                (['spotify', 'itunes', 'musicbee', 'foobar', 'vlc', 'aimp', 'winamp'], '[media/music]'),
+                (['discord', 'teams', 'slack', 'zoom', 'skype', 'telegram', 'whatsapp'], '[communication]'),
+                (['vscode', 'code', 'pycharm', 'cursor', 'sublime', 'atom', 'brackets', 'notepad', 'studio'], '[editor]'),
+                (['python', 'node', 'java', 'dotnet', 'powershell', 'cmd', 'postman', 'docker', 'git'], '[dev-tool]'),
+                (['obs', 'streamlabs'], '[recording]'),
+                (['steam', 'epic', 'origin', 'uplay', 'battle', 'gog', 'playnite'], '[game-launcher]'),
+                (['warframe', 'minecraft', 'fortnite', 'valorant', 'csgo', 'dota', 'overwatch', 'roblox', 'genshin', 'league', 'apex', 'tf2', 'rust', 'pubg', 'rocket', 'destiny'], '[game]'),
+                (['nvidia', 'radeon', 'afterburner', 'rtss'], '[gpu-tool]'),
+                (['excel', 'word', 'outlook', 'powerpoint', 'onenote'], '[office]'),
+                (['premiere', 'photoshop', 'illustrator', 'aftereffects', 'lightroom', 'audition'], '[adobe]'),
+            ]
+
+            def get_category(proc_name: str) -> str:
+                """Match keywords at word boundaries only — not embedded mid-word."""
+                base = proc_name.lower()
+                for suffix in ('.exe', '.x64', '.x86', '.x32'):
+                    if base.endswith(suffix):
+                        base = base[:-len(suffix)]
+                        break
+                for keywords, label in category_map:
+                    for kw in keywords:
+                        if kw not in base:
+                            continue
+                        idx = base.index(kw)
+                        prefix_ok = (idx == 0 or not base[idx - 1].isalpha())
+                        suffix_ok = (idx + len(kw) >= len(base) or not base[idx + len(kw)].isalpha())
+                        if prefix_ok or suffix_ok:
+                            return label
+                return ''
+
+            def path_suggests_game_install(exe: str) -> bool:
+                """True when exe lives under a typical PC game install folder (name-based tag missed many titles)."""
+                el = (exe or "").lower().replace("/", "\\")
+                if not el:
+                    return False
+                markers = (
+                    "steamapps\\common",
+                    "\\epic games\\",
+                    "\\riot games\\",
+                    "\\ubisoft\\",
+                    "\\ubisoft game launcher\\",
+                    "ea games\\",
+                    "electronic arts\\",
+                    "battle.net\\",
+                    "blizzard\\",
+                    "gog galaxy\\",
+                    "\\xboxgames\\",
+                    "rockstar games\\",
+                    "bethesda.net\\",
+                )
+                return any(m in el for m in markers)
+
+            def short_exe_hint(exe: Optional[str]) -> str:
+                """Last path segments so the model can map game/app titles to install folders."""
+                if not exe or not isinstance(exe, str):
+                    return ""
+                try:
+                    p = exe.replace("/", "\\").strip()
+                    parts = [x for x in p.split("\\") if x]
+                    if len(parts) >= 3:
+                        return "\\".join(parts[-3:])
+                    if parts:
+                        return "\\".join(parts)
+                except Exception:
+                    pass
+                return ""
+
+            # Sort: categorized apps first, then by memory (games/media tend to be heavy)
+            rows: List[Tuple[Dict[str, Any], str, float]] = []
             for proc in processes:
-                proc_name = proc["name"]
-                proc_lower = proc_name.lower()
-                proc_info = f"{proc_name} (PID: {proc['pid']})"
-                
-                if self._is_priority_process(proc_lower):
-                    priority_processes.append(proc_info)
-                else:
-                    other_processes.append(proc_info)
-            
-            # Combine: priority first, then others (up to 60 total)
-            process_list = sorted(priority_processes) + sorted(other_processes)
-            
+                proc_name = proc.get("name") or "Unknown"
+                cat = get_category(proc_name.lower())
+                if not cat and path_suggests_game_install(proc.get("exe") or ""):
+                    cat = "[game]"
+                mem = float(proc.get("memory_percent") or 0)
+                rows.append((proc, cat, mem))
+
+            rows.sort(key=lambda r: (not bool(r[1]), -r[2], (r[0].get("name") or "").lower()))
+
+            max_lines = 150
+            process_list: List[str] = []
+            for proc, category, _mem in rows[:max_lines]:
+                proc_name = proc.get("name", "Unknown")
+                pid = proc.get("pid")
+                cat_suffix = f" {category}" if category else ""
+                hint = short_exe_hint(proc.get("exe"))
+                path_part = f" | {hint}" if hint else ""
+                process_list.append(f"{proc_name} (PID: {pid}){cat_suffix}{path_part}")
+
             return {
-                "installed_apps": app_list,  # Already limited to 80
-                "running_processes": process_list[:60],  # Increased to 60 with smart prioritization
+                "installed_apps": app_list[:80],
+                "running_processes": process_list,
                 "total_apps": len(apps),
                 "total_processes": len(processes)
             }
@@ -378,26 +436,60 @@ class SystemContextProvider:
     
     async def find_process(self, process_name: str) -> List[Dict[str, Any]]:
         """
-        Find running process(es) by name
-        
-        Args:
-            process_name: Process name to search for
-            
-        Returns:
-            List of matching processes
+        Find running process(es) by name, path substring, or fuzzy name match.
         """
         processes = await self.get_running_processes(simplified=False)
         process_name_lower = process_name.lower().strip()
         
-        # Remove .exe if present for matching
         if process_name_lower.endswith('.exe'):
             process_name_lower = process_name_lower[:-4]
         
-        matches = []
+        matches: List[Dict[str, Any]] = []
+        seen_pids = set()
+        
+        def add(proc: Dict[str, Any]):
+            pid = proc.get("pid")
+            if pid is not None and pid in seen_pids:
+                return
+            if pid is not None:
+                seen_pids.add(pid)
+            matches.append(proc)
+        
+        stop_tokens = {
+            "that", "this", "with", "from", "your", "game", "games", "running", "close", "kill",
+            "open", "the", "are", "what", "which", "where", "when", "here", "there", "please",
+            "fucking", "damn", "hell",
+        }
+        path_tokens = [
+            t for t in re.findall(r"[a-z]{4,}", process_name_lower)
+            if t not in stop_tokens
+        ]
+
         for proc in processes:
             proc_name = proc['name'].lower()
-            if process_name_lower in proc_name or process_name_lower in proc_name.replace('.exe', ''):
-                matches.append(proc)
+            name_core = proc_name[:-4] if proc_name.endswith('.exe') else proc_name
+            path = (proc.get('path') or '').lower()
+            path_norm = path.replace("/", "\\")
+            if process_name_lower in proc_name or process_name_lower in name_core:
+                add(proc)
+            elif path_norm and process_name_lower in path_norm:
+                add(proc)
+            elif path_norm and path_tokens:
+                compact = path_norm.replace(" ", "")
+                if any(len(t) >= 4 and t in compact for t in path_tokens):
+                    add(proc)
+        
+        if not matches and process_name_lower:
+            name_cores = []
+            for proc in processes:
+                pn = proc['name'].lower()
+                name_cores.append(pn[:-4] if pn.endswith('.exe') else pn)
+            fuzzy = get_close_matches(process_name_lower, name_cores, n=8, cutoff=0.5)
+            for proc in processes:
+                pn = proc['name'].lower()
+                core = pn[:-4] if pn.endswith('.exe') else pn
+                if core in fuzzy:
+                    add(proc)
         
         return matches
 

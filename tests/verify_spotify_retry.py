@@ -27,7 +27,7 @@ async def test_spotify_retry():
     print(f"Success: {success}")
     print(f"Response: {response}")
     
-    if response.get("message") == "Playing your Liked Songs on Spotify.":
+    if "Playing your Liked Songs" in response.get("message", "") or "Resuming your music" in response.get("message", ""):
         print("PASS: Action handled correctly.")
     else:
         print(f"FAIL or UNKNOWN: {response}")

@@ -1,6 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 
-export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws') => {
+const getWsUrl = () => {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const host = window.location.hostname;
+  const portStr = window.location.port ? `:${window.location.port}` : '';
+  return `${protocol}//${host}${portStr}/api/v1/ws`;
+};
+
+export const useWebSocket = (url = getWsUrl()) => {
   const [connected, setConnected] = useState(false)
   const [messages, setMessages] = useState([])
   const [voiceActivity, setVoiceActivity] = useState({ status: 'idle', speaking: false })
@@ -93,24 +100,23 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws') => {
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data)
-          console.log('[WebSocket] Received:', data)
-          
+          // console.log('[WebSocket] Received:', data.type) // Removed raw data log to prevent memory leaks
+
           switch (data.type) {
             case 'connected':
               console.log('Connected to Aiden API')
               break
             
             case 'message':
-              console.log('[WebSocket] New message:', data.data)
+              console.log('[WebSocket] New message received')
               setMessages(prev => {
                 const newMessages = [...prev, data.data]
-                console.log('[WebSocket] Messages updated:', newMessages)
                 return newMessages
               })
               break
             
             case 'voice_activity':
-              console.log('[WebSocket] Voice activity:', data.data)
+              // console.log('[WebSocket] Voice activity:', data.data.status) // Removed to prevent console spam
               setVoiceActivity(data.data)
               break
             
@@ -140,13 +146,37 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws') => {
               setTimerUpdates(data.data)
               break
               
+            case 'tts_audio':
+              // Aiden's voice audio payload
+              if (data.data?.audio_uri) {
+                try {
+                  const audio = new Audio(data.data.audio_uri);
+                  
+                  // Force speaking state on the web client while audio is actually playing
+                  setVoiceActivity(prev => ({ ...prev, status: 'speaking', speaking: true }));
+                  
+                  audio.onended = () => {
+                    setVoiceActivity(prev => ({ ...prev, status: 'idle', speaking: false }));
+                  };
+                  
+                  audio.play().catch(e => {
+                    console.error('[Audio] Playback failed:', e);
+                    setVoiceActivity(prev => ({ ...prev, status: 'idle', speaking: false }));
+                  });
+                } catch (e) {
+                  console.error('[Audio] Error creating audio element:', e);
+                }
+              }
+              break
+
+              
             case 'pong':
               // Heartbeat response
               break
             
             case 'ping':
               // Server is checking if we are alive
-              sendMessage('pong')
+              ws.send(JSON.stringify({ type: 'pong' }))
               break
               
             default:
@@ -216,6 +246,5 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws') => {
 }
 
 export default useWebSocket
-
 
 

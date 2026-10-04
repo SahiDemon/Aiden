@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { X, MessageCircle, Calendar, Clock } from 'lucide-react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { X, MessageCircle, Calendar } from 'lucide-react'
+import { motion } from 'framer-motion'
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card'
 import { Button } from '../ui/button'
 import { ScrollArea } from '../ui/scroll-area'

@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 # CRITICAL: Import event loop policy FIRST
 from src.utils.event_loop import ensure_selector_event_loop
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -22,7 +22,16 @@ from src.utils.logger import get_logger
 from src.database.neon_client import get_db_client, close_db_client
 from src.database.redis_client import get_redis_client, close_redis_client
 from src.ai.groq_client import get_groq_client, close_groq_client
+from src.ai.gemini_client import get_gemini_client, close_gemini_client
+from src.ai.ollama_client import close_ollama_client
 from src.smart_home.esp32_client import get_esp32_client, close_esp32_client
+from src.services.settings_service import (
+    get_provider_models,
+    get_settings_payload,
+    load_settings_overrides,
+    save_settings_payload,
+)
+from src.core.runtime_refresh import refresh_runtime_components
 
 logger = get_logger(__name__)
 
@@ -38,6 +47,7 @@ def set_voice_activation_callback(callback: Callable):
 class MessageRequest(BaseModel):
     message: str
     input_type: str = "text"
+    source: str = "local"
 
 class CommandRequest(BaseModel):
     command_type: str
@@ -46,8 +56,14 @@ class CommandRequest(BaseModel):
 class ConfigUpdateRequest(BaseModel):
     settings: Dict[str, Any]
 
+
+class SettingsUpdateRequest(BaseModel):
+    settings: Dict[str, Any]
+
 class ESP32ControlRequest(BaseModel):
-    action: str  # turn_on, turn_off, toggle, change_mode
+    control_id: Optional[str] = None
+    target: Optional[str] = None
+    action: Optional[str] = None
 
 class TimerCreateRequest(BaseModel):
     action: str  # shutdown, hibernate, restart, sleep, lock
@@ -174,9 +190,19 @@ async def lifespan(app: FastAPI):
         
         logger.info("Initializing Redis client...")
         await get_redis_client()
+
+        logger.info("Loading persisted settings overrides...")
+        await load_settings_overrides()
         
-        logger.info("Initializing Groq AI client...")
-        await get_groq_client()
+        settings = get_settings()
+        if settings.app.llm_provider == "groq":
+            logger.info("Initializing Groq chat client...")
+            await get_groq_client()
+        elif settings.app.llm_provider == "gemini":
+            logger.info("Initializing Gemini chat client...")
+            await get_gemini_client()
+        else:
+            logger.info("Using lazy AI client initialization for provider: %s", settings.app.llm_provider)
         
         logger.info("Initializing ESP32 client...")
         esp32_client = await get_esp32_client()
@@ -203,7 +229,9 @@ async def lifespan(app: FastAPI):
     try:
         await close_db_client()
         await close_redis_client()
+        await close_gemini_client()
         await close_groq_client()
+        await close_ollama_client()
         await close_esp32_client()
         logger.info("All services closed successfully")
     except Exception as e:
@@ -244,25 +272,25 @@ async def health_check():
     try:
         db = await get_db_client()
         services_health["database"] = True
-    except:
+    except Exception:
         pass
     
     try:
         redis = await get_redis_client()
         services_health["redis"] = True
-    except:
+    except Exception:
         pass
     
     try:
         groq = await get_groq_client()
         services_health["ai"] = True
-    except:
+    except Exception:
         pass
     
     try:
         esp32 = await get_esp32_client()
         services_health["esp32"] = settings.esp32.enabled
-    except:
+    except Exception:
         pass
     
     # Determine overall status
@@ -284,16 +312,17 @@ async def send_message(request: MessageRequest):
     This will be the main entry point for command processing
     """
     try:
-        # This will be implemented with the main orchestrator
-        # For now, return a placeholder
+        from src.core.assistant import get_assistant
+        assistant = await get_assistant()
+        response_text = await assistant.handle_text_message(request.message, source=request.source)
         return {
             "success": True,
-            "message": "Message received",
+            "message": "Message processed",
             "input": request.message,
-            "response": "Processing not yet implemented - orchestrator needed"
+            "response": response_text
         }
     except Exception as e:
-        logger.error(f"Error processing message: {e}")
+        logger.error(f"Error processing message: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/v1/conversation/history")
@@ -323,8 +352,8 @@ async def get_system_status():
     try:
         import psutil
         
-        # System stats
-        cpu_percent = psutil.cpu_percent(interval=1)
+        # System stats (interval=None prevents blocking the async event loop)
+        cpu_percent = psutil.cpu_percent(interval=None)
         memory = psutil.virtual_memory()
         
         # Redis stats
@@ -352,54 +381,51 @@ async def get_system_status():
 
 @app.get("/api/v1/config")
 async def get_config():
-    """Get current configuration"""
+    """Compatibility wrapper for legacy dashboard clients."""
     try:
-        settings = get_settings()
-        
-        # Return safe config (no secrets)
-        return {
-            "success": True,
-            "config": {
-                "app": {
-                    "name": settings.app.name,
-                    "user_name": settings.app.user_name,
-                    "wake_word": settings.app.wake_word
-                },
-                "esp32": {
-                    "enabled": settings.esp32.enabled,
-                    "ip_address": settings.esp32.ip_address
-                },
-                "speech": {
-                    "tts_voice": settings.speech.tts_voice,
-                    "tts_rate": settings.speech.tts_rate,
-                    "stt_language": settings.speech.stt_language
-                },
-                "cache": {
-                    "enabled": settings.cache.enable_caching
-                }
-            }
-        }
+        settings_payload = await get_settings_payload()
+        return {"success": True, "config": settings_payload}
     except Exception as e:
         logger.error(f"Error getting config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/api/v1/config")
 async def update_config(request: ConfigUpdateRequest):
-    """Update configuration"""
+    """Compatibility wrapper for legacy dashboard clients."""
     try:
-        # This will update .env or database settings
-        # For now, return placeholder
+        settings_payload = await save_settings_payload(request.settings)
+        await refresh_runtime_components()
         return {
             "success": True,
-            "message": "Config update not yet fully implemented"
+            "message": "Settings updated",
+            "config": settings_payload,
         }
     except Exception as e:
         logger.error(f"Error updating config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+async def _get_esp32_runtime_payload(esp32) -> Dict[str, Any]:
+    connected = await esp32.check_connection()
+    device = await esp32.get_device_snapshot() if connected else {
+        "device_name": "ESP32 Device",
+        "ip_address": esp32.ip_address,
+        "controls": [],
+        "summary": {"state": "unknown", "speed": None, "timer": None, "mode": None, "osc": None},
+        "raw_state": {},
+        "raw_config": {},
+    }
+    return {
+        "success": True,
+        "connected": connected,
+        "ip_address": esp32.ip_address,
+        "device": device,
+        "status": device.get("summary", {}),
+    }
+
 @app.get("/api/v1/esp32/status")
 async def get_esp32_status():
-    """Get ESP32 device status"""
+    """Get ESP32 device status."""
     try:
         esp32 = await get_esp32_client()
         
@@ -409,59 +435,70 @@ async def get_esp32_status():
                 "error": "ESP32 is disabled in configuration"
             }
         
-        status = await esp32.get_status()
-        connected = await esp32.check_connection()
-        
-        return {
-            "success": True,
-            "connected": connected,
-            "status": status,
-            "ip_address": esp32.ip_address
-        }
+        payload = await _get_esp32_runtime_payload(esp32)
+        return payload
     except Exception as e:
         logger.error(f"Error getting ESP32 status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.get("/api/v1/esp32/device")
+async def get_esp32_device():
+    """Get the canonical normalized ESP32 runtime payload."""
+    try:
+        esp32 = await get_esp32_client()
+
+        if not esp32.enabled:
+            return {
+                "success": False,
+                "error": "ESP32 is disabled in configuration",
+            }
+
+        return await _get_esp32_runtime_payload(esp32)
+    except Exception as e:
+        logger.error(f"Error getting ESP32 device payload: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/v1/esp32/control")
 async def control_esp32(request: ESP32ControlRequest):
-    """Control ESP32 device"""
+    """Control ESP32 device using exact targets or relative actions."""
     try:
         esp32 = await get_esp32_client()
         
         if not esp32.enabled:
             raise HTTPException(status_code=400, detail="ESP32 is disabled")
-        
-        result = False
-        message = ""
-        
-        match request.action:
-            case "turn_on":
-                result = await esp32.turn_on()
-                message = "Fan turned on"
-            case "turn_off":
-                result = await esp32.turn_off()
-                message = "Fan turned off"
-            case "toggle":
-                result = await esp32.toggle()
-                message = "Fan toggled"
-            case "change_mode":
-                result = await esp32.change_mode()
-                message = "Fan mode changed"
-            case _:
-                raise HTTPException(status_code=400, detail="Invalid action")
-        
-        # Broadcast to WebSocket clients
+
+        legacy_action = request.action if not request.control_id else None
+        result = await esp32.execute_control_request(
+            control_id=request.control_id,
+            target=request.target,
+            action=request.action if request.control_id else None,
+            legacy_action=legacy_action,
+        )
+
+        if not result.get("success"):
+            detail = result.get("error") or "Failed to control ESP32 device"
+            raise HTTPException(status_code=400, detail=detail)
+
+        payload = await _get_esp32_runtime_payload(esp32)
         await manager.broadcast({
             "type": "esp32_update",
-            "action": request.action,
-            "success": result,
-            "message": message,
+            "data": {
+                "control_id": result.get("control_id") or request.control_id,
+                "target": result.get("target") or request.target,
+                "action": request.action,
+                "message": result.get("message"),
+                "device": payload.get("device"),
+                "connected": payload.get("connected"),
+            },
             "timestamp": datetime.now().isoformat()
         })
-        
+
         return {
-            "success": result,
-            "message": message
+            "success": True,
+            "message": result.get("message"),
+            "device": payload.get("device"),
+            "connected": payload.get("connected"),
         }
     except HTTPException:
         raise
@@ -489,81 +526,36 @@ async def get_command_history(limit: int = 100):
 
 @app.get("/api/v1/settings")
 async def get_settings_endpoint():
-    """Get all settings for dashboard"""
+    """Get canonical dashboard settings payload."""
     try:
-        settings = get_settings()
-        
-        return {
-            "success": True,
-            "settings": {
-                "speech": {
-                    "tts_voice": settings.speech.tts_voice,
-                    "tts_rate": settings.speech.tts_rate,
-                    "stt_language": settings.speech.stt_language,
-                    "stt_timeout": settings.speech.stt_timeout,
-                    "stt_energy_threshold": settings.speech.stt_energy_threshold,
-                },
-                "groq": {
-                    "model": settings.groq.model,
-                    "temperature": settings.groq.temperature,
-                    "max_tokens": settings.groq.max_tokens,
-                    "user_name": settings.app.user_name,
-                },
-                "app": {
-                    "name": settings.app.name,
-                    "user_name": settings.app.user_name,
-                    "wake_word": settings.app.wake_word,
-                    "hotkey": settings.app.hotkey,
-                    "debug": settings.app.debug,
-                    "enable_sound_effects": True,  # Add this to config if needed
-                },
-                "esp32": {
-                    "enabled": settings.esp32.enabled,
-                    "ip_address": settings.esp32.ip_address,
-                    "timeout": settings.esp32.timeout,
-                }
-            }
-        }
+        return {"success": True, "settings": await get_settings_payload()}
     except Exception as e:
         logger.error(f"Error getting settings: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.put("/api/v1/settings/speech")
-async def update_speech_settings(settings_update: Dict[str, Any]):
-    """Update speech settings"""
+@app.put("/api/v1/settings")
+async def update_settings_endpoint(request: SettingsUpdateRequest):
+    """Persist canonical dashboard settings payload and refresh runtime state."""
     try:
-        # Settings would be updated in .env or config file
-        # For now, just acknowledge the request
+        settings_payload = await save_settings_payload(request.settings)
+        await refresh_runtime_components()
         return {
             "success": True,
-            "message": "Speech settings updated"
+            "message": "Settings updated",
+            "settings": settings_payload,
+            "restart_required": False,
         }
     except Exception as e:
-        logger.error(f"Error updating speech settings: {e}")
+        logger.error(f"Error updating settings: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.put("/api/v1/settings/ai")
-async def update_ai_settings(settings_update: Dict[str, Any]):
-    """Update AI settings"""
+@app.get("/api/v1/settings/providers/models")
+async def get_provider_models_endpoint(provider: str = Query(...)):
+    """Get provider model options or discovered models."""
     try:
-        return {
-            "success": True,
-            "message": "AI settings updated"
-        }
+        return {"success": True, **(await get_provider_models(provider))}
     except Exception as e:
-        logger.error(f"Error updating AI settings: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.put("/api/v1/settings/system")
-async def update_system_settings(settings_update: Dict[str, Any]):
-    """Update system settings"""
-    try:
-        return {
-            "success": True,
-            "message": "System settings updated"
-        }
-    except Exception as e:
-        logger.error(f"Error updating system settings: {e}")
+        logger.error(f"Error getting provider models: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/v1/conversations")
@@ -651,18 +643,16 @@ async def get_dashboard_stats():
     try:
         db = await get_db_client()
         
-        # Get conversation count
-        conversations = await db.get_conversations(limit=1000)
-        
-        # Get command history
-        commands = await db.get_command_history(limit=1000)
+        # Get fast SQL counts
+        total_conversations = await db.count_conversations()
+        total_commands = await db.count_commands()
         
         return {
             "success": True,
             "stats": {
-                "total_conversations": len(conversations),
-                "total_commands": len(commands),
-                "uptime": "N/A",  # Would need to track this
+                "total_conversations": total_conversations,
+                "total_commands": total_commands,
+                "uptime": "N/A",
             }
         }
     except Exception as e:
@@ -877,12 +867,15 @@ async def websocket_endpoint(websocket: WebSocket):
 
 # Serve React dashboard (if built)
 try:
-    app.mount("/static", StaticFiles(directory="dashboard/build/static"), name="static")
+    from src.utils.paths import resource_path
+
+    dashboard_build = resource_path("dashboard", "build")
+    app.mount("/static", StaticFiles(directory=str(dashboard_build / "static")), name="static")
     
     @app.get("/")
     async def serve_dashboard_root():
         """Serve React dashboard at root"""
-        return FileResponse("dashboard/build/index.html")
+        return FileResponse(str(dashboard_build / "index.html"))
     
     # Catch-all route for React Router (must be last)
     @app.get("/{full_path:path}")
@@ -891,8 +884,8 @@ try:
         # Don't catch API routes
         if full_path.startswith("api/"):
             return {"error": "Not found"}
-        return FileResponse("dashboard/build/index.html")
-except:
+        return FileResponse(str(dashboard_build / "index.html"))
+except Exception:
     logger.warning("Dashboard build not found - dashboard will not be served")
     
     @app.get("/")
@@ -917,7 +910,7 @@ async def broadcast_update(update_type: str, data: Dict[str, Any]):
         "data": data,
         "timestamp": datetime.now().isoformat()
     }
-    logger.info(f"Broadcasting to {len(manager.active_connections)} clients: type={update_type}")
+    logger.debug(f"Broadcasting to {len(manager.active_connections)} clients: type={update_type}")
     logger.debug(f"Broadcast data: {data}")
     await manager.broadcast(message)
 
@@ -931,32 +924,27 @@ async def start_api_server():
     """Start the FastAPI server in background"""
     global _server, _server_config
     import uvicorn
-    import threading
     
     settings = get_settings()
+    
+    # Check for SSL certificates for HTTPS support
+    import os
+    ssl_keyfile = "key.pem" if os.path.exists("key.pem") else None
+    ssl_certfile = "cert.pem" if os.path.exists("cert.pem") else None
+    
     _server_config = uvicorn.Config(
         app,
         host=settings.api.host,
         port=settings.api.port,
         log_level="info",
         access_log=False,
-        loop="asyncio"
+        loop="asyncio",
+        ssl_keyfile=ssl_keyfile,
+        ssl_certfile=ssl_certfile
     )
     
-    def run_server():
-        """Run uvicorn server in a thread with correct event loop policy"""
-        global _server
-        # Import the event loop policy in this thread
-        from src.utils.event_loop import ensure_selector_event_loop
-        ensure_selector_event_loop()
-        
-        # Create server instance that we can control
-        _server = uvicorn.Server(_server_config)
-        _server.run()
-    
-    # Start server in a daemon thread
-    server_thread = threading.Thread(target=run_server, daemon=True)
-    server_thread.start()
+    _server = uvicorn.Server(_server_config)
+    asyncio.create_task(_server.serve())
     
     logger.info(f"API server starting on {settings.api.host}:{settings.api.port}")
     

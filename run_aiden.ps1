@@ -1,4 +1,3 @@
-﻿# run_aiden.ps1 — Fixed Aiden launcher
 param([switch]$Debug)
 
 # Use script directory as working directory
@@ -20,7 +19,7 @@ if (-not $hasHandle) {
 
 Write-Host "Starting Aiden AI Assistant..." -ForegroundColor Cyan
 
-# Locate python executable inside venv (build paths as simple strings)
+# Locate python executable inside venv
 $possiblePythons = @(
     Join-Path -Path $ScriptDir -ChildPath ".venv\Scripts\python.exe"
     Join-Path -Path $ScriptDir -ChildPath "venv\Scripts\python.exe"
@@ -54,26 +53,21 @@ if (-not (Test-Path $dashboardIndex)) {
         exit 1
     }
     Pop-Location
-    Write-Host "✓ Dashboard build complete" -ForegroundColor Green
+    Write-Host "[OK] Dashboard build complete" -ForegroundColor Green
 }
 
 Write-Host "Dashboard will be served from http://localhost:5000" -ForegroundColor Cyan
 
-# Launch Aiden
-$scriptEntry = Join-Path $ScriptDir "src\main.py"
-if (-not (Test-Path $scriptEntry)) {
-    Write-Host "ERROR: Entry script not found at src\main.py" -ForegroundColor Red
-    if ($hasHandle) { $mutex.ReleaseMutex() }
-    exit 1
-}
+$guardianEntry = Join-Path $ScriptDir "src\utils\guardian.py"
 
 if ($Debug) {
-    Write-Host "Running in DEBUG mode (console visible)..." -ForegroundColor Yellow
-    & $pythonPath $scriptEntry
+    Write-Host "Running Guardian Watchdog in DEBUG mode (console visible + auto-restart active)..." -ForegroundColor Yellow
+    & $pythonPath $guardianEntry --debug
     $exitCode = $LASTEXITCODE
+    Write-Host "Guardian exited with code: $exitCode" -ForegroundColor $(if ($exitCode -eq 0) { "Green" } else { "Red" })
 } else {
-    Write-Host "Running in NORMAL mode (hidden)..." -ForegroundColor Green
-    Start-Process -FilePath $pythonPath -ArgumentList $scriptEntry -WorkingDirectory $ScriptDir -WindowStyle Hidden
+    Write-Host "Running Guardian Watchdog in NORMAL mode (hidden background daemon + auto-restart active)..." -ForegroundColor Green
+    Start-Process -FilePath $pythonPath -ArgumentList $guardianEntry -WorkingDirectory $ScriptDir -WindowStyle Hidden
     $exitCode = 0
 }
 

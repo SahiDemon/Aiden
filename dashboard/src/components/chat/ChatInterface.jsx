@@ -5,6 +5,7 @@ import { toast } from 'react-hot-toast'
 import WaveAnimation from './WaveAnimation'
 import ShimmerText from './ShimmerText'
 import api from '../../lib/api'
+import { useWebSpeech } from '../../hooks/useWebSpeech'
 
 const ChatInterface = ({ messages, voiceActivity, connected }) => {
   const [isListening, setIsListening] = useState(false)
@@ -12,6 +13,33 @@ const ChatInterface = ({ messages, voiceActivity, connected }) => {
   const [currentText, setCurrentText] = useState('')
   const [userInput, setUserInput] = useState('')
   const [displayText, setDisplayText] = useState('')
+  const [isClientListening, setIsClientListening] = useState(false)
+
+  // Integrate Web Speech API
+  const { isSupported, isRecording, startRecording, stopRecording } = useWebSpeech({
+    onResult: (interim, final) => {
+      // Show interim while speaking
+      if (interim) setDisplayText(interim);
+      if (final) {
+        setDisplayText(final);
+        setUserInput(final); // Ensure userInput has the NEW command for the processing phase
+        // Send final transcription to Aiden!
+        api.sendMessage(final, true).catch(err => {
+          console.error("Failed to send message:", err);
+          toast.error("Failed to send message");
+        });
+        setIsClientListening(false);
+      }
+    },
+    onEnd: () => setIsClientListening(false),
+    onError: (err) => {
+      console.error('Speech error:', err);
+      if (err === 'not-allowed') {
+        toast.error('Microphone access denied. Try using HTTPS.');
+      }
+      setIsClientListening(false);
+    }
+  });
 
   // Update listening and speaking states
   useEffect(() => {
@@ -50,28 +78,32 @@ const ChatInterface = ({ messages, voiceActivity, connected }) => {
   // Update display text based on state
   useEffect(() => {
     console.log('[ChatInterface] State:', { isListening, isSpeaking, userInput, currentText, voiceActivity: voiceActivity?.status })
+    let timeoutId;
 
     if (isSpeaking && currentText) {
       console.log('[ChatInterface] Displaying assistant text:', currentText)
       setDisplayText(currentText)
-    } else if (isListening) {
-      // When listening, always clear text for a clean slate.
-      console.log('[ChatInterface] Listening: Clearing display.')
-      setDisplayText('')
+    } else if (isListening || isClientListening) {
+      // When listening, always clear text for a clean slate, UNLESS we have interim transcript
+      if (!isClientListening) {
+        console.log('[ChatInterface] Listening: Clearing display.')
+        setDisplayText('')
+      }
     } else if (voiceActivity?.status === 'processing' && userInput) {
       // After listening, show the user's transcribed input while we process.
       console.log('[ChatInterface] Processing: Displaying user input:', userInput)
       setDisplayText(userInput)
-    } else {
-      // In any other state (like idle), clear the text.
-      // A small delay provides a smoother transition out.
-      const timeout = setTimeout(() => {
-        console.log('[ChatInterface] Idle or other state: Clearing display text')
+    } else if (voiceActivity?.status === 'idle') {
+      // Clear the text after 2.5 seconds of being idle
+      timeoutId = setTimeout(() => {
         setDisplayText('')
-      }, 300)
-      return () => clearTimeout(timeout)
+      }, 2500)
     }
-  }, [isListening, isSpeaking, userInput, currentText, voiceActivity?.status])
+    
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId)
+    }
+  }, [isListening, isSpeaking, userInput, currentText, voiceActivity?.status, isClientListening])
 
   const handleVoiceActivate = async () => {
     if (!connected) {
@@ -79,17 +111,29 @@ const ChatInterface = ({ messages, voiceActivity, connected }) => {
       return
     }
 
-    try {
-      await api.activateVoice()
-    } catch (error) {
-      toast.error('Failed to activate voice')
-      console.error('Voice activation error:', error)
+    if (isSupported) {
+      // Use client-side Web Speech API if supported (Phone/Chrome MVP)
+      if (isRecording || isClientListening) {
+        stopRecording()
+        setIsClientListening(false)
+      } else {
+        startRecording()
+        setIsClientListening(true)
+      }
+    } else {
+      // Fallback to PC Microphone
+      try {
+        await api.activateVoice()
+      } catch (error) {
+        toast.error('Failed to activate PC voice')
+        console.error('Voice activation error:', error)
+      }
     }
   }
 
   const getStatusColor = () => {
     if (!connected) return 'bg-red-500'
-    if (isListening) return 'bg-emerald-500'
+    if (isListening || isClientListening) return 'bg-emerald-500'
     if (isSpeaking) return 'bg-blue-500'
     if (voiceActivity?.status === 'processing') return 'bg-purple-500'
     return 'bg-emerald-500'
@@ -97,7 +141,7 @@ const ChatInterface = ({ messages, voiceActivity, connected }) => {
 
   const getStatusText = () => {
     if (!connected) return 'Disconnected'
-    if (isListening) return 'Listening'
+    if (isListening || isClientListening) return 'Listening'
     if (isSpeaking) return 'Speaking'
     if (voiceActivity?.status === 'processing') return 'Thinking'
     return 'Ready'
@@ -118,15 +162,16 @@ const ChatInterface = ({ messages, voiceActivity, connected }) => {
           transition={{ duration: 0.5 }}
           className="text-center max-w-4xl w-full"
         >
-          {/* Large "Aiden" Text in Center */}
+          {/* Large "AIDEN" Text in Center */}
           <motion.h1 
-            className="text-8xl font-bold mb-6 bg-gradient-to-r from-blue-400 to-blue-300 bg-clip-text text-transparent"
+            className="text-6xl md:text-8xl font-black tracking-[0.2em] mb-4 bg-gradient-to-r from-white via-blue-100 to-blue-300 bg-clip-text text-transparent uppercase drop-shadow-sm"
+            style={{ fontFamily: "'Space Grotesk', 'Inter', sans-serif" }}
             animate={{
               scale: isListening ? [1, 1.02, 1] : 1,
             }}
             transition={{ duration: 2, repeat: Infinity }}
           >
-            Aiden
+            AIDEN
           </motion.h1>
 
           {/* Status Indicator */}
@@ -136,38 +181,38 @@ const ChatInterface = ({ messages, voiceActivity, connected }) => {
               animate={{ scale: [1, 1.3, 1], opacity: [1, 0.7, 1] }}
               transition={{ duration: 2, repeat: Infinity }}
             />
-            <span className="text-lg text-white/70 font-medium">{getStatusText()}</span>
+            <span className="text-base md:text-lg text-white/70 font-medium">{getStatusText()}</span>
           </div>
 
           {/* Glass Mic Button - Centered with Blue Styling */}
           <motion.div
-            className="mb-8 flex justify-center"
+            className="mb-8 mt-12 flex justify-center"
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
           >
             <button
               onClick={handleVoiceActivate}
               disabled={!connected}
-              className={`liquid-glass-card w-16 h-16 rounded-full flex items-center justify-center transition-all duration-300 ${
-                isListening 
-                  ? 'bg-emerald-500/20 border-emerald-400/40 shadow-lg shadow-emerald-500/20' 
-                  : 'bg-blue-500/10 border-blue-400/30 shadow-lg shadow-blue-500/20'
-              } hover:bg-blue-500/20 hover:border-blue-400/50`}
+              className={`mic-glow-button w-32 h-32 md:w-32 md:h-32 rounded-full flex items-center justify-center transition-all duration-300 ${
+                (isListening || isClientListening)
+                  ? 'border-emerald-400/60 shadow-lg shadow-emerald-500/40' 
+                  : ''
+              }`}
             >
-              {isListening ? (
-                <MicOff className="w-5 h-5 text-emerald-300 relative z-10" />
+              {(isListening || isClientListening) ? (
+                <MicOff className="w-12 h-12 text-emerald-300 relative z-10 stroke-1" />
               ) : (
-                <Mic className="w-5 h-5 text-blue-300 relative z-10" />
+                <Mic className="w-12 h-12 text-blue-200 relative z-10 stroke-1" />
               )}
             </button>
           </motion.div>
 
           {/* Display text directly without box - Gemini Live mode style with Shimmer */}
-          <div className="min-h-[120px] flex items-center justify-center">
+          <div className="min-h-[80px] flex items-center justify-center">
             <AnimatePresence mode="wait">
               {displayText ? (
                 <motion.div
-                  key={displayText}
+                  key="display-text"
                   initial={{ opacity: 0, y: 15 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -15 }}
@@ -175,12 +220,12 @@ const ChatInterface = ({ messages, voiceActivity, connected }) => {
                     duration: 0.4,
                     ease: [0.4, 0, 0.2, 1]
                   }}
-                  className="max-w-3xl text-center px-8"
+                  className="max-w-3xl text-center px-4 md:px-8"
                 >
                   <ShimmerText 
                     text={displayText}
-                    isActive={isSpeaking}
-                    className="text-3xl leading-relaxed"
+                    isActive={voiceActivity?.status === 'processing' || isSpeaking}
+                    className="text-xl md:text-3xl leading-relaxed text-slate-300 font-light"
                   />
                 </motion.div>
               ) : (
@@ -190,7 +235,7 @@ const ChatInterface = ({ messages, voiceActivity, connected }) => {
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.3 }}
-                  className="text-xl text-white/40"
+                  className="text-lg md:text-xl text-slate-400 font-light"
                 >
                   {connected ? 'Ready to assist' : 'Disconnected from Aiden'}
                 </motion.p>

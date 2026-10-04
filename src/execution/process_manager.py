@@ -2,6 +2,7 @@
 Process Manager
 Kill and manage Windows processes dynamically
 """
+import asyncio
 import subprocess
 import logging
 from typing import Optional, List
@@ -59,11 +60,14 @@ class ProcessManager:
             except (IndexError, ValueError) as e:
                 logger.debug(f"Could not extract PID from string: {e}")
         
-        # If we have a PID, use it directly (most reliable method)
+        process_name = process_name.lower().strip()
+
+        if process_name in {"spotify", "spotify.exe"}:
+            return await asyncio.to_thread(self._close_spotify_completely)
+
+        # If we have a PID, use it directly (most reliable method).
         if pid:
             return await self.kill_process_by_pid(pid)
-        
-        process_name = process_name.lower().strip()
         
         try:
             # Use system context to find running processes
@@ -126,6 +130,35 @@ class ProcessManager:
         except Exception as e:
             logger.error(f"Error killing process {process_name}: {e}")
             return False
+
+    @staticmethod
+    def _close_spotify_completely() -> bool:
+        """Close Spotify's main app and helpers, then verify none survived."""
+        for _attempt in range(3):
+            processes = [
+                proc for proc in psutil.process_iter(["name"])
+                if (proc.info.get("name") or "").casefold() == "spotify.exe"
+            ]
+            if not processes:
+                return True
+
+            for proc in processes:
+                try:
+                    proc.kill()
+                except psutil.NoSuchProcess:
+                    continue
+                except (psutil.AccessDenied, OSError) as exc:
+                    logger.warning("Could not close Spotify process %s: %s", proc.pid, exc)
+
+            psutil.wait_procs(processes, timeout=1.5)
+
+        remaining = [
+            proc.pid for proc in psutil.process_iter(["name"])
+            if (proc.info.get("name") or "").casefold() == "spotify.exe"
+        ]
+        if remaining:
+            logger.warning("Spotify was still running after close attempts: %s", remaining)
+        return not remaining
     
     async def _is_process_running(self, process_name: str) -> bool:
         """Check if process is currently running"""

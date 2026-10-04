@@ -45,6 +45,8 @@ class AppLauncher:
             "code": ["Code.exe", "Visual Studio Code"],
             "code.exe": ["Code.exe", "Visual Studio Code"],
             "spotify": ["Spotify.exe"],
+            "jellyfin": [r"C:\Program Files\Jellyfin\Jellyfin Media Player\JellyfinMediaPlayer.exe", "JellyfinMediaPlayer.exe"],
+            "jellyfin media player": [r"C:\Program Files\Jellyfin\Jellyfin Media Player\JellyfinMediaPlayer.exe", "JellyfinMediaPlayer.exe"],
             "discord": ["Discord.exe"],
             "calculator": ["calc.exe"],
             "calc": ["calc.exe"],
@@ -171,7 +173,7 @@ class AppLauncher:
             subprocess.Popen(app_name, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             logger.info(f"Launched {app_name} from PATH")
             return True
-        except:
+        except Exception:
             pass
         
         # Try with .exe extension
@@ -180,7 +182,7 @@ class AppLauncher:
                 subprocess.Popen(f"{app_name}.exe", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 logger.info(f"Launched {app_name}.exe from PATH")
                 return True
-            except:
+            except Exception:
                 pass
         
         return False
@@ -591,6 +593,5 @@ def get_app_launcher() -> AppLauncher:
     if _app_launcher is None:
         _app_launcher = AppLauncher()
     return _app_launcher
-
 
 

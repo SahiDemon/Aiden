@@ -51,6 +51,24 @@ const LiquidWave: React.FC<LiquidWaveProps> = ({ state, displayText }) => {
     };
 
     const textToDisplay = getDisplayText();
+    const isLongText = textToDisplay.length > 95;
+    const isExtraLongText = textToDisplay.length > 150;
+
+    // Dynamically expand wave width for longer text so it stays in the deep center of the wave
+    const getDynamicWidth = () => {
+        const baseWidth = config.width;
+        const textLen = textToDisplay.length;
+        if (textLen <= 40) return baseWidth;
+
+        const expandedWidth = baseWidth + (textLen - 40) * 10;
+        const maxAvailableWidth = typeof window !== 'undefined'
+            ? Math.min(1800, window.innerWidth - 40)
+            : 1800;
+
+        return Math.min(Math.max(baseWidth, expandedWidth), maxAvailableWidth);
+    };
+
+    const dynamicWidth = getDynamicWidth();
 
     // Listening: Gentle, organic ripple - CENTERED
     const listeningPath = [
@@ -90,7 +108,7 @@ const LiquidWave: React.FC<LiquidWaveProps> = ({ state, displayText }) => {
 
     return (
         <motion.div
-            animate={{ width: config.width, height: config.height }}
+            animate={{ width: dynamicWidth, height: config.height }}
             transition={{ duration: 0.5, ease: "easeInOut" }}
             style={{
                 display: 'flex',
@@ -146,13 +164,15 @@ const LiquidWave: React.FC<LiquidWaveProps> = ({ state, displayText }) => {
                 position: 'absolute',
                 top: 20,
                 width: '100%',
+                maxWidth: 'calc(100vw - 48px)',
                 textAlign: 'center',
                 pointerEvents: 'none',
                 display: 'flex',
                 flexDirection: 'row',
-                alignItems: 'center',
+                alignItems: 'flex-start',
                 justifyContent: 'center',
-                gap: '10px'
+                gap: '10px',
+                minWidth: 0
             }}>
                 {/* State Indicator Dot - Only for listening */}
                 {state === 'listening' && (
@@ -167,6 +187,8 @@ const LiquidWave: React.FC<LiquidWaveProps> = ({ state, displayText }) => {
                         style={{
                             width: '8px',
                             height: '8px',
+                            minWidth: '8px',
+                            marginTop: '7px',
                             borderRadius: '50%',
                             backgroundColor: '#60a5fa',
                             boxShadow: '0 0 10px rgba(96, 165, 250, 0.8)'
@@ -183,7 +205,9 @@ const LiquidWave: React.FC<LiquidWaveProps> = ({ state, displayText }) => {
                     transition={{ duration: 0.4, ease: "easeOut" }}
                     style={{
                         position: 'relative',
-                        overflow: 'visible'
+                        overflow: 'visible',
+                        minWidth: 0,
+                        maxWidth: `min(${dynamicWidth * 0.75}px, calc(100vw - 100px))`
                     }}
                 >
                     {/* Background Glow */}
@@ -205,10 +229,20 @@ const LiquidWave: React.FC<LiquidWaveProps> = ({ state, displayText }) => {
                     <div style={{
                         position: 'relative',
                         zIndex: 10,
+                        maxWidth: '100%',
+                        display: '-webkit-box',
+                        WebkitBoxOrient: 'vertical',
+                        WebkitLineClamp: 2,
+                        overflow: 'hidden',
                         fontFamily: 'Inter, sans-serif',
                         fontWeight: 700,
-                        fontSize: '15px',
+                        fontSize: isExtraLongText ? '12px' : isLongText ? '13px' : '15px',
+                        lineHeight: isExtraLongText ? 1.18 : isLongText ? 1.22 : 1.28,
                         letterSpacing: '0.5px',
+                        whiteSpace: 'normal',
+                        overflowWrap: 'anywhere',
+                        wordBreak: 'normal',
+                        hyphens: 'auto',
                         background: 'linear-gradient(90deg, rgba(255, 255, 255, 0.6) 0%, rgba(255, 255, 255, 1) 15%, rgba(135, 206, 250, 1) 30%, rgba(76, 130, 247, 1) 45%, rgba(59, 130, 246, 1) 50%, rgba(76, 130, 247, 1) 55%, rgba(135, 206, 250, 1) 70%, rgba(255, 255, 255, 1) 85%, rgba(255, 255, 255, 0.6) 100%)',
                         backgroundSize: '200% 100%',
                         backgroundClip: 'text',

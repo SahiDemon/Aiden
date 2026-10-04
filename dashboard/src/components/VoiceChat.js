@@ -209,24 +209,25 @@ const MessageBubble = ({ message, isUser, socket }) => {
         <Paper
           elevation={0}
           sx={{
-            maxWidth: '70%',
-            p: 2,
-            borderRadius: 3,
+            maxWidth: { xs: '85%', sm: '75%', md: '70%' },
+            p: 2.5,
+            borderRadius: 4,
             background: isUser 
               ? 'linear-gradient(135deg, #4c82f7, #3d6fd6)'
               : '#1a1a1a',
             border: isUser ? 'none' : '1px solid #2a2a2a',
-            color: 'white'
+            color: 'white',
+            boxShadow: '0 4px 20px rgba(0,0,0,0.15)'
           }}
         >
-          <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', mb: 1.5 }}>
             <Avatar
               sx={{
-                width: 24,
-                height: 24,
-                mr: 1,
+                width: 28,
+                height: 28,
+                mr: 1.5,
                 background: getMessageTypeColor(),
-                fontSize: 12
+                fontSize: 14
               }}
             >
               {getMessageIcon()}
@@ -241,8 +242,9 @@ const MessageBubble = ({ message, isUser, socket }) => {
           </Box>
           
           <Typography variant="body1" sx={{ 
-            lineHeight: 1.5,
-            wordBreak: 'break-word'
+            lineHeight: 1.6,
+            wordBreak: 'break-word',
+            fontSize: { xs: '0.95rem', md: '1rem' }
           }}>
             {typeof message.text === 'object' ? JSON.stringify(message.text) : String(message.text || '')}
           </Typography>

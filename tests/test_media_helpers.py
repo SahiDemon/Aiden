@@ -2,6 +2,7 @@ import unittest
 
 from src.media.browser_media_controller import score_window_title
 from src.media.spotify_utils import find_best_device
+from src.core.assistant import extract_jellyfin_movie_request, should_retry_listen_after_idle
 
 
 class BrowserMediaControllerTests(unittest.TestCase):
@@ -15,6 +16,14 @@ class BrowserMediaControllerTests(unittest.TestCase):
         score = score_window_title("My Documents - Not Chrome", "youtube")
         self.assertEqual(score, 0)
 
+    def test_youtube_music_target_rejects_regular_youtube_title(self):
+        score = score_window_title("Some Video - YouTube - Google Chrome", "youtube_music")
+        self.assertEqual(score, 0)
+
+    def test_youtube_target_rejects_youtube_music_title(self):
+        score = score_window_title("YouTube Music - Google Chrome", "youtube")
+        self.assertEqual(score, 0)
+
 
 class SpotifyDeviceSelectionTests(unittest.TestCase):
     def test_prefers_named_device(self):
@@ -25,10 +34,38 @@ class SpotifyDeviceSelectionTests(unittest.TestCase):
         device = find_best_device(devices, "office")
         self.assertEqual(device["id"], "2")
 
-    def test_prefers_active_device(self):
+
+class JellyfinIntentTests(unittest.TestCase):
+    def test_extracts_unqualified_movie_title(self):
+        self.assertEqual(extract_jellyfin_movie_request("Can you play Blade Runner?"), "Blade Runner")
+
+    def test_strips_explicit_jellyfin_target_from_movie_title(self):
+        self.assertEqual(extract_jellyfin_movie_request("play Blade Runner on Jellyfin"), "Blade Runner")
+
+    def test_ignores_generic_music_request(self):
+        self.assertIsNone(extract_jellyfin_movie_request("play some music"))
+
+
+class VoiceRecoveryTests(unittest.TestCase):
+    def test_retries_only_silent_capture_failures(self):
+        self.assertTrue(should_retry_listen_after_idle("timeout"))
+        self.assertTrue(should_retry_listen_after_idle("No speech detected"))
+        self.assertFalse(should_retry_listen_after_idle("cancelled"))
+
+    def test_prefers_computer_over_active_phone(self):
+        # Computer-type is preferred over any active non-computer when no target given
         devices = [
             {"name": "Desktop", "id": "1", "type": "Computer", "is_active": False},
             {"name": "Phones", "id": "2", "type": "Smartphone", "is_active": True},
+        ]
+        device = find_best_device(devices, None)
+        self.assertEqual(device["id"], "1")
+
+    def test_prefers_active_computer(self):
+        # When there are multiple computers, prefer the active one
+        devices = [
+            {"name": "Desktop", "id": "1", "type": "Computer", "is_active": False},
+            {"name": "Laptop", "id": "2", "type": "Computer", "is_active": True},
         ]
         device = find_best_device(devices, None)
         self.assertEqual(device["id"], "2")

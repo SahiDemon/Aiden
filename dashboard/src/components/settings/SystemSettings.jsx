@@ -52,6 +52,34 @@ const SystemSettings = ({ settings, esp32Settings, onChange, onESP32Change }) =>
               onCheckedChange={(checked) => onChange('debug', checked)}
             />
           </div>
+
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <Label>Media Idle Auto-Shutdown</Label>
+              <p className="text-xs text-muted-foreground">
+                Automatically shut down PC if paused media is left idle
+              </p>
+            </div>
+            <Switch
+              checked={settings.media_idle_shutdown_enabled || false}
+              onCheckedChange={(checked) => onChange('media_idle_shutdown_enabled', checked)}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Media Idle Timeout (minutes)</Label>
+            <Input
+              type="number"
+              value={settings.media_idle_timeout_minutes || 15}
+              onChange={(e) => onChange('media_idle_timeout_minutes', parseInt(e.target.value) || 15)}
+              min={1}
+              max={180}
+              disabled={!settings.media_idle_shutdown_enabled}
+            />
+            <p className="text-xs text-muted-foreground">
+              Minutes of idle time after pausing media before auto-shutdown triggers
+            </p>
+          </div>
         </div>
       </div>
 

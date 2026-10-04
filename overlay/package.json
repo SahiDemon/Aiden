@@ -1,6 +1,6 @@
 {
   "name": "aiden-overlay",
-  "productName": "Aiden Overlay",
+  "productName": "Aiden",
   "description": "Visual overlay for Aiden AI Assistant",
   "author": "SahiDeon",
   "private": true,
@@ -39,12 +39,28 @@
     "wait-on": "^9.0.3"
   },
   "build": {
-    "appId": "com.aiden.overlay",
-    "productName": "Aiden Overlay",
+    "appId": "com.aiden.assistant",
+    "productName": "Aiden",
     "win": {
       "target": "nsis",
       "icon": "public/icon.ico"
     },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Aiden",
+      "include": "installer/register-startup.nsh"
+    },
+    "artifactName": "${productName}-Setup-${version}.${ext}",
+    "extraResources": [
+      {
+        "from": "../dist/Aiden",
+        "to": "backend/Aiden"
+      }
+    ],
     "files": [
       "dist/**/*",
       "dist-electron/**/*"

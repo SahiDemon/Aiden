@@ -720,8 +720,8 @@ CREATE TABLE messages (
 **Purpose**: Fallback when Redis unavailable
 
 **Files:**
-- `system_context_cache.json`: Installed apps + running processes
-- `app_cache.json`: Application paths
+- `src/temp/system_context_cache.json`: Installed apps + running processes
+- `src/temp/app_cache.json`: Application paths
 
 **Update Frequency**: On cache miss or expiration
 
