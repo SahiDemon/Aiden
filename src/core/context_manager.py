@@ -6,6 +6,8 @@ import asyncio
 import uuid
 import logging
 import hashlib
+import re
+from pathlib import Path
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
@@ -13,6 +15,7 @@ from src.database.redis_client import get_redis_client
 from src.database.neon_client import get_db_client
 from src.utils.config import get_settings
 from src.utils.logger import get_logger
+from src.utils.prompts_loader import load_prompts, get_system_prompt
 
 logger = get_logger(__name__)
 
@@ -370,21 +373,8 @@ class ContextManager:
         """
         messages = []
         
-        # Load system prompt from prompts.yaml
-        from pathlib import Path
-        import yaml
-        
-        try:
-            prompts_file = Path("config/prompts.yaml")
-            if prompts_file.exists():
-                with open(prompts_file, 'r', encoding='utf-8') as f:
-                    prompts = yaml.safe_load(f)
-                    system_prompt = prompts.get("system_prompt", "")
-            else:
-                system_prompt = "You are Aiden, an intelligent Windows assistant."
-        except Exception as e:
-            logger.error(f"Error loading prompts.yaml: {e}")
-            system_prompt = "You are Aiden, an intelligent Windows assistant."
+        # Load system prompt from cached prompts.yaml (avoids repeated file I/O)
+        system_prompt = get_system_prompt()
         
         # Get system context ONLY if AI requested it via needs_context
         system_context_str = ""

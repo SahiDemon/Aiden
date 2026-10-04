@@ -8,6 +8,7 @@ import glob
 import psutil
 import json
 import logging
+import itertools
 from typing import Dict, List, Any, Optional
 from pathlib import Path
 
@@ -263,6 +264,27 @@ class SystemContextProvider:
         
         return processes
     
+    # Pre-compiled set for O(1) keyword lookups instead of O(n) list iteration
+    _PRIORITY_KEYWORDS = frozenset([
+        'chrome', 'firefox', 'edge', 'brave', 'opera',  # Browsers
+        'spotify', 'discord', 'teams', 'slack', 'zoom',  # Communication/Media
+        'vscode', 'code', 'pycharm', 'studio', 'notepad',  # Editors
+        'python', 'node', 'java', 'dotnet', 'powershell', 'cmd',  # Development
+        'obs', 'streamlabs', 'nvidia', 'radeon',  # Gaming/Recording
+        'steam', 'epic', 'origin', 'uplay', 'battle',  # Gaming platforms
+        'cursor', 'sublime', 'atom', 'brackets',  # More editors
+        'postman', 'docker', 'git',  # Dev tools
+        'excel', 'word', 'outlook', 'powerpoint',  # Office
+        'premiere', 'photoshop', 'illustrator', 'after effects',  # Adobe
+    ])
+
+    def _is_priority_process(self, proc_lower: str) -> bool:
+        """Check if process matches priority keywords using set lookups."""
+        for keyword in self._PRIORITY_KEYWORDS:
+            if keyword in proc_lower:
+                return True
+        return False
+
     async def get_ai_context(self) -> Dict[str, Any]:
         """
         Get system context formatted for AI
@@ -279,8 +301,10 @@ class SystemContextProvider:
             processes = await self.get_running_processes(simplified=True)
             
             # Format for AI - provide app names WITH paths for better context
+            # Sort by display name and limit to first 80 items using islice
+            app_items = sorted(apps.items(), key=lambda x: x[1]['display_name'].lower())
             app_list = []
-            for key, app in sorted(apps.items(), key=lambda x: x[1]['display_name'].lower()):
+            for key, app in itertools.islice(app_items, 80):
                 name = app["display_name"]
                 exe_path = app.get("exe_path", "")
                 install_path = app.get("install_path", "")
@@ -297,25 +321,12 @@ class SystemContextProvider:
             priority_processes = []
             other_processes = []
             
-            priority_keywords = [
-                'chrome', 'firefox', 'edge', 'brave', 'opera',  # Browsers
-                'spotify', 'discord', 'teams', 'slack', 'zoom',  # Communication/Media
-                'vscode', 'code', 'pycharm', 'studio', 'notepad',  # Editors
-                'python', 'node', 'java', 'dotnet', 'powershell', 'cmd',  # Development
-                'obs', 'streamlabs', 'nvidia', 'radeon',  # Gaming/Recording
-                'steam', 'epic', 'origin', 'uplay', 'battle',  # Gaming platforms
-                'cursor', 'sublime', 'atom', 'brackets',  # More editors
-                'postman', 'docker', 'git',  # Dev tools
-                'excel', 'word', 'outlook', 'powerpoint',  # Office
-                'premiere', 'photoshop', 'illustrator', 'after effects',  # Adobe
-            ]
-            
             for proc in processes:
                 proc_name = proc["name"]
                 proc_lower = proc_name.lower()
                 proc_info = f"{proc_name} (PID: {proc['pid']})"
                 
-                if any(keyword in proc_lower for keyword in priority_keywords):
+                if self._is_priority_process(proc_lower):
                     priority_processes.append(proc_info)
                 else:
                     other_processes.append(proc_info)
@@ -324,7 +335,7 @@ class SystemContextProvider:
             process_list = sorted(priority_processes) + sorted(other_processes)
             
             return {
-                "installed_apps": app_list[:80],  # Limit to 80 with paths
+                "installed_apps": app_list,  # Already limited to 80
                 "running_processes": process_list[:60],  # Increased to 60 with smart prioritization
                 "total_apps": len(apps),
                 "total_processes": len(processes)
