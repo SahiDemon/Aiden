@@ -92,6 +92,7 @@ const CollapsibleSidebar = ({
                   size="sm"
                   className="w-full h-10 p-0 text-white/70 hover:text-white hover:bg-white/10"
                   title="System Status"
+                  onClick={() => setIsCollapsed(false)}
                 >
                   <Activity className="w-5 h-5" />
                 </Button>
@@ -184,6 +185,7 @@ const CollapsibleSidebar = ({
         <div className="p-3 border-t border-white/10">
           <Button
             onClick={toggleSidebar}
+            aria-label={isCollapsed ? 'Expand status panel' : 'Collapse status panel'}
             variant="ghost"
             size="sm"
             className="w-full h-10 text-white/70 hover:text-white hover:bg-white/10"
@@ -205,7 +207,7 @@ const CollapsibleSidebar = ({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.3 }}
-            className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40 lg:hidden"
+            className="fixed inset-0 bg-black/20 backdrop-blur-sm z-30 lg:hidden"
             onClick={toggleSidebar}
           />
         )}

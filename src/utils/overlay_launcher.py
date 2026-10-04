@@ -79,7 +79,7 @@ class OverlayLauncher:
             return False
         
         if not self.is_overlay_built():
-            logger.error("Cannot start overlay: overlay not built. Run 'npm run build' in overlay directory")
+            logger.error("Cannot start overlay: overlay not built. Run 'npm run build:app' in overlay directory")
             return False
         
         # Kill any existing overlay processes first
@@ -161,4 +161,3 @@ def get_overlay_launcher() -> OverlayLauncher:
     if _overlay_launcher is None:
         _overlay_launcher = OverlayLauncher()
     return _overlay_launcher
-

@@ -24,7 +24,7 @@ pyyaml>=6.0.1
 cryptography>=43.0.0
 
 # AI/LLM
-google-generativeai>=0.8.0  # Google Gemini API (Primary - 15 RPM, 1M tokens/day)
+google-generativeai>=0.8.0  # Optional Gemini LLM provider
 openai>=1.3.0  # For OpenAI-compatible APIs (Groq fallback)
 
 # Speech Recognition (STT)
@@ -45,11 +45,11 @@ pvporcupine>=4.0.0          # Must match the .ppn model version (Hey-Hayden_en_w
 
 # Silero VAD (optional but recommended — more accurate than WebRTC VAD)
 # If not installed, Aiden automatically falls back to webrtcvad.
-# Install separately due to size: pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+# These dependencies are included below; their downloads can be large.
 torch>=2.0.0
 torchaudio>=2.0.0
 
-# openWakeWord — open-source wake word (lower false positives than Porcupine, no API key)
+# openWakeWord — open-source wake word, no API key
 # Activate by setting SPEECH_USE_OPENWAKEWORD=true in .env
 # Train custom model: https://colab.research.google.com/drive/1q1oe2zOyZp7UsB3jJiQ1IFn8z5YfjwEb
 openwakeword>=0.6.0
@@ -76,16 +76,5 @@ ytmusicapi>=1.4.1
 python-dateutil>=2.8.2
 pytz>=2023.3
 colorlog>=6.8.0
-
-# Testing
-pytest>=7.4.3
-pytest-asyncio>=0.21.1
-pytest-cov>=4.1.0
-httpx>=0.25.0  # For FastAPI testing
-
-# Development
-black>=23.11.0
-flake8>=6.1.0
-mypy>=1.7.0
 
 webrtcvad-wheels>=2.0.14

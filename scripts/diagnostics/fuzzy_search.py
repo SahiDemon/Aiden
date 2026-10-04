@@ -1,6 +1,9 @@
 import asyncio
 import sys
+from pathlib import Path
 from typing import List
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.core.context_manager import get_context_manager
 from src.utils.system_context import get_system_context

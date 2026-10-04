@@ -84,15 +84,10 @@ if (-not $SkipBackendBuild) {
         Assert-NativeSuccess "$pythonExe -m PyInstaller --noconfirm Aiden.spec"
     }
 
-    Invoke-Step "Copy .env to backend build and create aiden.cmd" {
+    Invoke-Step "Prepare blank release configuration and create aiden.cmd" {
         $distDir = Join-Path $scriptDir "dist\Aiden"
-        $envFile = Join-Path $scriptDir ".env"
-        if (Test-Path $envFile) {
-            Copy-Item $envFile (Join-Path $distDir ".env") -Force
-            Write-Host "  .env copied to dist\Aiden" -ForegroundColor Green
-        } else {
-            Write-Host "  WARNING: .env not found at $envFile - backend will use defaults/env vars only" -ForegroundColor Yellow
-        }
+        Copy-Item -LiteralPath (Join-Path $scriptDir ".env.example") -Destination (Join-Path $distDir ".env") -Force
+        Write-Host "  Blank configuration copied to dist\Aiden; configure after installation." -ForegroundColor Green
 
         # Create aiden.cmd so typing 'aiden' in PowerShell runs debug mode.
         $cmdPath2 = Join-Path $distDir "aiden.cmd"
@@ -111,6 +106,13 @@ if (-not $SkipBackendBuild) {
         }
     }
 }
+
+# Also sanitize reused backend output when -SkipBackendBuild is supplied.
+$releaseBackend = Join-Path $scriptDir "dist\Aiden"
+if (-not (Test-Path -LiteralPath (Join-Path $releaseBackend "Aiden.exe"))) {
+    throw "Backend executable missing. Build without -SkipBackendBuild first."
+}
+Copy-Item -LiteralPath (Join-Path $scriptDir ".env.example") -Destination (Join-Path $releaseBackend ".env") -Force
 
 Invoke-Step "Build overlay installer" {
     Push-Location $overlayDir

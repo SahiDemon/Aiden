@@ -1,117 +1,40 @@
-# Aiden Overlay
+# Aiden overlay
 
-A beautiful, transparent overlay window that displays Aiden's status at the top of your screen with animated liquid wave effects.
+A transparent Electron window shows listening, thinking, and replying states with animated wave effects. It connects to the backend at `ws://localhost:5000/api/v1/ws` and launches with Aiden when its local build is available.
 
-## Features
+## Develop
 
-- 🌊 **Liquid Wave Animation** - Smooth, organic wave animations that respond to Aiden's state
-- 🎨 **Dynamic States** - Visual feedback for listening, thinking, and replying states
-- ✨ **Shimmer Text** - Elegant text animations with gradient effects
-- 🪟 **Always On Top** - Transparent, frameless window that stays visible
-- 🔌 **WebSocket Integration** - Real-time updates from Aiden backend
-- 🎯 **Branded** - Shows as "Aiden Overlay" in task manager with custom icon
+Use Node.js 22.12+ and run the Python backend separately.
 
-## Animation States
-
-### Entry/Exit Animation
-- **Entry**: Wave slides down from the top with fade-in effect
-- **Exit**: Wave slides back up with fade-out (reverse of entry)
-
-### State Animations
-- **Listening**: Gentle, organic ripple effect
-- **Thinking**: Smooth, deep breathing motion
-- **Replying**: Natural, flowing wave pattern
-
-## Setup
-
-### Install Dependencies
-```bash
-npm install
-```
-
-### Development Mode
-```bash
+```powershell
+cd overlay
+npm ci
 npm run dev
 ```
 
-This runs both the Vite dev server and Electron in watch mode.
+This starts Vite and Electron. Renderer changes reload through Vite; Electron changes require restarting the development process. Window geometry and click-through behavior live in `electron/main.ts`; status and reconnection logic live in `src/hooks/useWebSocket.ts`.
 
-### Build for Production
-```bash
-npm run build
+## Build for local use
+
+```powershell
+npm run build:app
 ```
 
-This compiles TypeScript, builds the Vite bundle, compiles Electron code, and packages the app.
+This checks TypeScript, builds the Vite renderer into `dist`, and compiles Electron into `dist-electron`. It does not package an installer. Aiden’s source launcher uses these assets with the local Electron dependency. Both output directories are ignored by Git.
 
-## Auto-Launch with Aiden
+From the repository root, `install.ps1 -IncludeOverlay` installs and builds the same source workflow.
 
-The overlay **automatically launches** when you start Aiden! 
+## Package an installer
 
-When you run `.\run_aiden.ps1`, the overlay will start automatically if it has been built. If the overlay isn't built, Aiden will skip it and show a warning in the logs.
+`npm run build` runs `build:app` followed by Electron Builder. Packaging expects the PyInstaller backend at `../dist/Aiden`. For the coordinated release workflow, use `build_release.ps1` from the repository root. Release configuration is blank; configure credentials after installing.
 
-To enable auto-launch:
-1. Build the overlay: `npm run build` (in the overlay directory)
-2. Start Aiden: `.\run_aiden.ps1`
-3. The overlay will appear at the top of your screen
-
-The overlay will automatically connect to Aiden's WebSocket server at `ws://localhost:5000/ws` and display real-time status updates.
-
-## Configuration
-
-The overlay connects to Aiden's API server on port 5000 by default. The WebSocket endpoint is configured in `src/hooks/useWebSocket.ts`.
-
-### Window Settings
-- **Width**: 1920px (centered horizontally)
-- **Height**: 200px
-- **Position**: Top center of screen
-- **Transparency**: Enabled
-- **Click-through**: Enabled (mouse events pass through)
-
-## Tech Stack
-
-- **React 19** - UI framework
-- **TypeScript** - Type safety
-- **Framer Motion** - Animation library
-- **Electron** - Desktop app framework
-- **Vite** - Build tool
-
-## Project Structure
-
-```
-overlay/
-├── src/
-│   ├── components/
-│   │   └── LiquidWave.tsx      # Main wave animation component
-│   ├── hooks/
-│   │   └── useWebSocket.ts     # WebSocket connection hook
-│   ├── App.tsx                 # Main app component
-│   └── main.tsx                # React entry point
-├── electron/
-│   ├── main.ts                 # Electron main process
-│   └── preload.ts              # Electron preload script
-└── dist-electron/              # Built Electron code (after build)
-```
-
-## Development Tips
-
-- The overlay is frameless and transparent, so it won't have standard window controls
-- Use the tray app or Ctrl+C in the terminal to stop Aiden (which will close the overlay)
-- Hot reload works in development mode - changes to React components will update live
-- Electron changes require a restart of the dev server
+`npm run package` packages existing compiled assets. Do not distribute output from the personal `build_exe.ps1` workflow without checking its copied `.env`. See [SECURITY.md](../SECURITY.md).
 
 ## Troubleshooting
 
-### Overlay doesn't start automatically
-- Make sure you've built the overlay: `npm run build`
-- Check Aiden logs for overlay startup messages
-- Verify `node_modules/.bin/electron.cmd` exists in the overlay directory
+- Missing window: compile with `build:app` and verify `node_modules/.bin/electron.cmd` exists.
+- Missing state updates: verify Aiden is running on port 5000 and the `/api/v1/ws` connection succeeds.
+- Type/build failures: use the documented Node baseline and reproduce dependencies with `npm ci`.
+- The transparent window may not have standard controls; stop Aiden through its tray/stop workflow.
 
-### Overlay doesn't show animations
-- Check browser console for WebSocket connection errors
-- Ensure Aiden's API server is running on port 5000
-- Verify the WebSocket URL in `useWebSocket.ts` matches your API server
-
-### Build errors
-- Delete `node_modules` and run `npm install` again
-- Make sure you have Node.js 18+ installed
-- Check that all dependencies are compatible
+The overlay uses React 19, TypeScript, Framer Motion, Electron, and Vite. It is separate from the React 18 dashboard.
