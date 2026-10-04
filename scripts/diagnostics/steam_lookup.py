@@ -71,7 +71,7 @@ def find_steam_appid(query: str):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python find_game.py \"cyberpunk\"")
+        print("Usage: python scripts/diagnostics/steam_lookup.py \"cyberpunk\"")
         sys.exit(1)
 
     query = " ".join(sys.argv[1:])

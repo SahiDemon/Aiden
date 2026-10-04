@@ -219,7 +219,7 @@ class APIConfig(BaseSettings):
         extra="ignore",
     )
 
-    host: str = Field(default="0.0.0.0")
+    host: str = Field(default="localhost")
     port: int = Field(default=5000)
     reload: bool = Field(default=False)
 
@@ -232,7 +232,7 @@ class ESP32Config(BaseSettings):
         extra="ignore",
     )
 
-    enabled: bool = Field(default=True)
+    enabled: bool = Field(default=False)
     ip_address: str = Field(default="192.168.1.180")
     timeout: int = Field(default=5)
     retry_attempts: int = Field(default=3)
@@ -260,7 +260,7 @@ class SpeechConfig(BaseSettings):
     # Keep a short trailing non-speaking buffer without cutting natural pauses.
     stt_non_speaking_duration: float = Field(default=0.7)
     stt_device_index: Optional[int] = Field(default=None)
-    input_device_name: str = Field(default="USB PnP Audio Device")
+    input_device_name: str = Field(default="")
     stt_energy_threshold: int = Field(default=600)
     pending_clarification_grace_seconds: int = Field(default=60)
     vosk_model_path: str = Field(default="vosk_models/vosk-model-small-en-us-0.15")
@@ -271,7 +271,7 @@ class SpeechConfig(BaseSettings):
     # Raised from 1.5 → 2.0s: longer debounce prevents rapid re-triggers
     porcupine_debounce_seconds: float = Field(default=2.0)
     porcupine_confirmation_window: float = Field(default=0.2)
-    use_porcupine: bool = Field(default=True)
+    use_porcupine: bool = Field(default=False)
     # openWakeWord — open-source, no API key, built-in Silero VAD gating
     # Set SPEECH_USE_OPENWAKEWORD=true to switch from Porcupine to openWakeWord
     use_openwakeword: bool = Field(default=False)
@@ -340,7 +340,7 @@ class UPSConfig(BaseSettings):
         extra="ignore",
     )
 
-    enabled: bool = Field(default=True)
+    enabled: bool = Field(default=False)
     info_log_path: str = Field(default=r"C:\ViewPower\log\info.log")
     alert_threshold: int = Field(default=80)
     critical_threshold: int = Field(default=50)

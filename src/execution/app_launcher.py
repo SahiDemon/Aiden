@@ -396,7 +396,7 @@ class AppLauncher:
             return None
 
     def _get_steam_library_steamapps(self) -> List[str]:
-        """Return steamapps directories using HKLM + libraryfolders.vdf (mirrors teststeamopen.py approach)."""
+        """Return Steam libraries using HKLM and libraryfolders.vdf."""
         paths: List[str] = []
         steam_root: Optional[str] = None
         # Prefer HKLM WOW6432Node InstallPath (stable for 64-bit Windows)

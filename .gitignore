@@ -37,6 +37,8 @@ logs/
 
 # Local configuration — NEVER commit these
 .env
+.env.*
+!.env.example
 config.json
 
 # Google Cloud / service account credentials — NEVER commit these
@@ -86,3 +88,13 @@ key.pem
 vosk_models/
 app_cache.json
 system_context_cache.json
+
+# Regenerable development output and optional vendor tools
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.tsbuildinfo
+overlay/dist-electron/
+tools/*.exe
+tools/ClickMonitorDDC.xml
+process_context.json

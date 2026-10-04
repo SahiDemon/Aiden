@@ -10,4 +10,5 @@ def mute_browser_only():
             session.SimpleAudioVolume.SetMute(1, None)
             print(f"🔇 Successfully muted {session.Process.name()}!")
 
-mute_browser_only()
+if __name__ == "__main__":
+    mute_browser_only()
