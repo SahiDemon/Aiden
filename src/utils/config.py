@@ -11,7 +11,7 @@ import sys
 import os
 from pathlib import Path
 from copy import deepcopy
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, Optional
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -247,17 +247,6 @@ class SpeechConfig(BaseSettings):
     )
 
     tts_provider: str = Field(default="edge")
-    stt_provider: Literal["groq", "kitten"] = Field(default="groq")
-    kitten_api_key: str = Field(default="", repr=False, exclude=True)
-    kitten_tts_model: str = Field(default="kitten-tts-2-latest")
-    kitten_tts_voice: str = Field(default="eleanor_somber_female_32")
-    kitten_tts_speed: float = Field(default=1.0, ge=0.25, le=4.0)
-    kitten_stt_model: str = Field(default="kittenasr-enhanced-preview")
-    kitten_stt_delay: Literal["minimal", "low", "medium", "high", "xhigh"] = Field(default="minimal")
-    kitten_timeout: float = Field(default=30.0, ge=5.0, le=120.0)
-    kitten_fallback: bool = Field(default=True)
-    # A/B launcher selectors take precedence over saved dashboard preferences.
-    kitten_experiment: bool = Field(default=False)
     tts_voice: str = Field(default="en-US-AvaNeural")
     tts_rate: float = Field(default=1.2)
     google_tts_credentials_path: str = Field(default="")
@@ -431,9 +420,6 @@ def _build_settings() -> Settings:
     if not settings_overrides:
         return base
     merged = _deep_merge(base.model_dump(), settings_overrides)
-    if base.speech.kitten_experiment:
-        merged["speech"]["tts_provider"] = base.speech.tts_provider
-        merged["speech"]["stt_provider"] = base.speech.stt_provider
     return Settings.model_validate(merged)
 
 

@@ -397,16 +397,7 @@ class STTEngine:
                 loop.call_soon_threadsafe(dispatch)
 
             speech_settings = getattr(getattr(self, "settings", None), "speech", None)
-            kitten_session = None
-            if getattr(speech_settings, "stt_provider", "groq") == "kitten":
-                from src.speech.kitten_client import KittenRealtime
-                try:
-                    kitten_session = KittenRealtime(speech_settings, self.sample_rate, publish_preview)
-                except Exception:
-                    if not speech_settings.kitten_fallback:
-                        raise
-                    logger.warning("Kitten realtime unavailable; using Groq with Vosk captions")
-            preview = kitten_session or LiveTranscript(
+            preview = LiveTranscript(
                 getattr(speech_settings, "vosk_model_path", ""), getattr(self, "sample_rate", 16000), publish_preview,
             )
             self._live_preview = preview
@@ -479,7 +470,7 @@ class STTEngine:
                 if not armed_task.done():
                     armed_task.cancel()
 
-            if getattr(self, "_live_preview", None) and kitten_session is None:
+            if getattr(self, "_live_preview", None):
                 self._live_preview.close()
 
             if self._stop_requested.is_set():
@@ -493,16 +484,7 @@ class STTEngine:
                     return False, None, "cancelled"
                 try:
                     transcription_started_at = loop.time()
-                    if kitten_session is not None:
-                        try:
-                            text = await kitten_session.finish()
-                        except Exception:
-                            if not speech_settings.kitten_fallback:
-                                raise
-                            logger.warning("Kitten realtime failed; transcribing captured audio with Groq")
-                            text = await self._transcribe_audio(audio.get_wav_data(), force_groq=True)
-                    else:
-                        text = await self._transcribe_audio(audio.get_wav_data())
+                    text = await self._transcribe_audio(audio.get_wav_data())
                     logger.info("[TIMING] Final transcription wait: %.0f ms", (loop.time() - transcription_started_at) * 1000)
                     if self._stop_requested.is_set():
                         logger.info("STT: Stop requested during transcription — discarding result")
@@ -546,8 +528,6 @@ class STTEngine:
         finally:
             if getattr(self, "_live_preview", None):
                 self._live_preview.close()
-                if hasattr(self._live_preview, "aclose"):
-                    await self._live_preview.aclose()
             try:
                 if restore_media and active_duck_state is not None:
                     from src.media.media_router import get_media_router
@@ -557,17 +537,8 @@ class STTEngine:
             finally:
                 self._stop_requested.clear()
 
-    async def _transcribe_audio(self, wav_bytes: bytes, *, force_groq: bool = False) -> str:
-        """Choose the authoritative recognizer for already captured audio."""
-        speech = getattr(getattr(self, "settings", None), "speech", None)
-        if not force_groq and getattr(speech, "stt_provider", "groq") == "kitten":
-            from src.speech.kitten_client import KittenClient
-            try:
-                return await KittenClient(speech).transcribe(wav_bytes)
-            except Exception:
-                if not speech.kitten_fallback:
-                    raise
-                logger.warning("Kitten upload ASR failed; using Groq")
+    async def _transcribe_audio(self, wav_bytes: bytes) -> str:
+        """Transcribe captured audio with Groq Whisper."""
         from src.ai.groq_client import get_groq_client
         return await (await get_groq_client()).transcribe_audio(wav_bytes)
 

@@ -13,7 +13,7 @@ calls. These writes can now overlap playback; this is not a measured reduction
 in total conversational latency.
 
 Restart the assistant to load the changes, then use
-`./run_kitten_experiment.ps1 -Baseline` for the Edge/Groq comparison. Keep the
+`./run_aiden.ps1 -Debug` for the Edge/Groq comparison. Keep the
 same microphone and repeat the same commands a few times. The debug logs now
 separate these stages:
 

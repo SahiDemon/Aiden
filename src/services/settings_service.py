@@ -29,7 +29,6 @@ SECRET_FIELDS = {
     ("spotify", "refresh_token"),
     ("speech", "google_tts_credentials_path"),
     ("speech", "porcupine_access_key"),
-    ("speech", "kitten_api_key"),
 }
 
 BACKEND_MODEL_OPTIONS = {

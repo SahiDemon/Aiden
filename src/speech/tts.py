@@ -16,7 +16,6 @@ import edge_tts
 import pygame
 import subprocess
 import sys
-import threading
 import time
 from contextlib import suppress
 import numpy as np
@@ -80,7 +79,6 @@ class TTSEngine:
         self.rate = self.settings.speech.tts_rate
         self.temp_dir = tempfile.gettempdir()
         self._word_timings = OrderedDict()
-        self._stream_stop = threading.Event()
         self._speech_generation = 0
         
         # Google TTS specific settings
@@ -217,16 +215,7 @@ class TTSEngine:
                 try:
                     task_type = task.get("type")
                     
-                    if task_type == "kitten_stream":
-                        self._active_stream_task = asyncio.create_task(self._play_kitten_stream(task["text"]))
-                        try:
-                            await self._active_stream_task
-                        except asyncio.CancelledError:
-                            if not self._stream_stop.is_set():
-                                raise
-                        finally:
-                            self._active_stream_task = None
-                    elif task_type == "speak":
+                    if task_type == "speak":
                         playback_generation = getattr(self, "_speech_generation", 0)
                         audio_data = task.get("data")
                         text = task.get("text")
@@ -298,12 +287,6 @@ class TTSEngine:
 
         generation = getattr(self, "_speech_generation", 0)
 
-        if self.provider == "kitten" and source == "local":
-            # Generate inside the playback queue to preserve order and start
-            # playing progressive PCM without awaiting the complete response.
-            await self.audio_queue.put({"type": "kitten_stream", "text": text})
-            return
-        
         try:
             requested_at = time.perf_counter()
             logger.info(f"TTS: Speaking: '{text[:50]}...'")
@@ -338,10 +321,7 @@ class TTSEngine:
                 generation_started_at = time.perf_counter()
                 try:
                     # Use appropriate provider
-                    if self.provider == "kitten":
-                        from src.speech.kitten_client import KittenClient
-                        audio_data = await KittenClient(self.settings.speech).speech(text)
-                    elif self.provider == "google":
+                    if self.provider == "google":
                         audio_data = await self._generate_google_speech(text)
                     elif self.provider == "edge":
                         audio_data = await self._generate_speech(text)
@@ -350,8 +330,6 @@ class TTSEngine:
                 except Exception as e:
                     if generation != getattr(self, "_speech_generation", 0):
                         return
-                    if self.provider == "kitten" and not self.settings.speech.kitten_fallback:
-                        raise
                     error_str = str(e)
                     if "getaddrinfo failed" in error_str or "Cannot connect" in error_str:
                         logger.warning(f"TTS: {self.provider.upper()} unavailable (network issue), using offline TTS")
@@ -437,10 +415,6 @@ class TTSEngine:
             logger.debug(f"Cache write failed (non-critical): {e}")
     
     def _cache_key(self, text: str) -> str:
-        # Prevent old Edge/Google audio from masking the selected experiment.
-        if self.provider == "kitten":
-            speech = self.settings.speech
-            return f"kitten:{speech.kitten_tts_model}:{speech.kitten_tts_voice}:{speech.kitten_tts_speed}:{text}"
         if self.provider == "edge":
             identity = [self.provider, getattr(self, "voice_id", ""), self._edge_rate()]
         elif self.provider == "google":
@@ -454,73 +428,6 @@ class TTSEngine:
     def _edge_rate(self) -> str:
         rate = getattr(self, "rate", 1)
         return "+25%" if rate > 1.2 else "+5%" if rate < 0.8 else "+15%"
-
-    async def _play_kitten_stream(self, text: str):
-        from src.speech.kitten_client import KittenClient, PCM_RATE
-        from src.speech.playback_events import register_playback
-        from src.utils.websocket_broadcast import broadcast_message, broadcast_voice_status
-        import sounddevice as sd
-
-        self._stream_stop.clear()
-        playback = register_playback(text, [], "local")
-        self._active_playback = playback
-        paused = self._pause_wake_word_detection()
-        started = False
-        stream = None
-        pending = bytearray()
-        position = 0.0
-        began = asyncio.get_running_loop().time()
-        try:
-            await broadcast_voice_status("processing", speaking=False, active=True)
-            async for chunk in KittenClient(self.settings.speech).speech_pcm(text):
-                if self._stream_stop.is_set():
-                    return
-                pending.extend(chunk)
-                # 350ms initial buffer tolerates progressive inference jitter.
-                threshold = int(PCM_RATE * 2 * (.35 if not started else .1))
-                if len(pending) < threshold:
-                    continue
-                if stream is None:
-                    stream = sd.RawOutputStream(samplerate=PCM_RATE, channels=1, dtype="int16")
-                    await asyncio.to_thread(stream.start)
-                    self._pcm_stream = stream
-                if not started:
-                    started = True
-                    logger.info("[TIMING] Kitten first playback: %.0f ms", (asyncio.get_running_loop().time() - began) * 1000)
-                    await broadcast_message("assistant_speaking", playback)
-                    await broadcast_voice_status("speaking", speaking=True, active=True)
-                data = bytes(pending)
-                pending.clear()
-                await asyncio.to_thread(stream.write, data)
-                position += len(data) / (PCM_RATE * 2)
-                await broadcast_message("tts_progress", {**playback, "position": position, "state": "progress"})
-            if pending and not self._stream_stop.is_set():
-                if stream is None:
-                    stream = sd.RawOutputStream(samplerate=PCM_RATE, channels=1, dtype="int16")
-                    await asyncio.to_thread(stream.start)
-                    self._pcm_stream = stream
-                    started = True
-                    await broadcast_message("assistant_speaking", playback)
-                    await broadcast_voice_status("speaking", speaking=True, active=True)
-                await asyncio.to_thread(stream.write, bytes(pending))
-        except Exception as exc:
-            logger.warning("Kitten streaming playback failed (%s)", type(exc).__name__)
-            # Never repeat a sentence already partially spoken.
-            if not started and not self._stream_stop.is_set() and self.settings.speech.kitten_fallback:
-                audio = await self._generate_speech(text)
-                await broadcast_message("assistant_speaking", playback)
-                await broadcast_voice_status("speaking", speaking=True, active=True)
-                await self._play_audio_data(audio)
-        finally:
-            if stream is not None:
-                with suppress(Exception):
-                    await asyncio.to_thread(stream.stop)
-                with suppress(Exception):
-                    await asyncio.to_thread(stream.close)
-            self._pcm_stream = None
-            self._resume_wake_word_detection(paused)
-            await broadcast_message("tts_progress", {**playback, "position": position, "state": "ended"})
-            await broadcast_voice_status("idle", speaking=False)
 
     def _remember_timings(self, audio: bytes, words: list):
         if not hasattr(self, "_word_timings"):
@@ -903,17 +810,6 @@ class TTSEngine:
         # Invalidate requests still awaiting Redis or synthesis as well as
         # stopping audio already playing. Late replies must not reappear.
         self._speech_generation = getattr(self, "_speech_generation", 0) + 1
-        if hasattr(self, "_stream_stop"):
-            self._stream_stop.set()
-        task = getattr(self, "_active_stream_task", None)
-        if task is not None and not task.done():
-            task.get_loop().call_soon_threadsafe(task.cancel)
-        stream = getattr(self, "_pcm_stream", None)
-        if stream is not None:
-            try:
-                stream.abort()
-            except Exception:
-                pass
         from src.speech.playback_events import cancel_playback
         cancel_playback(getattr(self, "_active_playback", {}).get("speech_id", ""))
         if not _ensure_mixer():
