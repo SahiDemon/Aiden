@@ -25,7 +25,9 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-_SPOTIFY_DUCK_DEADLINE_SECONDS = 0.6
+# A cold access token needs refresh + playback lookup + pause. Complete that
+# handoff before the listening cue instead of skipping the first activation.
+_SPOTIFY_DUCK_DEADLINE_SECONDS = 15.0
 # Spotify Connect can take noticeably longer to expose the Windows desktop
 # player after a cold launch or OAuth reauthorization. Poll quickly at first,
 # then back off while allowing up to 30 seconds for device registration.
@@ -70,6 +72,9 @@ class MediaRouter:
         self.jellyfin_client: JellyfinClient = get_jellyfin_client()
         self.browser_controller = get_browser_media_controller()
         self.settings = get_settings()
+        self._spotify_playback_revision = 0
+        self._listening_pause_tasks = set()
+        self._spotify_unmuted_volumes = {}
         from src.execution.app_launcher import get_app_launcher
         self.app_launcher = get_app_launcher()
 
@@ -84,6 +89,8 @@ class MediaRouter:
     ) -> Tuple[bool, dict]:
         action = action.lower()
         if target in {"youtube", "youtube_music"}:
+            if query and action in {"play", "resume", "play_pause"}:
+                action = "play_track"
             return await self.browser_controller.control(action_alias(action), target, query)
         if target == "spotify":
             return await self._handle_spotify(action, query, entity_type, volume, device_name)
@@ -95,21 +102,46 @@ class MediaRouter:
         return await self.browser_controller.control(action_alias(action), None)
 
     async def duck_for_listening(self) -> dict:
-        """Best-effort pause of active media without delaying microphone readiness."""
+        """Pause active media before capture and retain state for restoration."""
         state = {
             "spotify_was_playing": False,
+            "spotify_playback_revision": getattr(self, "_spotify_playback_revision", 0),
             "spotify_device_id": None,
             "jellyfin_session_ids": [],
             "browser_media": {"toggled_handles": []},
             "muted_app_sessions": {"muted_sessions": []},
         }
 
+        # Muting is local and immediate. Once Spotify's desktop audio is muted,
+        # its network pause can finish while capture is already running.
+        try:
+            state["muted_app_sessions"] = get_audio_session_ducker().duck_for_listening()
+        except Exception as exc:
+            logger.debug("App-session ducking skipped: %s", exc)
+        spotify_muted = any(
+            item.get("process_name", "").lower() == "spotify.exe"
+            for item in state["muted_app_sessions"].get("muted_sessions", [])
+        )
+        if spotify_muted:
+            state["pause_task"] = asyncio.create_task(self._duck_media_for_listening(state))
+            if not hasattr(self, "_listening_pause_tasks"):
+                self._listening_pause_tasks = set()
+            self._listening_pause_tasks.add(state["pause_task"])
+            state["pause_task"].add_done_callback(self._listening_pause_tasks.discard)
+            return state
+        try:
+            return await self._duck_media_for_listening(state)
+        except asyncio.CancelledError:
+            await self.restore_after_listening(state)
+            raise
+
+    async def _duck_media_for_listening(self, state: dict) -> dict:
         # Local session enumeration and the Spotify network request can run in
-        # parallel. Spotify gets a strict deadline so a slow API never leaves
-        # the wake acknowledgement waiting for several seconds.
+        # parallel. Allow a cold Spotify token to refresh before the pause.
+        # Local muting protects capture if the API is unavailable.
         loop = asyncio.get_running_loop()
         readiness_started = loop.time()
-        spotify_duck_task = asyncio.create_task(self._duck_spotify_for_listening())
+        spotify_duck_task = asyncio.create_task(self._duck_spotify_for_listening(state))
         jellyfin_duck_task = asyncio.create_task(self._duck_jellyfin_for_listening())
         browser_controller = getattr(self, "browser_controller", None)
         browser_duck_task = (
@@ -118,89 +150,96 @@ class MediaRouter:
             else None
         )
 
-        # Let the Spotify coroutine initiate its request, then perform local
-        # COM audio-session work on the owning Windows event-loop thread.
-        await asyncio.sleep(0)
         try:
-            state["muted_app_sessions"] = get_audio_session_ducker().duck_for_listening()
-        except Exception as exc:
-            logger.debug(f"App-session ducking skipped: {exc}")
-
-        try:
-            remaining = _SPOTIFY_DUCK_DEADLINE_SECONDS - (loop.time() - readiness_started)
-            if remaining <= 0:
-                spotify_duck_task.cancel()
-                try:
-                    await spotify_duck_task
-                except asyncio.CancelledError:
-                    pass
-                raise TimeoutError
-            spotify_was_playing, spotify_device_id = await asyncio.wait_for(
-                spotify_duck_task,
-                timeout=remaining,
-            )
-            state["spotify_was_playing"] = spotify_was_playing
-            state["spotify_device_id"] = spotify_device_id
-        except TimeoutError:
-            logger.debug(
-                "Spotify ducking exceeded %.1fs readiness deadline; continuing without it.",
-                _SPOTIFY_DUCK_DEADLINE_SECONDS,
-            )
-        except Exception as exc:
-            logger.debug(f"Spotify ducking skipped: {exc}")
-
-        try:
-            if jellyfin_duck_task.done():
-                state["jellyfin_session_ids"] = jellyfin_duck_task.result()
-            else:
+            # Let the Spotify coroutine initiate its request, then perform local
+            # COM audio-session work on the owning Windows event-loop thread.
+            await asyncio.sleep(0)
+            try:
                 remaining = _SPOTIFY_DUCK_DEADLINE_SECONDS - (loop.time() - readiness_started)
                 if remaining <= 0:
-                    jellyfin_duck_task.cancel()
+                    spotify_duck_task.cancel()
                     try:
-                        await jellyfin_duck_task
+                        await spotify_duck_task
                     except asyncio.CancelledError:
                         pass
                     raise TimeoutError
-                state["jellyfin_session_ids"] = await asyncio.wait_for(jellyfin_duck_task, timeout=remaining)
-        except Exception as exc:
-            logger.debug(f"Jellyfin ducking skipped: {exc}")
-
-        if browser_duck_task is not None:
-            try:
-                if browser_duck_task.done():
-                    state["browser_media"] = browser_duck_task.result()
-                else:
-                    remaining = _SPOTIFY_DUCK_DEADLINE_SECONDS - (loop.time() - readiness_started)
-                    if remaining <= 0:
-                        browser_duck_task.cancel()
-                        try:
-                            await browser_duck_task
-                        except asyncio.CancelledError:
-                            pass
-                        raise TimeoutError
-                    state["browser_media"] = await asyncio.wait_for(
-                        browser_duck_task,
-                        timeout=remaining,
-                    )
+                spotify_was_playing, spotify_device_id = await asyncio.wait_for(
+                    spotify_duck_task,
+                    timeout=remaining,
+                )
+                state["spotify_was_playing"] = spotify_was_playing
+                state["spotify_device_id"] = spotify_device_id
             except TimeoutError:
                 logger.debug(
-                    "Browser media ducking exceeded %.1fs readiness deadline; continuing without it.",
+                    "Spotify ducking exceeded %.1fs readiness deadline; continuing without it.",
                     _SPOTIFY_DUCK_DEADLINE_SECONDS,
                 )
             except Exception as exc:
-                logger.debug(f"Browser media ducking skipped: {exc}")
+                logger.debug(f"Spotify ducking skipped: {exc}")
 
-        return state
+            try:
+                if jellyfin_duck_task.done():
+                    state["jellyfin_session_ids"] = jellyfin_duck_task.result()
+                else:
+                    remaining = _SPOTIFY_DUCK_DEADLINE_SECONDS - (loop.time() - readiness_started)
+                    if remaining <= 0:
+                        jellyfin_duck_task.cancel()
+                        try:
+                            await jellyfin_duck_task
+                        except asyncio.CancelledError:
+                            pass
+                        raise TimeoutError
+                    state["jellyfin_session_ids"] = await asyncio.wait_for(jellyfin_duck_task, timeout=remaining)
+            except Exception as exc:
+                logger.debug(f"Jellyfin ducking skipped: {exc}")
 
-    async def _duck_spotify_for_listening(self) -> Tuple[bool, Optional[str]]:
+            if browser_duck_task is not None:
+                try:
+                    if browser_duck_task.done():
+                        state["browser_media"] = browser_duck_task.result()
+                    else:
+                        remaining = _SPOTIFY_DUCK_DEADLINE_SECONDS - (loop.time() - readiness_started)
+                        if remaining <= 0:
+                            browser_duck_task.cancel()
+                            try:
+                                await browser_duck_task
+                            except asyncio.CancelledError:
+                                pass
+                            raise TimeoutError
+                        state["browser_media"] = await asyncio.wait_for(
+                            browser_duck_task,
+                            timeout=remaining,
+                        )
+                except TimeoutError:
+                    logger.debug(
+                        "Browser media ducking exceeded %.1fs readiness deadline; continuing without it.",
+                        _SPOTIFY_DUCK_DEADLINE_SECONDS,
+                    )
+                except Exception as exc:
+                    logger.debug(f"Browser media ducking skipped: {exc}")
+
+            return state
+        finally:
+            # No pause worker may outlive restoration after a stopped listen.
+            tasks = [spotify_duck_task, jellyfin_duck_task]
+            if browser_duck_task is not None:
+                tasks.append(browser_duck_task)
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            for task, key in ((jellyfin_duck_task, "jellyfin_session_ids"),
+                              (browser_duck_task, "browser_media")):
+                if task is not None and not task.cancelled() and task.exception() is None:
+                    state[key] = task.result()
+
+    async def _duck_spotify_for_listening(self, state: Optional[dict] = None) -> Tuple[bool, Optional[str]]:
         """Pause active Spotify playback and return state needed for restoration."""
         if not self.spotify_client.is_enabled():
             return False, None
 
         if not self.spotify_client.has_fresh_token():
-            self.spotify_client.refresh_token_in_background()
-            logger.debug("Spotify token refresh started in background; skipping Spotify duck for this listen.")
-            return False, None
+            await self.spotify_client._ensure_token(interactive_auth=False)
 
         playback = await self.spotify_client.get_current_playback()
         if not playback or not playback.get("is_playing"):
@@ -208,6 +247,11 @@ class MediaRouter:
 
         device = playback.get("device") or {}
         device_id = device.get("id")
+        if state is not None:
+            # A cancelled HTTP request may already have paused the server.
+            # Remember originally-playing media before sending that request.
+            state["spotify_was_playing"] = True
+            state["spotify_device_id"] = device_id
         await self.spotify_client.pause(device_id=device_id)
         logger.info("Paused Spotify for STT listening window.")
         return True, device_id
@@ -256,6 +300,12 @@ class MediaRouter:
         if not state:
             return
 
+        pause_task = state.pop("pause_task", None)
+        if pause_task is not None:
+            if not pause_task.done():
+                pause_task.cancel()
+            await asyncio.gather(pause_task, return_exceptions=True)
+
         try:
             get_audio_session_ducker().restore_after_listening(
                 state.get("muted_app_sessions") or {}
@@ -282,9 +332,12 @@ class MediaRouter:
             logger.debug(f"Jellyfin restore skipped: {exc}")
 
         try:
-            if state.get("spotify_was_playing"):
+            user_changed_playback = state.get("spotify_playback_revision", 0) != getattr(self, "_spotify_playback_revision", 0)
+            if state.get("spotify_was_playing") and not user_changed_playback:
                 await self.spotify_client.play(device_id=state.get("spotify_device_id"))
                 logger.info("Resumed Spotify after STT listening window.")
+            elif user_changed_playback:
+                logger.info("Preserving user-requested Spotify playback state after listening.")
         except Exception as exc:
             logger.debug(f"Spotify restore skipped: {exc}")
 
@@ -407,6 +460,20 @@ class MediaRouter:
             logger.warning("Spotify integration requested but not configured.")
             return False, {"type": "spotify", "message": "Spotify integration is not configured."}
 
+        if action == "stop":
+            action = "pause"
+        if action not in {"get_current_track", "identify", "what_song"}:
+            # A background listening pause must finish/cancel before an explicit
+            # player command, otherwise it can undo a newly requested play.
+            pending = list(getattr(self, "_listening_pause_tasks", ()))
+            for task in pending:
+                if not task.done():
+                    task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+        if action in {"pause", "play", "resume", "play_track", "play_playlist", "play_liked_songs", "transfer"}:
+            self._spotify_playback_revision = getattr(self, "_spotify_playback_revision", 0) + 1
+
         try:
             # Get available devices
             devices = await self.spotify_client.get_devices()
@@ -510,6 +577,20 @@ class MediaRouter:
                 device_id = await self._activate_device(device, play=False)
                 await self.spotify_client.set_volume(volume, device_id=device_id)
                 return True, {"type": "spotify", "message": f"Spotify volume set to {volume}%."}
+
+            if action in {"mute", "unmute"}:
+                saved_volumes = getattr(self, "_spotify_unmuted_volumes", {})
+                self._spotify_unmuted_volumes = saved_volumes
+                previous_volume = device.get("volume_percent") if device else None
+                if action == "mute":
+                    if previous_volume is not None and previous_volume > 0:
+                        saved_volumes[device_id] = previous_volume
+                    requested_volume = 0
+                else:
+                    requested_volume = saved_volumes.get(device_id, previous_volume or 50)
+                device_id = await self._activate_device(device, play=False)
+                await self.spotify_client.set_volume(requested_volume, device_id=device_id)
+                return True, {"type": "spotify", "message": f"Spotify {'muted' if action == 'mute' else 'unmuted'}."}
 
             if action == "play_track" and query:
                 device_id = await self._activate_device(device, play=False)

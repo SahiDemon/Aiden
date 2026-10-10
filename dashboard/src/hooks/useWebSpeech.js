@@ -1,16 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
-export const useWebSpeech = ({ onResult, onEnd, onError }) => {
+export const useWebSpeech = ({ onResult, onEnd, onError, onStart }) => {
   const [isSupported, setIsSupported] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recognition, setRecognition] = useState(null);
 
-  const callbacksRef = useRef({ onResult, onEnd, onError });
+  const callbacksRef = useRef({ onResult, onEnd, onError, onStart });
   
   // Keep callbacks fresh without triggering effect
   useEffect(() => {
     callbacksRef.current = { onResult, onEnd, onError };
-  }, [onResult, onEnd, onError]);
+  }, [onResult, onEnd, onError, onStart]);
 
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -23,6 +23,7 @@ export const useWebSpeech = ({ onResult, onEnd, onError }) => {
 
       rec.onstart = () => {
         setIsRecording(true);
+        callbacksRef.current.onStart?.();
       };
 
       rec.onresult = (event) => {
@@ -57,6 +58,10 @@ export const useWebSpeech = ({ onResult, onEnd, onError }) => {
       
       return () => {
         // Cleanup the old instance when unmounting
+        rec.onstart = null;
+        rec.onresult = null;
+        rec.onerror = null;
+        rec.onend = null;
         try { rec.abort(); } catch(e) {}
       }
     }
@@ -68,6 +73,7 @@ export const useWebSpeech = ({ onResult, onEnd, onError }) => {
         recognition.start();
       } catch (e) {
         console.error('Error starting recognition:', e);
+        callbacksRef.current.onError?.('could not start recording');
       }
     }
   }, [recognition, isRecording]);

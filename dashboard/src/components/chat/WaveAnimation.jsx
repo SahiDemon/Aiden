@@ -1,146 +1,62 @@
 import React, { useEffect, useRef } from 'react'
 
-const WaveAnimation = ({ isActive, isSpeaking }) => {
+// A bounded canvas keeps voice motion inexpensive on phones and large displays.
+export default function WaveAnimation({ isActive, isSpeaking, isProcessing = false }) {
   const canvasRef = useRef(null)
-  const animationRef = useRef(null)
-  const phaseRef = useRef(0)
-  const transitionRef = useRef({ waves: 4, amplitude: 20, opacity: 0.4, baseY: 0 })
-
+  const stateRef = useRef({ isActive, isSpeaking, isProcessing })
+  useEffect(() => { stateRef.current = { isActive, isSpeaking, isProcessing } }, [isActive, isSpeaking, isProcessing])
   useEffect(() => {
     const canvas = canvasRef.current
-    if (!canvas) return
-
-    const ctx = canvas.getContext('2d')
-    
-    // Resize canvas to full viewport
-    const resizeCanvas = () => {
-      canvas.width = window.innerWidth
-      canvas.height = window.innerHeight
-      transitionRef.current.baseY = canvas.height - 120
+    const context = canvas.getContext('2d')
+    if (!context) return
+    const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
+    let frame, width = 0, height = 0, phase = 0, previous = 0, amplitude = 16
+    let visible = true
+    let waveColor = getComputedStyle(canvas).getPropertyValue('--amber').trim() || '#d3b071'
+    const resize = () => {
+      const bounds = canvas.getBoundingClientRect()
+      width = bounds.width; height = bounds.height
+      const ratio = Math.min(window.devicePixelRatio || 1, 1.5)
+      canvas.width = width * ratio; canvas.height = height * ratio
+      context.setTransform(ratio, 0, 0, ratio, 0, 0)
     }
-    
-    resizeCanvas()
-    window.addEventListener('resize', resizeCanvas)
-
-    const draw = () => {
-      const width = canvas.width
-      const height = canvas.height
-      
-      ctx.clearRect(0, 0, width, height)
-
-      // Define target values based on state
-      let targetWaves, targetAmplitude, targetOpacity, targetBaseY, targetFrequency, targetSpeed
-      
-      if (!isActive && !isSpeaking) {
-        // Idle state - subtle, calm waves at bottom
-        targetWaves = 3
-        targetAmplitude = 12
-        targetOpacity = 0.25
-        targetBaseY = height - 100
-        targetFrequency = 0.003
-        targetSpeed = 0.006
-      } else if (isActive && !isSpeaking) {
-        // Listening state - moderate waves
-        targetWaves = 8
-        targetAmplitude = 50
-        targetOpacity = 0.4
-        targetBaseY = height - 200
-        targetFrequency = 0.005
-        targetSpeed = 0.06
-      } else {
-        // Speaking state - gentle waves (toned down)
-        targetWaves = 10
-        targetAmplitude = 40
-        targetOpacity = 0.35
-        targetBaseY = height - 180
-        targetFrequency = 0.005
-        targetSpeed = 0.05
-      }
-
-      // Smoothly transition to target values
-      const transition = transitionRef.current
-      const lerpSpeed = 0.08 // Increased for faster, smoother transitions
-      
-      transition.waves += (targetWaves - transition.waves) * lerpSpeed
-      transition.amplitude += (targetAmplitude - transition.amplitude) * lerpSpeed
-      transition.opacity += (targetOpacity - transition.opacity) * lerpSpeed
-      transition.baseY += (targetBaseY - transition.baseY) * lerpSpeed
-      
-      const waves = Math.round(transition.waves)
-      const baseAmplitude = transition.amplitude
-      const baseOpacity = transition.opacity
-      const baseY = transition.baseY
-
-      // Draw waves
-      for (let i = 0; i < waves; i++) {
-        ctx.beginPath()
-        
-        for (let x = 0; x <= width; x += 2) {
-          const offset = i * Math.PI / (waves / 2)
-          const amplitude = baseAmplitude * (1 - i / (waves * 1.5))
-          
-          // Simpler wave calculation for smoother effect
-          const y = baseY + 
-            Math.sin(x * targetFrequency + phaseRef.current + offset) * amplitude +
-            Math.sin(x * targetFrequency * 1.5 + phaseRef.current * 0.8) * (amplitude * 0.4)
-          
-          if (x === 0) {
-            ctx.moveTo(x, y)
-          } else {
-            ctx.lineTo(x, y)
-          }
+    const draw = time => {
+      if (!visible || document.hidden) { frame = null; return }
+      frame = requestAnimationFrame(draw)
+      if (time - previous < 33) return
+      const elapsed = Math.min(time - previous, 80) / 1000
+      previous = time
+      const state = stateRef.current
+      const target = state.isActive ? 57 : state.isSpeaking ? 44 : state.isProcessing ? 25 : 17
+      amplitude += (target - amplitude) * .08
+      phase += elapsed * (state.isActive ? 2.5 : state.isSpeaking ? 1.9 : .55)
+      context.clearRect(0, 0, width, height)
+      for (let line = 0; line < 7; line++) {
+        context.beginPath()
+        for (let x = 0; x <= width; x += 4) {
+          const envelope = Math.pow(Math.sin(Math.PI * x / width), 1.8)
+          const y = height / 2 + envelope * amplitude * (Math.sin(x / width * 12 + phase + line * .32) + .4 * Math.sin(x / width * 21 - phase * .7 + line * .22))
+          if (x === 0) context.moveTo(x, y); else context.lineTo(x, y)
         }
-
-        // Color based on state
-        let baseColor
-        const opacity = baseOpacity * (1 - i / (waves * 2))
-        
-        if (isActive && !isSpeaking) {
-          // Emerald/cyan gradient for listening
-          const hue = 160 + i * 10
-          baseColor = `hsla(${hue}, 70%, 55%, ${opacity})`
-        } else if (isSpeaking) {
-          // Subtle blue/purple gradient for speaking (toned down)
-          const hue = 200 + i * 15
-          baseColor = `hsla(${hue}, 65%, 60%, ${opacity})`
-        } else {
-          // Idle blue waves
-          const hue = 210 + i * 20
-          baseColor = `hsla(${hue}, 70%, 60%, ${opacity})`
-        }
-        
-        ctx.strokeStyle = baseColor
-        ctx.lineWidth = 2.5 - i * 0.15
-        ctx.shadowBlur = 15
-        ctx.shadowColor = baseColor
-        ctx.stroke()
+        context.strokeStyle = waveColor
+        context.globalAlpha = .65 - line * .07
+        context.lineWidth = line === 0 ? 1.7 : 1
+        context.stroke()
       }
-
-      phaseRef.current += targetSpeed
-
-      animationRef.current = requestAnimationFrame(draw)
+      if (motionQuery.matches) { cancelAnimationFrame(frame); frame = null }
     }
-
-    draw()
-
-    return () => {
-      window.removeEventListener('resize', resizeCanvas)
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current)
-      }
-    }
-  }, [isActive, isSpeaking])
-
-  return (
-    <canvas
-      ref={canvasRef}
-      className="absolute inset-0 w-full h-full pointer-events-none"
-      style={{ 
-        imageRendering: 'crisp-edges',
-        zIndex: 1
-      }}
-    />
-  )
+    const start = () => { if (!frame && visible && !document.hidden) frame = requestAnimationFrame(draw) }
+    const visibility = () => { if (document.hidden) { cancelAnimationFrame(frame); frame = null } else start() }
+    const observer = new ResizeObserver(() => { resize(); start() })
+    observer.observe(canvas)
+    const intersection = new IntersectionObserver(entries => { visible = entries[0].isIntersecting; if (visible) start(); else { cancelAnimationFrame(frame); frame = null } })
+    intersection.observe(canvas)
+    document.addEventListener('visibilitychange', visibility)
+    motionQuery.addEventListener('change', start)
+    const themeChanged = () => { waveColor = getComputedStyle(canvas).getPropertyValue('--amber').trim() || '#d3b071'; start() }
+    window.addEventListener('aiden-theme-change', themeChanged)
+    resize(); start()
+    return () => { window.removeEventListener('aiden-theme-change', themeChanged); cancelAnimationFrame(frame); observer.disconnect(); intersection.disconnect(); document.removeEventListener('visibilitychange', visibility); motionQuery.removeEventListener('change', start) }
+  }, [])
+  return <canvas ref={canvasRef} className="wave-canvas" aria-hidden="true" />
 }
-
-export default WaveAnimation

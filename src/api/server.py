@@ -48,6 +48,7 @@ class MessageRequest(BaseModel):
     message: str
     input_type: str = "text"
     source: str = "local"
+    client_message_id: Optional[str] = None
 
 class CommandRequest(BaseModel):
     command_type: str
@@ -314,7 +315,9 @@ async def send_message(request: MessageRequest):
     try:
         from src.core.assistant import get_assistant
         assistant = await get_assistant()
-        response_text = await assistant.handle_text_message(request.message, source=request.source)
+        source = "web_text" if request.source == "web" and request.input_type == "text" else request.source
+        options = {"client_message_id": request.client_message_id} if request.client_message_id else {}
+        response_text = await assistant.handle_text_message(request.message, source=source, **options)
         return {
             "success": True,
             "message": "Message processed",
@@ -324,6 +327,16 @@ async def send_message(request: MessageRequest):
     except Exception as e:
         logger.error(f"Error processing message: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/v1/conversation/new")
+async def new_conversation():
+    """Start a fresh dashboard conversation without activating the PC microphone."""
+    from src.core.assistant import get_assistant
+    assistant = await get_assistant()
+    await assistant.context_manager.end_conversation()
+    conversation_id = await assistant.context_manager.start_conversation(mode="text")
+    return {"success": True, "conversation_id": conversation_id}
+
 
 @app.get("/api/v1/conversation/history")
 async def get_conversation_history(limit: int = 50):
@@ -582,16 +595,37 @@ async def get_conversation(conversation_id: str):
         
         if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
-        
+        messages = await db.get_conversation_messages(conversation_id)
         return {
             "success": True,
-            "conversation": conversation.to_dict()
+            "conversation": conversation.to_dict(),
+            "messages": [message.to_dict() for message in messages],
         }
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error getting conversation: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/v1/conversations/{conversation_id}/resume")
+async def resume_conversation(conversation_id: str):
+    """Restore saved chat context before the dashboard sends a follow-up."""
+    db = await get_db_client()
+    conversation = await db.get_conversation(conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    from src.core.assistant import get_assistant
+    assistant = await get_assistant()
+    manager = assistant.context_manager
+    context = await manager.get_context(conversation_id)
+    messages = await db.get_conversation_messages(conversation_id)
+    context["conversation_id"] = conversation_id
+    context["history"] = [{"role": message.role, "content": message.content} for message in messages[-50:]]
+    redis = await get_redis_client()
+    await redis.save_context(conversation_id, context)
+    manager.current_conversation_id = conversation_id
+    return {"success": True, "messages": [message.to_dict() for message in messages]}
+
 
 @app.delete("/api/v1/conversations/{conversation_id}")
 async def delete_conversation(conversation_id: str):
@@ -815,6 +849,8 @@ async def websocket_endpoint(websocket: WebSocket):
     Sends status updates, voice status, command execution, etc.
     """
     client_id = await manager.connect(websocket)
+    preview_started = False
+    last_preview = 0.0
     
     try:
         # Send initial connection message
@@ -841,6 +877,36 @@ async def websocket_endpoint(websocket: WebSocket):
                         # Client is pinging us - respond with pong
                         await manager.send_to_client(client_id, {"type": "pong"})
                     
+                    case "voice_transcript":
+                        import time
+                        payload = data.get("data", {})
+                        if not isinstance(payload, dict):
+                            continue
+                        text = payload.get("text", "")
+                        stage = payload.get("stage", "partial")
+                        if not isinstance(text, str) or len(text) > 2000 or stage not in ("start", "partial", "final", "cancel"):
+                            continue
+                        now = time.monotonic()
+                        if stage == "partial" and now - last_preview < .08:
+                            continue
+                        if stage == "partial":
+                            last_preview = now
+                        if stage == "start":
+                            preview_started = True
+                            await broadcast_update("voice_activity", {"status": "listening", "speaking": False, "active": True, "source": "web"})
+                        elif not preview_started:
+                            continue
+                        await broadcast_update("voice_transcript", {"text": text, "source": "web"})
+                        if stage in ("final", "cancel"):
+                            preview_started = False
+                            await broadcast_update("voice_activity", {"status": "processing" if stage == "final" else "idle", "active": stage == "final", "speaking": False, "source": "web"})
+
+                    case "tts_playback":
+                        from src.speech.playback_events import playback_event
+                        event = playback_event(client_id, data.get("data", {}))
+                        if event:
+                            await broadcast_update("tts_progress", event)
+
                     case "subscribe":
                         # Client wants to subscribe to specific events
                         pass
@@ -859,6 +925,10 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.error(f"WebSocket error with client {client_id}: {e}")
     
     finally:
+        from src.speech.playback_events import disconnect_playback
+        disconnect_playback(client_id)
+        if preview_started:
+            await broadcast_update("voice_activity", {"status": "idle", "speaking": False, "active": False, "source": "web"})
         # Always disconnect when exiting
         await manager.disconnect(client_id)
         logger.info(f"WebSocket client {client_id} cleanup complete.")

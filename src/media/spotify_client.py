@@ -39,6 +39,7 @@ class SpotifyClient:
         self._token_expires_at: float = 0
         self._token_lock = asyncio.Lock()
         self._background_refresh_task: Optional[asyncio.Task] = None
+        self._rejected_refresh_token: Optional[str] = None
 
     # ------------------------------------------------------------------ Helpers
     def is_enabled(self) -> bool:
@@ -70,6 +71,8 @@ class SpotifyClient:
 
         if self.has_fresh_token():
             return
+        if self._rejected_refresh_token == self.settings.spotify.refresh_token:
+            return
 
         if self._background_refresh_task and not self._background_refresh_task.done():
             return
@@ -93,6 +96,12 @@ class SpotifyClient:
         if not self._client:
             raise SpotifyError("httpx is required for Spotify integration.")
 
+        if cfg.refresh_token and self._rejected_refresh_token == cfg.refresh_token:
+            if interactive_auth:
+                await self._interactive_auth_flow()
+                return
+            raise SpotifyError("Spotify authorization expired or was revoked. Reconnect Spotify.")
+
         if not cfg.refresh_token:
             if interactive_auth:
                 logger.info("Spotify refresh token missing. Triggering interactive auth flow.")
@@ -110,23 +119,50 @@ class SpotifyClient:
         try:
             response = await self._client.post(self.TOKEN_URL, data=data, auth=auth)
             response.raise_for_status()
-        except httpx.HTTPError as exc:
-            if interactive_auth:
-                logger.warning(f"Spotify token refresh failed: {exc}. Trying interactive auth.")
-                try:
+        except httpx.HTTPStatusError as exc:
+            try:
+                error_code = exc.response.json().get("error")
+            except (ValueError, AttributeError):
+                error_code = None
+            if error_code == "invalid_grant":
+                self._rejected_refresh_token = cfg.refresh_token
+                message = "Spotify authorization expired or was revoked. Reconnect Spotify."
+                logger.warning(message)
+                if interactive_auth:
                     await self._interactive_auth_flow()
                     return
-                except Exception as inner_exc:
-                    raise SpotifyError("Failed to refresh token and interactive auth failed.") from inner_exc
+            elif error_code == "invalid_client":
+                message = "Spotify rejected the client credentials. Check SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET."
+                logger.error(message)
             else:
-                logger.error(f"Spotify token refresh failed: {exc}")
-                raise SpotifyError("Failed to refresh Spotify token.") from exc
+                message = f"Spotify token endpoint returned HTTP {exc.response.status_code}. Try again later."
+                logger.warning(message)
+            raise SpotifyError(message) from exc
+        except httpx.HTTPError as exc:
+            # Network failures do not mean consent has expired. Opening an
+            # authorization browser here cannot repair a connection outage.
+            raise SpotifyError("Could not reach Spotify to refresh the token. Try again later.") from exc
 
         payload = response.json()
+        self._apply_token_payload(payload)
+        logger.info("Spotify access token refreshed.")
+
+    def _apply_token_payload(self, payload: Dict[str, Any]) -> None:
+        """Apply tokens and persist rotation without ever logging credentials."""
         self._access_token = payload["access_token"]
         expires_in = payload.get("expires_in", 3600)
         self._token_expires_at = time.time() + expires_in
-        logger.info("Spotify access token refreshed.")
+        new_refresh = payload.get("refresh_token")
+        if new_refresh and new_refresh != self.settings.spotify.refresh_token:
+            self.settings.spotify.refresh_token = new_refresh
+            try:
+                from dotenv import set_key
+                from src.utils.config import _ENV_FILE
+                set_key(str(_ENV_FILE), "SPOTIFY_REFRESH_TOKEN", new_refresh)
+                logger.info("Saved replacement Spotify refresh token to .env")
+            except Exception:
+                logger.error("Could not save replacement Spotify refresh token to .env")
+        self._rejected_refresh_token = None
 
     async def _interactive_auth_flow(self) -> None:
         """Perform interactive OAuth flow, opening browser and hosting local callback."""
@@ -135,13 +171,6 @@ class SpotifyClient:
         import urllib.parse
         import threading
         import http.server
-        try:
-            from dotenv import set_key
-        except ImportError:
-            set_key = None
-            
-        from src.utils.config import _ENV_FILE
-
         cfg = self.settings.spotify
         if not cfg.client_id or not cfg.client_secret:
             await get_tts_engine().speak("I cannot connect to Spotify because the client ID or secret is missing from your config.")
@@ -165,8 +194,10 @@ class SpotifyClient:
                 if code:
                     auth_code_result.append(code)
                     self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
                     self.end_headers()
-                    self.wfile.write(b"<html><body><h1>Authorization successful!</h1><p>You can close this window and Aiden will resume.</p><script>setTimeout(window.close, 3000);</script></body></html>")
+                    self.wfile.write(b"<!doctype html><html><head><title>Spotify connected</title></head><body><h1>Spotify authorization received</h1><p>This tab will close automatically. If it stays open, you can close it.</p><script>history.replaceState(null, '', '/callback');setTimeout(() => window.close(), 500);</script></body></html>")
                 else:
                     self.send_response(400)
                     self.end_headers()
@@ -232,18 +263,7 @@ class SpotifyClient:
         token_response.raise_for_status()
         data = token_response.json()
         
-        new_refresh = data.get("refresh_token")
-        if new_refresh:
-            cfg.refresh_token = new_refresh
-            if set_key:
-                set_key(_ENV_FILE, "SPOTIFY_REFRESH_TOKEN", new_refresh)
-                logger.info("Saved new Spotify refresh token to .env")
-            else:
-                logger.warning("python-dotenv not installed; cannot save refresh token to .env")
-                
-        self._access_token = data["access_token"]
-        expires_in = data.get("expires_in", 3600)
-        self._token_expires_at = time.time() + expires_in
+        self._apply_token_payload(data)
         
         await get_tts_engine().speak("Got it! Re-authorizing and playing your music.")
         logger.info("Interactive Spotify authorization complete.")

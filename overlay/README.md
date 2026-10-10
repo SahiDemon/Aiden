@@ -2,6 +2,12 @@
 
 A transparent Electron window shows listening, thinking, and replying states with animated wave effects. It connects to the backend at `ws://localhost:5000/api/v1/ws` and launches with Aiden when its local build is available.
 
+The overlay covers the primary monitor's full bounds, including its corners. A transparent edge glow surrounds the desktop, with a compact voice capsule at the top. Listening uses blue/cyan, thinking uses indigo, and speaking uses cyan/teal. The window remains non-focusable and passes clicks through. Display/DPI changes refit its bounds. Only active voice sessions show the glow; typed chat remains silent and does not activate it. Motion uses opacity and transform, with a static reduced-motion alternative.
+
+For a safe browser preview, run `npm run dev:vite` and open `http://localhost:5173/?preview`. The development-only controls switch visual states without sending assistant commands. Production builds exclude this preview.
+
+`npm run test` verifies the voice lifecycle with simulated WebSocket and Electron IPC events: listening → capture handoff → thinking → speaking → idle, cancellation, fresh-turn text clearing, silent text chat, disconnect/reconnect, and cleanup. Capture-end idle stays in Thinking until the reply is ready; playback-end idle clears and hides the overlay. An explicit `active:false` always ends the session.
+
 ## Develop
 
 Use Node.js 22.12+ and run the Python backend separately.
@@ -38,3 +44,11 @@ From the repository root, `install.ps1 -IncludeOverlay` installs and builds the 
 - The transparent window may not have standard controls; stop Aiden through its tray/stop workflow.
 
 The overlay uses React 19, TypeScript, Framer Motion, Electron, and Vite. It is separate from the React 18 dashboard.
+
+
+### Live voice captions
+PC microphone capture now feeds a bounded, display-only Vosk worker from the same cleaned PCM frames used by Whisper. No second microphone stream is opened. Whisper remains authoritative for commands; interim captions may change. If the local Vosk model is missing, final recognition still works.
+
+Browser voice mode forwards Web Speech interim captions to the desktop overlay. Dictation in text mode remains silent and does not open the overlay.
+
+Edge TTS supplies word boundaries with its audio. Boundaries are cached by audio hash and the current word follows pygame's playback position on PC or the browser Audio.currentTime on the device. Browser playback IDs reject stale events and permit autoplay retries. Long captions advance to keep the spoken word visible. Google/offline audio keeps full captions when no word boundaries are available; no fabricated timing is used. Restart Aiden and its overlay after rebuilding; reload dashboard tabs.

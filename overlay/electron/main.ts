@@ -87,20 +87,11 @@ function hideOverlay() {
 }
 
 function createWindow() {
-    const { width: screenWidth } = screen.getPrimaryDisplay().workAreaSize;
-    const maxNotchWidth = 1920;
-    const notchHeight = 200;
-    
-    // Ensure window width never exceeds screen width
-    const windowWidth = Math.min(maxNotchWidth, screenWidth);
-    // Center horizontally, but clamp to 0 to prevent negative x-position
-    const xPosition = Math.max(0, (screenWidth - windowWidth) / 2);
+    // Use display bounds (including the taskbar), in Electron's logical pixels.
+    const bounds = screen.getPrimaryDisplay().bounds;
 
     win = new BrowserWindow({
-        width: windowWidth,
-        height: notchHeight,
-        x: xPosition, 
-        y: 0, 
+        ...bounds,
         title: 'Aiden Overlay',
         icon: path.join(process.env.VITE_PUBLIC as string, 'icon.ico'),
         transparent: true,
@@ -161,6 +152,14 @@ app.on('activate', () => {
 app.whenReady().then(() => {
     startBackend();
     createWindow();
+    const fitDisplay = () => {
+        if (win && !win.isDestroyed()) {
+            win.setBounds(screen.getPrimaryDisplay().bounds);
+        }
+    };
+    screen.on('display-metrics-changed', fitDisplay);
+    screen.on('display-added', fitDisplay);
+    screen.on('display-removed', fitDisplay);
 });
 
 app.on('before-quit', () => {

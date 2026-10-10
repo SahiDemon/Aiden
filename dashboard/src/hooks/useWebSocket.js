@@ -15,6 +15,77 @@ export const useWebSocket = (url = getWsUrl()) => {
   const [deviceUpdates, setDeviceUpdates] = useState(null)
   const [speakingText, setSpeakingText] = useState('')
   const [timerUpdates, setTimerUpdates] = useState(null)
+  const [audioBlocked, setAudioBlocked] = useState(false)
+  const [audioEnabled, setAudioEnabled] = useState(true)
+  const audioEnabledRef = useRef(true)
+  const audioRef = useRef(null)
+  const audioQueueRef = useRef([])
+
+  const playNextAudio = useCallback(() => {
+    if (audioRef.current || !audioEnabledRef.current) return
+    const item = audioQueueRef.current.shift()
+    if (!item) return
+    const audio = new Audio(item.audio_uri)
+    const report = state => {
+      if (item.source === 'web' && item.speech_id && wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'tts_playback', data: {
+          speech_id: item.speech_id, state, position: audio.currentTime || 0,
+        } }))
+      }
+    }
+    let clock = null
+    const stopClock = () => { if (clock !== null) { clearInterval(clock); clock = null } }
+    audio.reportEnd = () => { stopClock(); report('ended') }
+    audio.onpause = () => {
+      stopClock()
+      if (audioRef.current === audio) {
+        report('blocked')
+        setVoiceActivity(prev => ({ ...prev, status: 'idle', speaking: false }))
+      }
+    }
+    audio.ontimeupdate = () => report('progress')
+    audioRef.current = audio
+    audio.onplaying = () => {
+      report('playing')
+      stopClock()
+      if (item.source === 'web' && item.speech_id) clock = setInterval(() => report('progress'), 50)
+      setAudioBlocked(false)
+      setVoiceActivity(prev => ({ ...prev, status: 'speaking', speaking: true }))
+    }
+    const finish = () => {
+      if (audioRef.current !== audio) return
+      stopClock()
+      report('ended')
+      audioRef.current = null
+      setAudioBlocked(false)
+      setVoiceActivity(prev => ({ ...prev, status: 'idle', speaking: false }))
+      playNextAudio()
+    }
+    audio.onended = finish
+    audio.onerror = finish
+    audio.play().catch(() => {
+      if (audioRef.current !== audio) return
+      report('blocked')
+      setAudioBlocked(true)
+      setVoiceActivity(prev => ({ ...prev, status: 'idle', speaking: false }))
+    })
+  }, [])
+  const resumeAudio = useCallback(() => {
+    audioRef.current?.play().then(() => setAudioBlocked(false)).catch(() => setAudioBlocked(true))
+  }, [])
+  const toggleAudio = useCallback(() => {
+    const enabled = !audioEnabledRef.current
+    audioEnabledRef.current = enabled
+    setAudioEnabled(enabled)
+    if (!enabled) {
+      audioRef.current?.reportEnd?.()
+      audioRef.current?.pause()
+      audioRef.current = null
+      audioQueueRef.current = []
+      setAudioBlocked(false)
+      setVoiceActivity(prev => ({ ...prev, status: 'idle', speaking: false }))
+    }
+  }, [])
   
   const wsRef = useRef(null)
   const reconnectTimeoutRef = useRef(null)
@@ -31,26 +102,22 @@ export const useWebSocket = (url = getWsUrl()) => {
   const connect = useCallback(() => {
     // Don't connect if we shouldn't reconnect (component unmounted)
     if (!shouldReconnectRef.current) {
-      console.log('[WebSocket] Component unmounted, skipping connection')
       return
     }
     
     // Prevent multiple simultaneous connection attempts
     if (isConnectingRef.current) {
-      console.log('[WebSocket] Already connecting, skipping...')
       return
     }
     
     // Skip if already connected
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      console.log('[WebSocket] Already connected, skipping...')
       return
     }
     
     // Close existing connection if any
     if (wsRef.current) {
       try {
-        console.log('[WebSocket] Closing existing connection before creating new one')
         wsRef.current.onclose = null // Prevent reconnect on manual close
         wsRef.current.close()
       } catch (e) {
@@ -65,20 +132,17 @@ export const useWebSocket = (url = getWsUrl()) => {
       const ws = new WebSocket(urlRef.current)
       
       ws.onopen = () => {
-        console.log('WebSocket connected')
         setConnected(true)
         reconnectAttemptsRef.current = 0
         isConnectingRef.current = false
       }
 
       ws.onclose = () => {
-        console.log('WebSocket disconnected')
         setConnected(false)
         isConnectingRef.current = false
         
         // Only reconnect if component is still mounted
         if (!shouldReconnectRef.current) {
-          console.log('[WebSocket] Component unmounted, not reconnecting')
           return
         }
         
@@ -87,7 +151,6 @@ export const useWebSocket = (url = getWsUrl()) => {
         reconnectAttemptsRef.current += 1
         
         reconnectTimeoutRef.current = setTimeout(() => {
-          console.log(`Reconnecting... (attempt ${reconnectAttemptsRef.current})`)
           connect()
         }, delay)
       }
@@ -100,15 +163,12 @@ export const useWebSocket = (url = getWsUrl()) => {
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data)
-          // console.log('[WebSocket] Received:', data.type) // Removed raw data log to prevent memory leaks
 
           switch (data.type) {
             case 'connected':
-              console.log('Connected to Aiden API')
               break
             
             case 'message':
-              console.log('[WebSocket] New message received')
               setMessages(prev => {
                 const newMessages = [...prev, data.data]
                 return newMessages
@@ -116,8 +176,9 @@ export const useWebSocket = (url = getWsUrl()) => {
               break
             
             case 'voice_activity':
-              // console.log('[WebSocket] Voice activity:', data.data.status) // Removed to prevent console spam
-              setVoiceActivity(data.data)
+              setVoiceActivity(audioRef.current && !audioRef.current.paused
+                ? { ...data.data, status: 'speaking', speaking: true }
+                : data.data)
               break
             
             case 'system_metric':
@@ -131,7 +192,6 @@ export const useWebSocket = (url = getWsUrl()) => {
             
             case 'voice_activate':
               // Voice activation triggered from dashboard
-              console.log('Voice activation triggered')
               setVoiceActivity(prev => ({ ...prev, status: 'listening' }))
               break
             
@@ -142,30 +202,13 @@ export const useWebSocket = (url = getWsUrl()) => {
             
             case 'timer_update':
               // Timer state changed (created, cancelled, completed)
-              console.log('[WebSocket] Timer update:', data.data)
               setTimerUpdates(data.data)
               break
               
             case 'tts_audio':
-              // Aiden's voice audio payload
-              if (data.data?.audio_uri) {
-                try {
-                  const audio = new Audio(data.data.audio_uri);
-                  
-                  // Force speaking state on the web client while audio is actually playing
-                  setVoiceActivity(prev => ({ ...prev, status: 'speaking', speaking: true }));
-                  
-                  audio.onended = () => {
-                    setVoiceActivity(prev => ({ ...prev, status: 'idle', speaking: false }));
-                  };
-                  
-                  audio.play().catch(e => {
-                    console.error('[Audio] Playback failed:', e);
-                    setVoiceActivity(prev => ({ ...prev, status: 'idle', speaking: false }));
-                  });
-                } catch (e) {
-                  console.error('[Audio] Error creating audio element:', e);
-                }
+              if (data.data?.audio_uri && audioEnabledRef.current) {
+                audioQueueRef.current.push(data.data)
+                playNextAudio()
               }
               break
 
@@ -180,7 +223,6 @@ export const useWebSocket = (url = getWsUrl()) => {
               break
               
             default:
-              console.log('[WebSocket] Unknown message type:', data.type, data)
           }
         } catch (error) {
           console.error('Error parsing WebSocket message:', error)
@@ -192,10 +234,9 @@ export const useWebSocket = (url = getWsUrl()) => {
       console.error('Error creating WebSocket:', error)
       isConnectingRef.current = false
     }
-  }, []) // No dependencies - stable callback
+  }, [playNextAudio])
 
   useEffect(() => {
-    console.log('[WebSocket] Initializing connection...')
     shouldReconnectRef.current = true
     connect()
 
@@ -207,8 +248,11 @@ export const useWebSocket = (url = getWsUrl()) => {
     }, 30000)
 
     return () => {
-      console.log('[WebSocket] Cleanup: closing connection and preventing reconnects')
       shouldReconnectRef.current = false
+      audioRef.current?.reportEnd?.()
+      audioRef.current?.pause()
+      audioRef.current = null
+      audioQueueRef.current = []
       clearInterval(heartbeat)
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current)
@@ -242,9 +286,11 @@ export const useWebSocket = (url = getWsUrl()) => {
     speakingText,
     timerUpdates,
     sendMessage,
+    audioBlocked,
+    resumeAudio,
+    audioEnabled,
+    toggleAudio,
   }
 }
 
 export default useWebSocket
-
-

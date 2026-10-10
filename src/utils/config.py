@@ -256,7 +256,9 @@ class SpeechConfig(BaseSettings):
     stt_language: str = Field(default="en-US")
     stt_timeout: int = Field(default=5)
     # How long silence must last before speech is considered done.
-    stt_pause_threshold: float = Field(default=0.9)
+    stt_pause_threshold: float = Field(default=1.5)
+    # Never end a capture immediately after the cue, even if a noise triggers VAD.
+    stt_min_listening_duration: float = Field(default=3.0, ge=0.0, le=10.0)
     # Keep a short trailing non-speaking buffer without cutting natural pauses.
     stt_non_speaking_duration: float = Field(default=0.7)
     stt_device_index: Optional[int] = Field(default=None)
@@ -281,6 +283,8 @@ class SpeechConfig(BaseSettings):
     oww_verifier_path: str = Field(default="")
     oww_verifier_gate: float = Field(default=0.25)
     oww_strong_threshold: float = Field(default=0.75)
+    # 1 disables rescue; lower values let a strong base model recover verifier misses.
+    oww_base_rescue_threshold: float = Field(default=1.0, ge=0.0, le=1.0)
     oww_smoothing_window: int = Field(default=3)
     oww_smoothing_hits: int = Field(default=2)
     oww_continuation_window_ms: int = Field(default=300)  # 0 disables same-breath command capture

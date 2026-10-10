@@ -1,337 +1,95 @@
-import React, { useEffect, useMemo, useState } from 'react'
-import { Fan, RefreshCw, Wifi, WifiOff, Power, RotateCw, Clock, Gauge, Zap } from 'lucide-react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { Fan, RefreshCw, Power, RotateCw, Clock, Gauge, Sliders } from 'lucide-react'
 import { toast } from 'react-hot-toast'
-import { Button } from '../ui/button'
-import { Badge } from '../ui/badge'
 import api from '../../lib/api'
 
-const SmartDeviceCard = ({ connected, deviceUpdates, compact = false }) => {
-  const [deviceStatus, setDeviceStatus] = useState(null)
+const fallbackControls = summary => [
+  { id: 'power', label: 'Power', kind: 'toggle', value: summary.state, steps: [{ key: 'off', label: 'Off' }, { key: 'on', label: 'On' }] },
+  { id: 'speed', label: 'Speed', value: summary.speed, steps: ['1', '2', '3', '4', '5'].map(key => ({ key, label: `Speed ${key}` })) },
+  { id: 'timer', label: 'Turn off after', value: summary.timer, steps: [{ key: 'off', label: 'Timer off' }, ...['1h', '2h', '4h', '8h'].map(key => ({ key, label: key }))] },
+  { id: 'oscillation', label: 'Oscillation', kind: 'toggle', value: summary.oscillation, steps: [{ key: 'off', label: 'Off' }, { key: 'on', label: 'On' }] },
+]
+const controlIcon = id => /power/i.test(id) ? Power : /speed/i.test(id) ? Gauge : /timer/i.test(id) ? Clock : /osc|swing|rotation/i.test(id) ? RotateCw : Sliders
+
+export default function SmartDeviceCard({ connected, deviceUpdates, compact = false }) {
+  const [snapshot, setSnapshot] = useState(null)
   const [loading, setLoading] = useState(false)
-  const [actionLoading, setActionLoading] = useState(null)
-
-  const fetchDeviceStatus = async () => {
+  const [pending, setPending] = useState(null)
+  const [feedback, setFeedback] = useState(null)
+  const mounted = useRef(false)
+  const pendingRef = useRef(false)
+  const revision = useRef(0)
+  const fetchStatus = useCallback(async () => {
+    const version = revision.current
+    setLoading(true)
     try {
-      setLoading(true)
       const data = await api.getESP32Device()
-      setDeviceStatus(data)
-    } catch (error) {
-      console.error('Error fetching ESP32 device payload:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    fetchDeviceStatus()
-
-    const interval = setInterval(() => {
-      fetchDeviceStatus()
-    }, 15000)
-
-    return () => clearInterval(interval)
+      if (mounted.current && version === revision.current) { setSnapshot(data); setFeedback(null) }
+    } catch {
+      if (mounted.current) setFeedback({ error: true, text: 'Could not refresh device status. Try again.' })
+    } finally { if (mounted.current) setLoading(false) }
   }, [])
-
+  useEffect(() => {
+    mounted.current = true
+    if (connected) fetchStatus()
+    const interval = connected ? setInterval(fetchStatus, 15000) : null
+    return () => { mounted.current = false; clearInterval(interval) }
+  }, [connected, fetchStatus])
   useEffect(() => {
     const payload = deviceUpdates?.data
     if (!payload) return
-
     if (payload.device) {
-      setDeviceStatus((prev) => ({
-        ...(prev || {}),
-        success: true,
-        connected: payload.connected ?? prev?.connected ?? false,
-        ip_address: payload.device.ip_address || prev?.ip_address,
-        device: payload.device,
-        status: payload.device.summary || prev?.status,
-      }))
-      return
-    }
-
-    fetchDeviceStatus()
-  }, [deviceUpdates])
-
-  const isDeviceConnected = deviceStatus?.connected
-  const device = deviceStatus?.device
-  const summary = useMemo(
-    () => device?.summary || deviceStatus?.status || {},
-    [device?.summary, deviceStatus?.status]
-  )
-  const controls = device?.controls || []
-
-  const quickFacts = useMemo(() => {
-    const parts = []
-    if (summary.state) parts.push(`Power ${summary.state}`)
-    if (summary.speed) parts.push(`Speed ${summary.speed}`)
-    if (summary.timer) parts.push(`Timer ${summary.timer}`)
-    if (summary.mode) parts.push(`Mode ${summary.mode}`)
-    return parts
-  }, [summary])
-
-  const handleControl = async (controlId, payload) => {
-    if (actionLoading) {
-      return
-    }
-
-    if (!connected) {
-      toast.error('Not connected to Aiden')
-      return
-    }
-
-    const loadingKey = `${controlId}:${payload.target || payload.action || 'set'}`
-    setActionLoading(loadingKey)
-
+      revision.current += 1
+      setSnapshot(previous => ({ ...previous, connected: payload.connected ?? previous?.connected ?? false, device: payload.device, status: payload.device.summary }))
+    } else if (connected) fetchStatus()
+  }, [deviceUpdates, connected, fetchStatus])
+  const device = snapshot?.device
+  const summary = device?.summary || snapshot?.status || {}
+  const online = connected && snapshot?.connected === true
+  const controls = device?.controls?.length ? device.controls : fallbackControls(summary)
+  const powered = String(controls.find(control => control.id === 'power')?.value || summary.state).toLowerCase() === 'on'
+  const runControl = async (control, target) => {
+    if (!online || pendingRef.current) return
+    pendingRef.current = true
+    revision.current += 1
+    setPending(control.id); setFeedback(null)
     try {
-      const result = await api.controlESP32({
-        control_id: controlId,
-        ...payload,
-      })
-
-      if (result.success) {
-        if (result.device) {
-          setDeviceStatus((prev) => ({
-            ...(prev || {}),
-            success: true,
-            connected: result.connected ?? prev?.connected ?? true,
-            ip_address: result.device.ip_address || prev?.ip_address,
-            device: result.device,
-            status: result.device.summary || prev?.status,
-          }))
-        } else {
-          fetchDeviceStatus()
-        }
-        toast.success(result.message || `${controlId} updated`)
-      } else {
-        toast.error(result.message || 'Control failed')
-      }
+      const result = await api.controlESP32({ control_id: control.id, target })
+      if (!result.success) throw new Error(result.message || 'The device did not accept this change.')
+      if (!mounted.current) return
+      if (result.device) setSnapshot(previous => ({ ...previous, connected: result.connected ?? previous?.connected, device: result.device, status: result.device.summary }))
+      else await fetchStatus()
+      const text = result.message || `${control.label} updated`
+      setFeedback({ error: false, text }); toast.success(text)
     } catch (error) {
-      toast.error(error.message || 'Failed to control device')
-      console.error('ESP32 control error:', error)
+      if (mounted.current) { setFeedback({ error: true, text: error.message || 'Control failed. Try again.' }); toast.error(error.message || 'Control failed') }
     } finally {
-      setActionLoading(null)
+      pendingRef.current = false
+      if (mounted.current) setPending(null)
     }
   }
-
-  // Default fallback controls when backend controls list is not populated yet
-  const defaultControls = useMemo(() => [
-    {
-      id: 'power',
-      label: 'Fan Power',
-      feature: 'Power',
-      kind: 'toggle',
-      value: summary.state || 'off',
-      steps: [
-        { key: 'on', label: 'Power ON' },
-        { key: 'off', label: 'Power OFF' },
-      ],
-    },
-    {
-      id: 'oscillation',
-      label: 'Rotate / Oscillation',
-      feature: 'Swing',
-      kind: 'toggle',
-      value: summary.oscillation || summary.mode || 'off',
-      steps: [
-        { key: 'on', label: 'Rotate ON' },
-        { key: 'off', label: 'Rotate OFF' },
-      ],
-    },
-    {
-      id: 'speed',
-      label: 'Fan Speed Level',
-      feature: 'Speed',
-      kind: 'step',
-      value: String(summary.speed || '1'),
-      steps: [
-        { key: '1', label: 'Speed 1' },
-        { key: '2', label: 'Speed 2' },
-        { key: '3', label: 'Speed 3' },
-        { key: '4', label: 'Speed 4' },
-        { key: '5', label: 'Speed 5' },
-      ],
-    },
-    {
-      id: 'timer',
-      label: 'Shutdown Timer',
-      feature: 'Timer',
-      kind: 'step',
-      value: summary.timer ? String(summary.timer) : 'off',
-      steps: [
-        { key: 'off', label: 'Off' },
-        { key: '1h', label: '1 Hour' },
-        { key: '2h', label: '2 Hours' },
-        { key: '4h', label: '4 Hours' },
-        { key: '8h', label: '8 Hours' },
-      ],
-    },
-  ], [summary])
-
-  const activeControls = controls.length > 0 ? controls : defaultControls
-
-  const getControlIcon = (feature) => {
-    switch (String(feature || '').toLowerCase()) {
-      case 'power': return <Power className="w-4 h-4 text-emerald-400" />
-      case 'swing':
-      case 'oscillation': return <RotateCw className="w-4 h-4 text-sky-400" />
-      case 'speed': return <Gauge className="w-4 h-4 text-blue-400" />
-      case 'timer': return <Clock className="w-4 h-4 text-purple-400" />
-      default: return <Zap className="w-4 h-4 text-amber-400" />
-    }
-  }
-
-  const renderStepButtons = (control, columns = 2) => (
-    <div className={`grid gap-2 ${columns === 5 ? 'grid-cols-5' : columns === 4 ? 'grid-cols-4' : columns === 3 ? 'grid-cols-3' : 'grid-cols-2'}`}>
-      {control.steps.map((step) => {
-        const isActive = String(control.value) === String(step.key)
-        const loadingKey = `${control.id}:${step.key}`
-        return (
-          <Button
-            key={`${control.id}-${step.key}`}
-            onClick={() => handleControl(control.id, { target: step.key })}
-            disabled={actionLoading !== null}
-            className={
-              isActive
-                ? 'bg-blue-500/25 border border-blue-400/50 text-blue-100 font-semibold shadow-md shadow-blue-500/10 hover:bg-blue-500/35 transition-all text-xs py-1.5 h-auto'
-                : 'bg-white/5 border border-white/10 text-white/75 hover:bg-white/10 hover:text-white transition-all text-xs py-1.5 h-auto'
-            }
-          >
-            {actionLoading === loadingKey ? (
-              <RefreshCw className="w-3 h-3 animate-spin mr-1" />
-            ) : null}
-            {step.label}
-          </Button>
-        )
-      })}
-    </div>
-  )
-
-  const renderControl = (control) => {
+  const renderControl = control => {
+    const Icon = controlIcon(control.feature || control.id)
     const steps = control.steps || []
-    const isToggle = control.kind === 'toggle' || steps.length === 2
-    const isSpeedOrTimer = control.id === 'speed' || control.id === 'timer'
-
-    return (
-      <div key={control.id} className="rounded-xl border border-white/10 bg-white/5 p-3 space-y-2.5 backdrop-blur-sm">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            {getControlIcon(control.feature || control.id)}
-            <p className="text-sm font-medium text-white/90">{control.label}</p>
-          </div>
-          <Badge className="bg-white/10 border-white/10 text-white/80 text-[10px]">
-            {control.feature || control.id}
-          </Badge>
-        </div>
-
-        {isToggle ? (
-          renderStepButtons(control, 2)
-        ) : isSpeedOrTimer ? (
-          renderStepButtons(control, steps.length)
-        ) : (
-          renderStepButtons(control, steps.length >= 3 ? 3 : 2)
-        )}
-      </div>
-    )
-  }
-
-  if (compact) {
-    return (
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-medium text-blue-200/80 flex items-center gap-2">
-            <Fan className={`w-4 h-4 ${summary.state === 'on' ? 'text-emerald-300 animate-spin' : 'text-blue-300'}`} />
-            {device?.device_name || 'Smart Fan'}
-          </h3>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={fetchDeviceStatus}
-            disabled={loading}
-            className="h-6 w-6 p-0 text-blue-200/70 hover:text-blue-200 hover:bg-blue-500/10"
-          >
-            <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
-          </Button>
-        </div>
-
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            {isDeviceConnected ? (
-              <Wifi className="w-3 h-3 text-emerald-400" />
-            ) : (
-              <WifiOff className="w-3 h-3 text-red-400" />
-            )}
-            <span className="text-xs text-white/70">{deviceStatus?.ip_address || '192.168.1.180'}</span>
-          </div>
-          <Badge
-            variant={isDeviceConnected ? 'default' : 'destructive'}
-            className={isDeviceConnected ? 'text-xs px-2 py-0.5 bg-emerald-500/20 border-emerald-400/30 text-emerald-200' : 'text-xs px-2 py-0.5'}
-          >
-            {isDeviceConnected ? 'Connected' : 'Offline'}
-          </Badge>
-        </div>
-
-        {/* Compact Quick Controls */}
-        <div className="grid grid-cols-2 gap-1.5">
-          <Button
-            size="sm"
-            onClick={() => handleControl('power', { target: summary.state === 'on' ? 'off' : 'on' })}
-            className={`h-8 text-xs ${summary.state === 'on' ? 'bg-emerald-500/20 border border-emerald-400/40 text-emerald-200' : 'bg-white/5 border border-white/10 text-white/70'}`}
-          >
-            <Power className="w-3 h-3 mr-1.5" />
-            {summary.state === 'on' ? 'Fan ON' : 'Fan OFF'}
-          </Button>
-          <Button
-            size="sm"
-            onClick={() => handleControl('oscillation', { target: summary.oscillation === 'on' ? 'off' : 'on' })}
-            className={`h-8 text-xs ${summary.oscillation === 'on' ? 'bg-sky-500/20 border border-sky-400/40 text-sky-200' : 'bg-white/5 border border-white/10 text-white/70'}`}
-          >
-            <RotateCw className="w-3 h-3 mr-1.5" />
-            {summary.oscillation === 'on' ? 'Rotate ON' : 'Rotate OFF'}
-          </Button>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="liquid-glass-card p-5 md:p-6">
-      <div className="pb-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <h2 className="text-lg font-bold text-white flex items-center gap-2.5">
-            <Fan className={`w-5 h-5 ${summary.state === 'on' ? 'text-emerald-400 animate-spin' : 'text-blue-400'}`} />
-            {device?.device_name || 'Smart Fan Control'}
-          </h2>
-          <Badge
-            variant={isDeviceConnected ? 'default' : 'destructive'}
-            className={isDeviceConnected ? 'bg-emerald-500/20 border-emerald-400/30 text-emerald-200 text-xs' : 'bg-red-500/20 border-red-400/30 text-red-200 text-xs'}
-          >
-            {isDeviceConnected ? 'Online' : 'Offline'}
-          </Badge>
-        </div>
-        <Button
-          size="icon"
-          variant="ghost"
-          onClick={fetchDeviceStatus}
-          disabled={loading}
-          className="h-8 w-8 text-white/70 hover:text-white hover:bg-white/10"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-        </Button>
-      </div>
-
-      <div className="space-y-4 pt-2">
-        <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-          <p className="text-sm font-medium text-white/80">Current Runtime State</p>
-          <p className="mt-1 text-xs text-white/60">
-            {quickFacts.length > 0 ? quickFacts.join(' • ') : 'No live state available'}
-          </p>
-        </div>
-
-        {/* Interactive Controls List */}
-        <div className="space-y-3">
-          {activeControls.map(renderControl)}
-        </div>
-      </div>
+    const current = steps.find(step => String(step.key) === String(control.value))
+    const isTimer = /timer/i.test(`${control.id} ${control.feature}`)
+    const isToggle = control.kind === 'toggle' && steps.length === 2
+    const onStep = steps.find(step => String(step.key).toLowerCase() === 'on')
+    const offStep = steps.find(step => String(step.key).toLowerCase() === 'off')
+    const switchable = isToggle && onStep && offStep
+    const disabled = !online || pending !== null
+    const enabled = String(control.value) === String(onStep?.key)
+    return <div className={`device-control ${isTimer ? 'timer-control' : ''}`} key={control.id}>
+      <div className="control-heading"><div><Icon size={16} /><label htmlFor={`device-${control.id}`}>{isTimer ? 'Turn off after' : control.label}</label></div><span>{pending === control.id ? 'Updating…' : current?.label || '—'}</span></div>
+      {switchable ? <button id={`device-${control.id}`} className={`device-switch ${enabled ? 'on' : ''}`} role="switch" aria-checked={enabled} aria-label={control.label} disabled={disabled} onClick={() => runControl(control, enabled ? offStep.key : onStep.key)}><span /></button> : isTimer || steps.length > 5 ? <select id={`device-${control.id}`} aria-label={isTimer ? 'Turn off after' : control.label} value={current ? String(control.value) : ''} disabled={disabled} onChange={event => runControl(control, event.target.value)}><option value="" disabled>Choose {isTimer ? 'a duration' : 'an option'}</option>{steps.map(step => <option key={step.key} value={String(step.key)}>{step.label}</option>)}</select> : <div className="device-segments" role="group" aria-label={control.label}>{steps.map(step => <button key={step.key} aria-pressed={String(control.value) === String(step.key)} disabled={disabled} onClick={() => runControl(control, step.key)}>{pending === control.id && String(control.value) === String(step.key) ? <RefreshCw size={13} className="control-spinning" /> : null}{step.label}</button>)}</div>}
     </div>
-  )
+  }
+  return <section className={`smart-device ${compact ? 'compact' : ''}`} aria-label="Smart home device">
+    <div className="section-topline"><span className="section-kicker">SMART HOME</span><button className="device-refresh" aria-label="Refresh device status" onClick={fetchStatus} disabled={loading || !connected || pending !== null}><RefreshCw size={15} className={loading ? 'control-spinning' : ''} /></button></div>
+    <div className="fan-intro"><div className={`fan-emblem ${powered && online ? 'running' : ''}`}><Fan size={32} /></div><div><h2>{device?.device_name || 'Smart fan'}</h2><p><span className={`panel-live ${online ? 'is-online' : ''}`}><i />{online ? 'Connected' : loading ? 'Connecting…' : 'Offline'}</span></p></div></div>
+    <div className="fan-state"><span>{online ? powered ? 'Power on' : 'Power off' : 'Device unavailable'}</span><small>{online ? summary.speed ? `Speed ${summary.speed}` : 'Ready to control' : 'Connect your PC and device'}</small></div>
+    {feedback && <p className={`device-feedback ${feedback.error ? 'failed' : ''}`} role={feedback.error ? 'alert' : 'status'}>{feedback.text}</p>}
+    <div className="device-controls" aria-busy={pending !== null}>{controls.filter(control => !compact || /power|osc|swing/i.test(control.id)).map(renderControl)}</div>
+    <div className="device-footnote"><i className={`status-dot ${online ? 'online' : ''}`} />{pending ? 'Sending to your device' : online ? 'Changes apply to your device immediately' : 'Controls become available when connected'}</div>
+  </section>
 }
-export default SmartDeviceCard

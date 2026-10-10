@@ -29,15 +29,21 @@ interface VoiceActivity {
     status: VoiceActivityStatus;
     speaking: boolean;
     active?: boolean;
+    source?: string;
 }
 
 interface Message {
     role: 'user' | 'assistant';
     content: string;
     timestamp: string;
+    source?: string;
 }
 
+export interface SpeechWord { text: string; start: number; end: number }
+
 interface UseWebSocketReturn {
+    words: SpeechWord[];
+    activeWord: number;
     connected: boolean;
     overlayState: OverlayState;
     currentText: string;
@@ -46,6 +52,10 @@ interface UseWebSocketReturn {
 }
 
 export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocketReturn => {
+    const [words, setWords] = useState<SpeechWord[]>([]);
+    const [activeWord, setActiveWord] = useState(-1);
+    const speechIdRef = useRef('');
+    const wordsRef = useRef<SpeechWord[]>([]);
     const [connected, setConnected] = useState(false);
     const [overlayState, setOverlayState] = useState<OverlayState>('idle');
     const [currentText, setCurrentText] = useState('');
@@ -58,6 +68,7 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocke
     const isConnectingRef = useRef(false);
     const shouldReconnectRef = useRef(true);
     const sessionActiveRef = useRef(false);
+    const overlayStateRef = useRef<OverlayState>('idle');
     const hideOverlayTimeoutRef = useRef<number | null>(null);
     const connectRef = useRef<(() => void) | null>(null);
 
@@ -125,8 +136,12 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocke
                 setConnected(false);
                 isConnectingRef.current = false;
                 setOverlayState('idle');
+                overlayStateRef.current = 'idle';
                 setCurrentText('');
                 setUserInput('');
+                setWords([]);
+                setActiveWord(-1);
+                speechIdRef.current = '';
                 setSessionActive(false);
                 sessionActiveRef.current = false;
                 scheduleOverlayHide();
@@ -155,8 +170,42 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocke
                     const data = JSON.parse(event.data);
 
                     switch (data.type) {
+                        case 'voice_transcript': {
+                            if (data.data?.source !== 'web_text' && overlayStateRef.current === 'listening') {
+                                setUserInput(typeof data.data?.text === 'string' ? data.data.text : '');
+                            }
+                            break;
+                        }
+                        case 'tts_progress': {
+                            const payload = data.data;
+                            if (!payload?.speech_id || payload.speech_id !== speechIdRef.current) break;
+                            if (payload.state === 'ended' || payload.state === 'blocked') {
+                                setOverlayState('idle');
+                                overlayStateRef.current = 'idle';
+                                setSessionActive(false);
+                                sessionActiveRef.current = false;
+                                setActiveWord(-1);
+                                if (payload.state === 'ended') speechIdRef.current = '';
+                                scheduleOverlayHide();
+                                break;
+                            }
+                            if (payload.source === 'web') {
+                                raiseActiveOverlay();
+                                setOverlayState('replying');
+                                overlayStateRef.current = 'replying';
+                                setSessionActive(true);
+                                sessionActiveRef.current = true;
+                            }
+                            const position = payload.position;
+                            if (typeof position === 'number' && Number.isFinite(position)) {
+                                const timings = wordsRef.current;
+                                setActiveWord(timings.reduce((latest, word, index) => position >= word.start ? index : latest, -1));
+                            }
+                            break;
+                        }
                         case 'message': {
                             const message: Message = data.data;
+                            if (message.source === 'web_text') break;
 
                             if (message.role === 'user') {
                                 setUserInput(message.content);
@@ -169,50 +218,60 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocke
 
                         case 'voice_activity': {
                             const voiceActivity: VoiceActivity = data.data;
-
-                            if (typeof voiceActivity.active === 'boolean') {
-                                setSessionActive(voiceActivity.active);
-                                sessionActiveRef.current = voiceActivity.active;
-                            }
-
-                            const activeNow = typeof voiceActivity.active === 'boolean'
-                                ? voiceActivity.active
-                                : sessionActiveRef.current;
-
-                            if (voiceActivity.status === 'listening') {
-                                raiseActiveOverlay();
-                                setOverlayState('listening');
+                            if (voiceActivity.source === 'web_text') break;
+                            const previous = overlayStateRef.current;
+                            const changeStage = (stage: OverlayState) => {
+                                overlayStateRef.current = stage;
+                                setOverlayState(stage);
+                                const active = stage !== 'idle';
+                                sessionActiveRef.current = active;
+                                setSessionActive(active);
+                                if (active) raiseActiveOverlay();
+                                else {
+                                    setUserInput('');
+                                    setCurrentText('');
+                                    setActiveWord(-1);
+                                    scheduleOverlayHide();
+                                }
+                            };
+                            // Explicit cancellation always wins, including inconsistent payloads.
+                            if (voiceActivity.active === false) {
+                                speechIdRef.current = '';
+                                changeStage('idle');
+                            } else if (voiceActivity.status === 'listening') {
+                                changeStage('listening');
                                 setUserInput('');
                                 setCurrentText('');
+                                setWords([]);
+                                setActiveWord(-1);
+                                speechIdRef.current = '';
                             } else if (voiceActivity.status === 'processing') {
-                                raiseActiveOverlay();
-                                setOverlayState('thinking');
-                            } else if (voiceActivity.speaking) {
-                                raiseActiveOverlay();
-                                setOverlayState('replying');
-                            } else {
-                                const explicitInactive = voiceActivity.active === false;
-                                const implicitIdle = typeof voiceActivity.active !== 'boolean'
-                                    && voiceActivity.status === 'idle'
-                                    && !voiceActivity.speaking;
-
-                                if (!explicitInactive && !implicitIdle && activeNow) {
-                                    setOverlayState((prev) => (prev === 'idle' ? 'thinking' : prev));
+                                changeStage('thinking');
+                            } else if (voiceActivity.speaking || voiceActivity.status === 'speaking') {
+                                changeStage('replying');
+                            } else if (voiceActivity.status === 'idle') {
+                                // STT sends idle when capture ends, before the AI starts.
+                                // TTS sends idle when playback ends. Keep that distinction.
+                                if (voiceActivity.active === true || (previous === 'listening' && sessionActiveRef.current)) {
+                                    changeStage('thinking');
                                 } else {
-                                    setOverlayState('idle');
-                                    setSessionActive(false);
-                                    sessionActiveRef.current = false;
-                                    scheduleOverlayHide();
+                                    changeStage('idle');
                                 }
                             }
                             break;
                         }
 
                         case 'assistant_speaking': {
+                            if (data.data?.source === 'web_text') break;
                             const speakingText = data.data?.text || '';
+                            speechIdRef.current = data.data?.speech_id || '';
+                            wordsRef.current = Array.isArray(data.data?.words) ? data.data.words : [];
+                            setWords(wordsRef.current);
+                            setActiveWord(-1);
                             raiseActiveOverlay();
                             setCurrentText(speakingText);
-                            setOverlayState('replying');
+                            setOverlayState(data.data?.source === 'web' ? 'thinking' : 'replying');
+                            overlayStateRef.current = data.data?.source === 'web' ? 'thinking' : 'replying';
                             setSessionActive(true);
                             sessionActiveRef.current = true;
                             break;
@@ -276,6 +335,8 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocke
             if (wsRef.current) {
                 wsRef.current.onclose = null;
                 wsRef.current.onerror = null;
+                wsRef.current.onmessage = null;
+                wsRef.current.onopen = null;
                 wsRef.current.close();
                 wsRef.current = null;
             }
@@ -283,6 +344,8 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocke
     }, [clearHideOverlayTimeout, connect]);
 
     return {
+        words,
+        activeWord,
         connected,
         overlayState,
         currentText,

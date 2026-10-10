@@ -369,7 +369,9 @@ class ESP32Client:
 
         Returns success=True as long as the device responded with 2xx.
         """
-        result = await self._request("GET", path)
+        # A toggle can have taken effect even when its response times out.
+        # Retrying it could undo the requested change.
+        result = await self._request("GET", path, retries=1 if path == "/power" else None)
         if not result.get("success"):
             return result
 

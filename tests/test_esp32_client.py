@@ -157,6 +157,19 @@ async def test_legacy_action_falls_back_when_metadata_missing():
 
 
 @pytest.mark.asyncio
+async def test_power_toggle_is_never_retried_after_ambiguous_timeout():
+    client = ESP32Client()
+    client._request = AsyncMock(return_value={"success": False, "error": "Timeout"})
+
+    try:
+        result = await client.direct_toggle("/power")
+        assert result["success"] is False
+        client._request.assert_awaited_once_with("GET", "/power", retries=1)
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
 async def test_legacy_power_request_prefers_direct_shortcut(sample_config, sample_state):
     snapshot = ESP32Client.normalize_device_snapshot(sample_config, sample_state, "192.168.1.180")
 

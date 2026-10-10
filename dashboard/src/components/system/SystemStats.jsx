@@ -1,204 +1,44 @@
-import React, { useState, useEffect } from 'react'
-import { Activity, Cpu, Database, HardDrive, Wifi, WifiOff } from 'lucide-react'
-import { Badge } from '../ui/badge'
+import React, { useEffect, useState } from 'react'
+import { Cpu, HardDrive, Monitor, ArrowUpRight } from 'lucide-react'
 import api from '../../lib/api'
 
-const SystemStats = ({ connected, systemMetrics, compact = false }) => {
-  const [stats, setStats] = useState(null)
-  const [health, setHealth] = useState(null)
-
-  useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        const [statsData, healthData] = await Promise.all([
-          api.getSystemStatus(),
-          api.getHealth()
-        ])
-        setStats(statsData)
-        setHealth(healthData)
-      } catch (error) {
-        console.error('Error fetching stats:', error)
-      }
-    }
-
-    if (connected) {
-      fetchStats()
-      const interval = setInterval(fetchStats, 5000)
-      return () => clearInterval(interval)
-    }
-  }, [connected])
-
-  // Use WebSocket metrics if available, otherwise use polled stats
-  const currentMetrics = systemMetrics || stats
-
-  if (compact) {
-    return (
-      <div className="space-y-3">
-        <h3 className="text-sm font-medium text-blue-200/80 flex items-center gap-2">
-          <Activity className="w-4 h-4 text-blue-300" />
-          System Status
-        </h3>
-        
-        {/* Connection Status */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            {connected ? (
-              <Wifi className="w-3 h-3 text-blue-400" />
-            ) : (
-              <WifiOff className="w-3 h-3 text-red-400" />
-            )}
-            <span className="text-xs text-white/70">Connection</span>
-          </div>
-          <Badge 
-            variant={connected ? "default" : "destructive"}
-            className={`text-xs px-2 py-0.5 ${connected ? 'bg-blue-500/20 border-blue-400/30 text-blue-200' : ''}`}
-          >
-            {connected ? 'Online' : 'Offline'}
-          </Badge>
-        </div>
-
-        {/* Compact System Metrics */}
-        {currentMetrics && (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-white/70">CPU</span>
-              <span className="font-mono text-blue-200">
-                {currentMetrics.system?.cpu_percent?.toFixed(1) || 0}%
-              </span>
-            </div>
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-white/70">Memory</span>
-              <span className="font-mono text-blue-200">
-                {currentMetrics.system?.memory_percent?.toFixed(1) || 0}%
-              </span>
-            </div>
-          </div>
-        )}
-      </div>
-    )
-  }
-
-  return (
-    <div className="liquid-glass-card p-6">
-      <div className="pb-3">
-        <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-          <Activity className="w-5 h-5" />
-          System Status
-        </h2>
-      </div>
-      
-      <div className="space-y-4">
-        {/* Connection Status */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            {connected ? (
-              <Wifi className="w-4 h-4 text-emerald-400" />
-            ) : (
-              <WifiOff className="w-4 h-4 text-red-400" />
-            )}
-            <span className="text-sm font-medium text-white/80">Connection</span>
-          </div>
-          <Badge 
-            variant={connected ? "default" : "destructive"}
-            className="bg-white/10 border-white/20 text-white"
-          >
-            {connected ? 'Online' : 'Offline'}
-          </Badge>
-        </div>
-
-        <div className="h-px bg-white/10" />
-
-        {/* System Metrics */}
-        {currentMetrics && (
-          <>
-            <div className="space-y-3">
-              {/* CPU */}
-              <div className="space-y-1">
-                <div className="flex items-center justify-between text-sm">
-                  <div className="flex items-center gap-2">
-                    <Cpu className="w-4 h-4 text-blue-400" />
-                    <span className="text-white/80">CPU</span>
-                  </div>
-                  <span className="font-mono text-xs text-white/90">
-                    {currentMetrics.system?.cpu_percent?.toFixed(1) || 0}%
-                  </span>
-                </div>
-                <div className="h-2 bg-white/10 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-blue-500 to-blue-400 transition-all duration-300"
-                    style={{ width: `${currentMetrics.system?.cpu_percent || 0}%` }}
-                  />
-                </div>
-              </div>
-
-              {/* Memory */}
-              <div className="space-y-1">
-                <div className="flex items-center justify-between text-sm">
-                  <div className="flex items-center gap-2">
-                    <HardDrive className="w-4 h-4 text-emerald-400" />
-                    <span className="text-white/80">Memory</span>
-                  </div>
-                  <span className="font-mono text-xs text-white/90">
-                    {currentMetrics.system?.memory_percent?.toFixed(1) || 0}%
-                  </span>
-                </div>
-                <div className="h-2 bg-white/10 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-all duration-300"
-                    style={{ width: `${currentMetrics.system?.memory_percent || 0}%` }}
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="h-px bg-white/10" />
-
-            {/* Cache Stats */}
-            {currentMetrics.cache && (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-sm font-medium text-white/80">
-                  <Database className="w-4 h-4" />
-                  <span>Cache</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div className="space-y-1">
-                    <p className="text-white/60">Keys</p>
-                    <p className="font-mono text-white/90">{currentMetrics.cache.total_keys || 0}</p>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-white/60">Hit Rate</p>
-                    <p className="font-mono text-white/90">
-                      {currentMetrics.cache.hit_rate?.toFixed(1) || 0}%
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
-          </>
-        )}
-
-        <div className="h-px bg-white/10" />
-
-        {/* Services Health */}
-        {health && (
-          <div className="space-y-2">
-            <p className="text-sm font-medium text-white/80">Services</p>
-            <div className="grid grid-cols-2 gap-2">
-              {Object.entries(health.services || {}).map(([service, isHealthy]) => (
-                <div key={service} className="flex items-center gap-2 text-xs">
-                  <div className={`w-2 h-2 rounded-full ${isHealthy ? 'bg-emerald-400' : 'bg-red-400'}`} />
-                  <span className="capitalize text-white/70">{service}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  )
+function Metric({ label, value, icon: Icon }) {
+  const known = typeof value === 'number' && Number.isFinite(value)
+  const percent = known ? Math.min(100, Math.max(0, value)) : 0
+  return <div className={`pc-metric ${known && value >= 90 ? 'under-pressure' : ''}`}>
+    <div className="metric-caption"><Icon size={15} /><span>{label}</span></div>
+    <div className="metric-number">{known ? value.toFixed(1) : '—'}{known && <span>%</span>}</div>
+    <div className="metric-track" role="meter" aria-label={`${label} usage`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={known ? percent : undefined} aria-valuetext={known ? `${value.toFixed(1)} percent` : 'Waiting for data'}><span style={{ transform: `scaleX(${percent / 100})` }} /></div>
+    <small>{!known ? 'Waiting for data' : value >= 90 ? 'High usage' : label === 'CPU' ? 'Processor usage' : 'Memory in use'}</small>
+  </div>
 }
 
-export default SystemStats
-
-
-
+export default function SystemStats({ connected, systemMetrics, compact = false }) {
+  const [stats, setStats] = useState(null)
+  const [health, setHealth] = useState(null)
+  const [error, setError] = useState(false)
+  useEffect(() => {
+    if (!connected) return
+    let active = true
+    const fetchStats = async () => {
+      try {
+        const [status, services] = await Promise.all([api.getSystemStatus(), api.getHealth()])
+        if (active) { setStats(status); setHealth(services); setError(false) }
+      } catch { if (active) setError(true) }
+    }
+    fetchStats()
+    const interval = setInterval(fetchStats, 5000)
+    return () => { active = false; clearInterval(interval) }
+  }, [connected])
+  const metrics = connected ? systemMetrics || stats : null
+  const services = Object.entries(health?.services || {})
+  const healthy = services.filter(([, value]) => value === true).length
+  return <section className={`pc-overview ${compact ? 'compact' : ''}`} aria-label="Computer status">
+    <div className="section-topline"><span className="section-kicker">YOUR COMPUTER</span><span className={`panel-live ${connected ? 'is-online' : ''}`}><i />{connected ? 'Live' : 'Offline'}</span></div>
+    <div className="pc-title"><Monitor size={19} /><h2>System overview</h2></div>
+    {!connected && <p className="panel-feedback">Connect to Aiden to see live readings.</p>}
+    {error && connected && <p className="panel-feedback" role="status">Status refresh failed. Showing the latest available readings.</p>}
+    <div className="pc-metrics"><Metric label="CPU" value={metrics?.system?.cpu_percent} icon={Cpu} /><Metric label="RAM" value={metrics?.system?.memory_percent} icon={HardDrive} /></div>
+    <details className="system-details"><summary><span>Services & cache</span><span>{connected && services.length ? `${healthy}/${services.length} healthy` : 'Details'}<ArrowUpRight size={13} /></span></summary><div className="service-list">{services.length ? services.map(([name, value]) => <div key={name}><span>{name}</span><span className={connected && value === true ? 'service-healthy' : 'service-unavailable'}><i />{!connected ? 'Offline' : value === true ? 'Healthy' : 'Unavailable'}</span></div>) : <p className="panel-feedback">Waiting for service status.</p>}</div>{metrics?.cache && <dl className="cache-details"><div><dt>Cached items</dt><dd>{metrics.cache.total_keys ?? '—'}</dd></div><div><dt>Cache hit rate</dt><dd>{typeof metrics.cache.hit_rate === 'number' ? `${metrics.cache.hit_rate.toFixed(1)}%` : '—'}</dd></div></dl>}</details>
+  </section>
+}

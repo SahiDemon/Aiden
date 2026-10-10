@@ -35,6 +35,7 @@ import numpy as np
 import pyaudio
 
 from src.speech.audio_devices import resolve_input_device_index
+from src.speech.audio_cues import is_activation_tone_only
 from src.speech.wake_detection import strip_wake_phrase
 from src.utils.config import get_settings
 from src.utils.logger import get_logger
@@ -142,6 +143,7 @@ class STTEngine:
         self.language = self.settings.speech.stt_language
         self.timeout = self.settings.speech.stt_timeout
         self.pause_threshold = self.settings.speech.stt_pause_threshold
+        self.min_listening_duration = self.settings.speech.stt_min_listening_duration
         self.device_index = self.settings.speech.stt_device_index
         self.input_device_name = getattr(self.settings.speech, "input_device_name", "")
         self.non_speaking_duration = self.settings.speech.stt_non_speaking_duration
@@ -203,6 +205,8 @@ class STTEngine:
         # Minimum recorded speech duration (seconds) before sending to Groq.
         # Anything shorter is almost certainly noise or a cough.
         self.min_speech_duration = 0.3
+        self._vad_warmed = False
+        self._warm_vad()
 
         vad_name = "Silero" if self._silero else f"WebRTC (aggressiveness={self.vad_aggressiveness})"
 
@@ -262,6 +266,13 @@ class STTEngine:
             logger.error(f"STT: Failed to initialize persistent microphone: {e}")
             self._persistent_mic = None
 
+    def _warm_vad(self) -> None:
+        """Pay first-inference setup once during startup, before activation."""
+        if self._silero and not getattr(self, "_vad_warmed", False):
+            self._silero.is_speech(bytes(self.frame_bytes))
+            self._silero.reset()
+            self._vad_warmed = True
+
     def refresh_microphone(self) -> bool:
         """Reopen the input stream after a wake-word handoff.
 
@@ -275,17 +286,11 @@ class STTEngine:
             self, "_last_activation_refresh", time.monotonic()
         )
         self._last_activation_refresh = time.monotonic()
-        was_idle = self._persistent_mic is None
         self.close()
         logger.info("STT: Refreshing microphone after wake activation (idle %.0fs)", idle_seconds)
         self._init_persistent_mic()
-        # The first stream after wake-word handoff has timed out even seconds
-        # after startup, while the next reopen captures speech. Rearm before
-        # the cue whenever STT was idle, not only after a long wall-clock gap.
-        if (was_idle or idle_seconds >= 20 * 60) and self._persistent_mic is not None:
-            logger.info("STT: Rearming first microphone stream before speak-now cue")
-            self.close()
-            self._init_persistent_mic()
+        # The capture worker verifies fresh frames and reopens only if needed.
+        # Blindly opening twice added driver latency to every activation.
         return self._persistent_mic is not None
 
     def _ensure_mic(self) -> sr.Microphone:
@@ -318,12 +323,19 @@ class STTEngine:
         return f"configured index {self.device_index} (not found)"
 
     def _should_reject_transcript(self, text: str) -> bool:
-        """
-        Hallucination filter — currently disabled.
-        All transcripts pass through regardless of content.
-        Re-enable by adding rejection logic here if needed in future.
-        """
-        return False
+        """Reject empty recognition and explicit acoustic captions, not short replies."""
+        text = text.strip()
+        if not any(character.isalnum() for character in text):
+            return True
+        # Whisper sometimes captions a cue instead of recognizing speech.
+        # Restrict this to caption formatting so ordinary spoken sentences,
+        # including short replies such as 'Oh', 'Bye', and 'Music', survive.
+        caption = text.strip("[]() .!♪♫").casefold()
+        caption_format = text.isupper() or text.startswith(("[", "("))
+        return caption_format and caption in {
+            "bell rings", "bell ringing", "beep", "beeping", "music",
+            "silence", "applause", "laughter", "background noise",
+        }
 
     # ------------------------------------------------------------------
     # Public async interface
@@ -372,9 +384,23 @@ class STTEngine:
                 self._silero.reset()
 
             # Start capture in the thread pool, but do not claim to be listening
-            # until that thread has confirmed the microphone is open and any
-            # acknowledgement/beep audio has been flushed from its buffer.
+            # until that thread has confirmed live microphone input. Audio
+            # arriving during the cue is retained, including early speech.
             loop = asyncio.get_running_loop()
+            from src.speech.live_transcript import LiveTranscript
+            from src.utils.websocket_broadcast import broadcast_message
+
+            def publish_preview(text):
+                def dispatch():
+                    if preview and not preview.closed.is_set():
+                        asyncio.create_task(broadcast_message("voice_transcript", {"text": text, "source": "local"}))
+                loop.call_soon_threadsafe(dispatch)
+
+            preview = LiveTranscript(
+                getattr(getattr(getattr(self, "settings", None), "speech", None), "vosk_model_path", ""), getattr(self, "sample_rate", 16000), publish_preview,
+            )
+            self._live_preview = preview
+            capture_started_at = loop.time()
             listening_ready = asyncio.Event()
             capture_armed = asyncio.Event()
             start_capture = threading.Event() if ready_cue is not None else None
@@ -405,11 +431,12 @@ class STTEngine:
                     )
                     if armed_task in armed_or_finished:
                         logger.info("STT: Capture worker armed; playing speak-now cue")
+                        logger.info("[TIMING] Capture readiness: %.0f ms", (loop.time() - capture_started_at) * 1000)
                         try:
                             await ready_cue()
                         finally:
-                            # The worker has drained acknowledgement/cue audio
-                            # continuously and can begin VAD on the next frame.
+                            # The worker retains audio throughout the cue and
+                            # passes it into VAD before reading subsequent audio.
                             start_capture.set()
                         logger.info("STT: Speak-now cue finished; microphone is listening")
 
@@ -424,7 +451,16 @@ class STTEngine:
                     except Exception:
                         pass
 
-                success, audio, error = await listen_task
+                success, audio, error = await asyncio.shield(listen_task)
+                logger.info("[TIMING] Microphone recording: %.0f ms", (loop.time() - capture_started_at) * 1000)
+            except asyncio.CancelledError:
+                # Cancelling to_thread does not stop its microphone worker.
+                # Join it before another activation can reopen the device.
+                self.request_stop()
+                if start_capture is not None:
+                    start_capture.set()
+                await asyncio.shield(listen_task)
+                raise
             finally:
                 if start_capture is not None:
                     start_capture.set()
@@ -432,6 +468,9 @@ class STTEngine:
                     ready_task.cancel()
                 if not armed_task.done():
                     armed_task.cancel()
+
+            if getattr(self, "_live_preview", None):
+                self._live_preview.close()
 
             if self._stop_requested.is_set():
                 logger.info("STT: Stop requested after audio capture — treating listen as cancelled")
@@ -445,15 +484,18 @@ class STTEngine:
                     logger.info("STT: Stop requested before transcription — skipping")
                     return False, None, "cancelled"
                 try:
+                    transcription_started_at = loop.time()
                     text = await groq_client.transcribe_audio(audio.get_wav_data())
+                    logger.info("[TIMING] Whisper transcription: %.0f ms", (loop.time() - transcription_started_at) * 1000)
                     if self._stop_requested.is_set():
                         logger.info("STT: Stop requested during transcription — discarding result")
                         return False, None, "cancelled"
                     if text:
                         if self._should_reject_transcript(text):
+                            logger.info("STT: Ignoring non-speech recognition: %r", text)
                             success = False
                             text = None
-                            error = "No speech detected"
+                            error = "non_speech"
                         else:
                             logger.info(f"STT: Recognized (Groq Whisper): '{text}'")
                     else:
@@ -485,6 +527,8 @@ class STTEngine:
                 pass
             return False, None, str(e)
         finally:
+            if getattr(self, "_live_preview", None):
+                self._live_preview.close()
             try:
                 if restore_media and active_duck_state is not None:
                     from src.media.media_router import get_media_router
@@ -523,6 +567,8 @@ class STTEngine:
                 return False, None, "No speech detected"
 
             command = strip_wake_phrase(text) if remove_wake_phrase else text.strip()
+            if self._should_reject_transcript(command):
+                return False, None, "non_speech"
             logger.info(
                 "STT: Recognized buffered wake command: '%s' -> '%s'",
                 text,
@@ -539,7 +585,9 @@ class STTEngine:
     # VAD listening (blocking — runs inside thread pool)
     # ------------------------------------------------------------------
 
-    def _classify_frame(self, frame: bytes, webrtc_vad: webrtcvad.Vad) -> bool:
+    def _classify_frame(
+        self, frame: bytes, webrtc_vad: webrtcvad.Vad, *, starting: bool = True,
+    ) -> bool:
         """
         Classify a single PCM frame as speech or non-speech.
 
@@ -547,6 +595,7 @@ class STTEngine:
         Includes a pre-gate RMS energy check to ignore absolute silence/hum.
         """
         try:
+            self._last_frame_confirmed_speech = False
             # Quick energy gate: if RMS is extremely low (<30 out of 32768), 
             # it's just silence/line-noise. Don't let the neural net hallucinate.
             audio_array = np.frombuffer(frame, dtype=np.int16)
@@ -555,22 +604,39 @@ class STTEngine:
                 return False
 
             if self._silero:
-                return self._silero.is_speech(frame)
-            else:
-                return webrtc_vad.is_speech(frame, self.sample_rate)
-        except Exception:
-            return False
+                if self._silero.is_speech(frame):
+                    self._last_frame_confirmed_speech = True
+                    return True
+                # A quiet command can fall below Silero's confidence threshold.
+                # Keep a second speech detector rather than throwing that
+                # command away. WebRTC requires 30ms, not Silero's 32ms frame.
+                # WebRTC's more sensitive fallback may help START a quiet
+                # command, but background noise must not keep extending it
+                # after Silero has detected the end of speech.
+                if starting and webrtc_vad is not None:
+                    valid_bytes = int(self.sample_rate * 0.03) * _SAMPLE_WIDTH
+                    return webrtc_vad.is_speech(frame[:valid_bytes], self.sample_rate)
+                return False
+            if webrtc_vad is None:
+                raise RuntimeError("No speech detector is available")
+            result = webrtc_vad.is_speech(frame, self.sample_rate)
+            self._last_frame_confirmed_speech = result
+            return result
+        except Exception as exc:
+            # Detector errors must be visible; treating every failed inference
+            # as silence can discard an entire otherwise valid recording.
+            logger.error("STT: Speech detection failed: %s", exc)
+            raise
 
-    def _listen_with_vad(self, source) -> sr.AudioData:
+    def _listen_with_vad(self, source, initial_frames=None) -> sr.AudioData:
         """
         Listen for speech using Silero VAD (or WebRTC VAD as fallback).
 
         Algorithm:
         1. Read 32 ms (Silero) or 30 ms (WebRTC) frames continuously.
         2. Classify each frame with the active VAD.
-        3. Maintain a 300 ms ring buffer.
-        4. Speech starts when ≥ 55% of the ring buffer frames are speech
-           AND at least 4 frames have been observed.
+        3. Maintain a 500 ms ring buffer to retain word starts.
+        4. Start when the configured speech ratio and frame count are met.
         5. Track trailing silence; stop when silence ≥ pause_threshold.
         6. Reject recordings shorter than min_speech_duration (noise/cough).
         """
@@ -581,17 +647,24 @@ class STTEngine:
         speech_started = False
         silence_duration = 0.0
         speech_duration = 0.0
+        confirmed_speech_duration = 0.0
         frames_read = 0
         energetic_frames = 0
         vad_speech_frames = 0
-        start_time = time.time()
+        start_time = time.monotonic()
         frame_duration_s = self.frame_duration_ms / 1000.0
         trailing_flags = collections.deque(maxlen=self._trailing_window_frames)
+        pending_frames = collections.deque(initial_frames or ())
+        cue_tail_frames = int(150 / self.frame_duration_ms) if pending_frames else 0
         end_of_speech_silence = max(
             0.55,
             float(self.pause_threshold),
             float(self.non_speaking_duration),
         )
+        # Capture starts at the beep, but endpointing must allow a human time
+        # to begin. A short cue/noise must not close the window immediately.
+        min_listening_duration = getattr(self, "min_listening_duration", 3.0)
+        minimum_confirmed_speech = 0.16
 
         logger.debug(
             f"STT VAD: Listening (vad={'silero' if self._silero else 'webrtc'}, "
@@ -603,10 +676,13 @@ class STTEngine:
                 logger.info("STT VAD: Stop requested — aborting active listen")
                 raise InterruptedError("stt_cancelled")
 
-            elapsed = time.time() - start_time
+            elapsed = time.monotonic() - start_time
+            # Include queued cue frames in the audio clock. Unlike wall time,
+            # this also accounts for frames consumed from microphone pre-roll.
+            capture_elapsed = max(elapsed, frames_read * frame_duration_s)
 
             # Timeout waiting for speech to start
-            if not speech_started and elapsed > self.timeout:
+            if not speech_started and capture_elapsed > max(self.timeout, min_listening_duration):
                 logger.warning(
                     "STT VAD: No speech start after %.1fs (frames=%d, energetic=%d, vad_speech=%d)",
                     elapsed,
@@ -617,11 +693,17 @@ class STTEngine:
                 raise sr.WaitTimeoutError("listening timed out while waiting for speech to start")
 
             # Read one frame from the microphone
+            during_cue = bool(pending_frames)
+            cue_echo_window = during_cue or cue_tail_frames > 0
+            if not during_cue and cue_tail_frames > 0:
+                cue_tail_frames -= 1
             try:
-                raw = source.stream.read(self.frame_size)
+                raw = pending_frames.popleft() if pending_frames else self._read_live_frame(source)
+            except (TimeoutError, InterruptedError):
+                raise
             except Exception as e:
                 logger.warning(f"STT VAD: Frame read error: {e}")
-                continue
+                raise
 
             # Ensure we have exactly the right number of bytes
             if len(raw) < self.frame_bytes:
@@ -633,18 +715,26 @@ class STTEngine:
             if np.sqrt(np.mean(frame_samples * frame_samples)) >= 30.0:
                 energetic_frames += 1
 
-            try:
-                is_speech = self._classify_frame(frame, webrtc_vad)
-            except Exception:
+            if cue_echo_window and is_activation_tone_only(frame, self.sample_rate):
+                # VAD suppression alone leaves the beep in the pre-roll WAV.
+                # Remove tone-only audio before Whisper can caption it; mixed
+                # user speech is retained unchanged, including word starts.
+                frame = bytes(len(frame))
                 is_speech = False
+                confirmed_speech = False
+            else:
+                is_speech = self._classify_frame(
+                    frame, webrtc_vad, starting=not speech_started and not during_cue,
+                )
+                confirmed_speech = is_speech and getattr(self, "_last_frame_confirmed_speech", is_speech)
             if is_speech:
                 vad_speech_frames += 1
 
             if not speech_started:
                 # ---- WAITING FOR SPEECH ----
-                ring_buffer.append((frame, is_speech))
+                ring_buffer.append((frame, is_speech, confirmed_speech))
 
-                speech_frames = sum(1 for _, s in ring_buffer if s)
+                speech_frames = sum(1 for _, s, _ in ring_buffer if s)
                 # Require at least speech_start_min_frames in buffer AND ratio met
                 if (
                     len(ring_buffer) >= self.speech_start_min_frames
@@ -652,31 +742,55 @@ class STTEngine:
                 ):
                     speech_started = True
                     speech_duration = len(ring_buffer) * frame_duration_s
+                    confirmed_speech_duration = sum(1 for _, _, confirmed in ring_buffer if confirmed) * frame_duration_s
                     logger.debug(
                         f"STT VAD: Speech started "
                         f"({speech_frames}/{len(ring_buffer)} frames, "
                         f"{elapsed:.1f}s after listen start)"
                     )
                     # Flush ring buffer into audio (preserves word starts)
-                    for buffered_frame, _ in ring_buffer:
+                    for buffered_frame, _, _ in ring_buffer:
                         audio_chunks.append(buffered_frame)
+                        if getattr(self, "_live_preview", None):
+                            self._live_preview.feed(buffered_frame)
                     ring_buffer.clear()
             else:
                 # ---- RECORDING SPEECH ----
                 audio_chunks.append(frame)
+                if getattr(self, "_live_preview", None):
+                    self._live_preview.feed(frame)
                 speech_duration += frame_duration_s
+                if confirmed_speech:
+                    confirmed_speech_duration += frame_duration_s
                 trailing_flags.append(is_speech)
 
                 trailing_speech_frames = sum(1 for flag in trailing_flags if flag)
                 sustained_speech = trailing_speech_frames >= max(2, len(trailing_flags) // 2)
 
-                if is_speech and sustained_speech:
+                if is_speech and (confirmed_speech or sustained_speech):
                     silence_duration = 0.0
                 else:
                     silence_duration += frame_duration_s
 
                 # Speech ended: enough silence
                 if silence_duration >= end_of_speech_silence:
+                    if confirmed_speech_duration < minimum_confirmed_speech:
+                        # The sensitive fallback can nominate a quiet onset,
+                        # but a noise burst alone must not consume the turn.
+                        # Keep the same stream/cue and original start deadline.
+                        logger.debug("STT VAD: Unconfirmed noise onset; continuing to wait for speech")
+                        speech_started = False
+                        speech_duration = 0.0
+                        confirmed_speech_duration = 0.0
+                        silence_duration = 0.0
+                        audio_chunks.clear()
+                        if getattr(self, "_live_preview", None):
+                            self._live_preview.reset()
+                        ring_buffer.clear()
+                        trailing_flags.clear()
+                        continue
+                    if capture_elapsed < min_listening_duration:
+                        continue
                     logger.debug(
                         f"STT VAD: Speech ended "
                         f"(silence={silence_duration:.2f}s >= {end_of_speech_silence}s, "
@@ -741,7 +855,7 @@ class STTEngine:
     ) -> Tuple[bool, Optional[sr.AudioData], Optional[str]]:
         """Synchronous listen operation (runs in thread pool)"""
         try:
-            source = self._ensure_mic()
+            source = self._prepare_live_microphone(preserve_recent_audio)
             logger.debug(f"STT: Persistent microphone ready ({self.sample_rate}Hz)")
 
             try:
@@ -751,22 +865,25 @@ class STTEngine:
                 # the wrapper's one-argument read().
                 self._discard_buffered_audio(source, preserve_recent_audio)
 
+                cue_frames = []
                 if start_capture is not None:
                     if on_capture_armed:
                         on_capture_armed()
 
-                    # Keep draining while the acknowledgement and final beep
-                    # play. This worker is already scheduled, so setting the
-                    # event at the end of the beep transitions immediately to
-                    # VAD without a window that can swallow the user's words.
+                    # RECORD during the cue. Discarding here swallowed commands
+                    # spoken during the acknowledgement or at the beep's end.
                     while not start_capture.is_set():
-                        self._discard_buffered_audio(source, preserve_recent_audio=False)
-                        start_capture.wait(0.01)
+                        if self._stop_requested.is_set():
+                            raise InterruptedError("stt_cancelled")
+                        cue_frames.append(self._read_live_frame(source))
 
                 if on_listening_ready:
                     on_listening_ready()
 
-                audio = self._listen_with_vad(source)
+                audio = (
+                    self._listen_with_vad(source, initial_frames=cue_frames)
+                    if start_capture is not None else self._listen_with_vad(source)
+                )
                 logger.debug("STT: Audio captured via VAD")
                 return True, audio, None
             except sr.WaitTimeoutError as e:
@@ -776,6 +893,8 @@ class STTEngine:
                 logger.info("STT: Listening cancelled")
                 return False, None, "cancelled"
 
+        except InterruptedError:
+            return False, None, "cancelled"
         except Exception as e:
             logger.error(f"STT: Exception: {e}")
             # If the persistent mic failed (e.g. unplugged), reset it
@@ -786,6 +905,52 @@ class STTEngine:
                     pass
                 self._persistent_mic = None
             return False, None, str(e)
+
+    def _read_live_frame(self, source, timeout: float = 1.0) -> bytes:
+        """Read only available samples so a stalled driver cannot block capture."""
+        native = getattr(source.stream, "pyaudio_stream", source.stream)
+        deadline = time.monotonic() + timeout
+        while True:
+            if self._stop_requested.is_set():
+                raise InterruptedError("stt_cancelled")
+            if int(native.get_read_available()) >= self.frame_size:
+                frame = source.stream.read(self.frame_size)
+                if len(frame) != self.frame_bytes:
+                    raise OSError("Microphone returned an incomplete audio frame")
+                return frame
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Microphone stopped delivering audio")
+            self._stop_requested.wait(0.005)
+
+    def _prepare_live_microphone(self, preserve_recent_audio: bool = False):
+        """Prove that fresh frames arrive before allowing a speak-now cue."""
+        for attempt in range(3):
+            try:
+                source = self._ensure_mic()
+                if preserve_recent_audio:
+                    # Buffered follow-up speech must survive the readiness check.
+                    native = getattr(source.stream, "pyaudio_stream", source.stream)
+                    if int(native.get_read_available()) >= self.frame_size:
+                        return source
+                self._discard_buffered_audio(source, preserve_recent_audio=False)
+                # Check sustained delivery, not merely a successful stream open
+                # or one stale frame. Silence is valid microphone input.
+                started = time.monotonic()
+                for _ in range(8):
+                    self._read_live_frame(source, timeout=0.5)
+                    if time.monotonic() - started > 1.0:
+                        raise TimeoutError("Microphone frames are arriving too slowly")
+                self._warm_vad()
+                logger.info("STT: Live microphone verified (8 fresh frames)")
+                return source
+            except InterruptedError:
+                raise
+            except Exception as exc:
+                logger.warning("STT: Microphone readiness attempt %d failed: %s", attempt + 1, exc)
+                self.close()
+                if attempt == 2:
+                    raise RuntimeError("Microphone is not delivering audio; please check the input device") from exc
+        raise RuntimeError("Microphone preparation failed")
 
     def _discard_buffered_audio(self, source, preserve_recent_audio: bool) -> int:
         """Discard queued microphone samples and return the number consumed."""

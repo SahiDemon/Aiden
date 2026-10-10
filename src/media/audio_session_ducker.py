@@ -31,11 +31,11 @@ class AudioSessionDucker:
 
     def __init__(self):
         self._current_pid = os.getpid()
+        self._muted_by_aiden: List[dict] = []
         self._excluded_processes = {
             "python.exe",
             "pythonw.exe",
             "discord.exe",
-            "spotify.exe",
             "signalrgb.exe",
         }
 
@@ -86,13 +86,18 @@ class AudioSessionDucker:
                     continue
 
                 try:
+                    session_id = getattr(session, "InstanceIdentifier", None)
+                except Exception:
+                    session_id = None
+                try:
                     simple_volume.SetMute(1, None)
-                    muted_sessions.append(
-                        {
-                            "process_id": process_id,
-                            "process_name": process_name,
-                        }
-                    )
+                    owned_session = {
+                        "process_id": process_id,
+                        "process_name": process_name,
+                        "session_id": session_id,
+                    }
+                    muted_sessions.append(owned_session)
+                    self._muted_by_aiden.append(owned_session)
                     logger.info(f"Muted active app audio for STT: {process_name} ({process_id})")
                 except Exception as exc:
                     logger.debug(f"Failed to mute {process_name} ({process_id}): {exc}")
@@ -139,17 +144,28 @@ class AudioSessionDucker:
 
                 if (process_id, process_name) not in target_keys:
                     continue
+                session_id = getattr(session, "InstanceIdentifier", None)
+                matching = [item for item in muted_sessions if
+                            (item.get("process_id"), item.get("process_name")) == (process_id, process_name)
+                            and (not item.get("session_id") or item["session_id"] == session_id)]
+                if not matching:
+                    continue
 
                 try:
                     simple_volume = session.SimpleAudioVolume
                     if simple_volume.GetMute():
                         simple_volume.SetMute(0, None)
                         logger.info(f"Restored app audio after STT: {process_name} ({process_id})")
+                    self._muted_by_aiden = [item for item in self._muted_by_aiden if item not in matching]
                 except Exception as exc:
                     logger.debug(f"Failed to restore {process_name} ({process_id}): {exc}")
 
             except Exception:
                 continue
+
+    def restore_all(self) -> None:
+        """Release only Aiden-owned mutes, even if startup lost its state dict."""
+        self.restore_after_listening({"muted_sessions": list(self._muted_by_aiden)})
 
 
 _audio_session_ducker: Optional[AudioSessionDucker] = None

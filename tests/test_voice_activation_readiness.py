@@ -24,7 +24,7 @@ from src.speech.wake_detection import WakeDetection
 @pytest.mark.parametrize(
     ("from_hotkey", "expected"),
     [
-        (False, ["acknowledgement", "activation"]),
+        (False, ["activation"]),
         (True, ["activation"]),
     ],
 )
@@ -360,6 +360,7 @@ def test_microphone_buffer_is_flushed_before_ready_signal(monkeypatch):
     source = SimpleNamespace(stream=stream)
 
     monkeypatch.setattr(engine, "_ensure_mic", lambda: source)
+    monkeypatch.setattr(engine, "_prepare_live_microphone", lambda *_args: source)
     monkeypatch.setattr(engine, "_listen_with_vad", lambda ready_source: object())
 
     success, _, error = engine._listen_sync(
@@ -445,10 +446,10 @@ def test_microphone_is_reopened_for_the_wake_to_stt_handoff(monkeypatch):
     ("idle_seconds", "expected"),
     [
         (60, ["closed", "opened"]),
-        (30 * 60, ["closed", "opened", "closed", "opened"]),
+        (30 * 60, ["closed", "opened"]),
     ],
 )
-def test_long_idle_microphone_is_rearmed_before_cue(monkeypatch, idle_seconds, expected):
+def test_long_idle_microphone_is_opened_once_before_live_verification(monkeypatch, idle_seconds, expected):
     engine = STTEngine.__new__(STTEngine)
     events = []
 
@@ -468,7 +469,7 @@ def test_long_idle_microphone_is_rearmed_before_cue(monkeypatch, idle_seconds, e
     assert events == expected
 
 
-def test_idle_microphone_is_rearmed_even_soon_after_startup(monkeypatch):
+def test_idle_microphone_is_opened_once_even_soon_after_startup(monkeypatch):
     engine = STTEngine.__new__(STTEngine)
     engine._persistent_mic = None
     engine._last_activation_refresh = time.monotonic() - 20
@@ -483,7 +484,7 @@ def test_idle_microphone_is_rearmed_even_soon_after_startup(monkeypatch):
     monkeypatch.setattr(engine, "_init_persistent_mic", reopen)
 
     assert engine.refresh_microphone() is True
-    assert events == ["opened", "closed", "opened"]
+    assert events == ["opened"]
 
 
 def test_idle_microphone_release_is_idempotent():

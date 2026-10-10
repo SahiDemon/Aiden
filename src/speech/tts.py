@@ -5,6 +5,8 @@ Supports multiple TTS providers: Edge TTS, Google Chirp 3 HD, and offline pyttsx
 """
 import asyncio
 import hashlib
+import json
+from collections import OrderedDict
 import logging
 import os
 import tempfile
@@ -13,13 +15,27 @@ import edge_tts
 import pygame
 import subprocess
 import sys
+import numpy as np
 
 from src.database.redis_client import get_redis_client
 from src.utils.config import get_settings
 from src.utils.logger import get_logger
 from src.utils.paths import resource_path
+from src.speech.audio_cues import ACTIVATION_TONE_HZ
 
 logger = get_logger(__name__)
+
+
+def _activation_tone_pcm(sample_rate: int, channels: int) -> np.ndarray:
+    """A 120ms non-voice readiness tone with smooth edges."""
+    count = int(sample_rate * 0.12)
+    phase = np.arange(count, dtype=np.float64) / sample_rate
+    envelope = np.ones(count)
+    ramp = max(1, int(sample_rate * 0.01))
+    envelope[:ramp] = np.linspace(0, 1, ramp)
+    envelope[-ramp:] = np.linspace(1, 0, ramp)
+    mono = (np.sin(2 * np.pi * ACTIVATION_TONE_HZ * phase) * envelope * 4000).astype(np.int16)
+    return mono if channels == 1 else np.repeat(mono[:, None], channels, axis=1)
 
 # Pygame mixer is initialized lazily on first use (see _ensure_mixer())
 # so it always runs on the correct thread.
@@ -59,6 +75,7 @@ class TTSEngine:
         self.voice_id = self.settings.speech.tts_voice
         self.rate = self.settings.speech.tts_rate
         self.temp_dir = tempfile.gettempdir()
+        self._word_timings = OrderedDict()
         
         # Google TTS specific settings
         self.google_voice = self.settings.speech.google_tts_voice
@@ -88,7 +105,16 @@ class TTSEngine:
         """Pre-load frequently used sound effects into memory for instant playback."""
         if not _ensure_mixer():
             return
-        common_sounds = ["activation", "mmm1", "mmm2", "error", "success"]
+        # A voice-like MP3 acknowledgement can be recognized as a command
+        # when capture is already active. Generate a pure readiness tone.
+        try:
+            sample_rate, _, channels = pygame.mixer.get_init()
+            self._preloaded_sounds["activation"] = pygame.sndarray.make_sound(
+                _activation_tone_pcm(sample_rate, channels)
+            )
+        except Exception as exc:
+            logger.warning("Could not prepare activation tone: %s", exc)
+        common_sounds = ["mmm1", "mmm2", "error", "success"]
         for name in common_sounds:
             try:
                 sound_path = resource_path("sounds", f"{name}.mp3")
@@ -106,6 +132,8 @@ class TTSEngine:
         """Return whether a cue is preloaded or available for disk fallback."""
         if sound_name.lower() in self._preloaded_sounds:
             return True
+        if sound_name.lower() == "activation":
+            return False
         return any(
             resource_path("sounds", f"{sound_name}{suffix}").exists()
             for suffix in (".mp3", ".MP3")
@@ -124,6 +152,11 @@ class TTSEngine:
                 return False
 
             if self._wake_word_pause_depth == 0:
+                detector = wake_word_manager.detector
+                if getattr(detector, "is_paused", getattr(detector, "_paused", False)):
+                    # Capture already owns the pause. Playback must not resume
+                    # the wake microphone underneath an active recording.
+                    return False
                 wake_word_manager.detector.pause()
                 logger.debug("TTS: Paused wake-word detection during playback")
 
@@ -182,17 +215,27 @@ class TTSEngine:
                         audio_data = task.get("data")
                         text = task.get("text")
                         
+                        from src.speech.playback_events import register_playback, wait_for_playback
+                        source = task.get("source", "local")
+                        playback = register_playback(text or "", self._timings_for(audio_data), source)
+                        self._active_playback = playback
+
                         # Broadcast speaking status
                         from src.utils.websocket_broadcast import broadcast_voice_status, broadcast_message
-                        await broadcast_voice_status("speaking", speaking=True)
+                        await broadcast_voice_status(
+                            "processing" if source == "web" else "speaking",
+                            speaking=source != "web", active=True,
+                        )
                         if text:
-                            await broadcast_message("assistant_speaking", {"text": text})
+                            await broadcast_message("assistant_speaking", playback)
 
                         wake_word_paused = self._pause_wake_word_detection()
                         try:
                             # Play
                             source = task.get("source", "local")
                             await self._play_audio_data(audio_data, source=source)
+                            if source == "web":
+                                await wait_for_playback(playback["speech_id"])
                         finally:
                             self._resume_wake_word_detection(wake_word_paused)
                         
@@ -226,7 +269,7 @@ class TTSEngine:
             text: Text to speak
             source: Source of the request (e.g., 'local', 'web')
         """
-        if not text:
+        if not text or source == "web_text":
             return
         
         try:
@@ -298,7 +341,16 @@ class TTSEngine:
         """Get cached audio with proper error handling"""
         try:
             redis = await get_redis_client()
-            return await redis.get_tts_audio(text)
+            audio = await redis.get_tts_audio(text)
+            if audio:
+                key = "tts:words:" + hashlib.sha256(audio).hexdigest()
+                raw = await redis.get(key)
+                if raw:
+                    self._remember_timings(audio, json.loads(raw))
+                elif self.provider == "edge" and audio[:4] != b"RIFF":
+                    # Old audio has no boundaries. Regenerate once to populate them.
+                    return None
+            return audio
         except Exception as e:
             logger.debug(f"Cache read failed (non-critical): {e}")
             return None
@@ -308,10 +360,26 @@ class TTSEngine:
         try:
             redis = await get_redis_client()
             await redis.cache_tts_audio(text, audio_data)
+            words = self._timings_for(audio_data)
+            if words:
+                await redis.set("tts:words:" + hashlib.sha256(audio_data).hexdigest(),
+                                json.dumps(words), ttl=self.settings.cache.ttl_tts_audio)
             logger.debug(f"TTS: Cached audio for: '{text[:30]}...'")
         except Exception as e:
             logger.debug(f"Cache write failed (non-critical): {e}")
     
+    def _remember_timings(self, audio: bytes, words: list):
+        if not hasattr(self, "_word_timings"):
+            self._word_timings = OrderedDict()
+        key = hashlib.sha256(audio).hexdigest()
+        self._word_timings[key] = words
+        self._word_timings.move_to_end(key)
+        while len(self._word_timings) > 64:
+            self._word_timings.popitem(last=False)
+
+    def _timings_for(self, audio: bytes) -> list:
+        return getattr(self, "_word_timings", {}).get(hashlib.sha256(audio).hexdigest(), [])
+
     async def _generate_speech(self, text: str) -> bytes:
         """Generate speech audio using edge-tts"""
         try:
@@ -326,18 +394,24 @@ class TTSEngine:
             communicate = edge_tts.Communicate(
                 text=text,
                 voice=self.voice_id,
-                rate=rate_value
+                rate=rate_value,
+                boundary="WordBoundary",
             )
             
             # Save to temporary file
             audio_data = b""
+            words = []
             async for chunk in communicate.stream():
                 if chunk["type"] == "audio":
                     audio_data += chunk["data"]
+                elif chunk["type"] == "WordBoundary":
+                    words.append({"text": chunk["text"], "start": chunk["offset"] / 10_000_000,
+                                  "end": (chunk["offset"] + chunk["duration"]) / 10_000_000})
             
             if not audio_data:
                 raise ValueError("No audio data generated by Edge TTS")
             
+            self._remember_timings(audio_data, words)
             return audio_data
             
         except Exception as e:
@@ -477,18 +551,19 @@ class TTSEngine:
             data_uri = f"data:{mime_type};base64,{audio_b64}"
             
             await broadcast_update("tts_audio", {
-                "audio_uri": data_uri
+                "audio_uri": data_uri,
+                **getattr(self, "_active_playback", {}),
             })
             logger.info("Broadcasted TTS audio to web clients")
         except Exception as e:
             logger.error(f"Failed to broadcast TTS audio: {e}")
 
-        if not _ensure_mixer():
-            logger.error("Pygame not available for local audio playback")
-            return
-            
         if source == "web":
             logger.info("TTS: Skipping local playback because request originated from web dashboard")
+            return
+
+        if not _ensure_mixer():
+            logger.error("Pygame not available for local audio playback")
             return
 
         try:
@@ -511,8 +586,15 @@ class TTSEngine:
             pygame.mixer.music.play()
             
             # Wait for playback to finish
+            from src.utils.websocket_broadcast import broadcast_message
             while pygame.mixer.music.get_busy():
-                await asyncio.sleep(0.1)
+                await broadcast_message("tts_progress", {
+                    "speech_id": getattr(self, "_active_playback", {}).get("speech_id"),
+                    "source": source,
+                    "position": max(0, pygame.mixer.music.get_pos()) / 1000,
+                    "state": "progress",
+                })
+                await asyncio.sleep(0.05)
             
             # Cleanup
             try:
@@ -558,7 +640,13 @@ class TTSEngine:
                 logger.debug(f"TTS: Playing pre-loaded sound: {sound_name}")
                 from src.utils.audio_lock import AUDIO_DEVICE_LOCK
                 with AUDIO_DEVICE_LOCK:
-                    channel = preloaded.play()
+                    channel = (
+                        preloaded.play(maxtime=200, fade_ms=10)
+                        if sound_name.lower() == "activation" else (
+                            preloaded.play(maxtime=300, fade_ms=10)
+                            if sound_name.lower() in {"mmm1", "mmm2"} else preloaded.play()
+                        )
+                    )
                 if channel:
                     while channel.get_busy():
                         await asyncio.sleep(0.05)
@@ -566,6 +654,9 @@ class TTSEngine:
                 return False
 
             # Fallback to disk loading for non-preloaded sounds
+            if sound_name.lower() == "activation":
+                # Never fall back to the voice-like activation MP3.
+                return False
             sound_path = resource_path("sounds", f"{sound_name}.mp3")
             if not sound_path.exists():
                 sound_path = resource_path("sounds", f"{sound_name}.MP3")
@@ -590,12 +681,20 @@ class TTSEngine:
             sound = self._preloaded_sounds.get(stem)
 
             if not sound:
+                if stem == "activation":
+                    return False
                 sound = pygame.mixer.Sound(sound_path)
                 sound.set_volume(0.6)
             
             from src.utils.audio_lock import AUDIO_DEVICE_LOCK
             with AUDIO_DEVICE_LOCK:
-                channel = sound.play()
+                channel = (
+                    sound.play(maxtime=200, fade_ms=10)
+                    if stem == "activation" else (
+                        sound.play(maxtime=300, fade_ms=10)
+                        if stem in {"mmm1", "mmm2"} else sound.play()
+                    )
+                )
             
             if channel:
                 while channel.get_busy():
@@ -609,6 +708,8 @@ class TTSEngine:
     def stop(self):
         """Stop current playback and clear the queue (Barge-in / Interruption)"""
         logger.info("TTS: Stop requested (Barge-in)")
+        from src.speech.playback_events import cancel_playback
+        cancel_playback(getattr(self, "_active_playback", {}).get("speech_id", ""))
 
         if _ensure_mixer():
             from src.utils.audio_lock import AUDIO_DEVICE_LOCK
@@ -627,6 +728,8 @@ class TTSEngine:
 
     def stop_playback_now(self):
         """Thread-friendly immediate audio stop for global hotkey callbacks."""
+        from src.speech.playback_events import cancel_playback
+        cancel_playback(getattr(self, "_active_playback", {}).get("speech_id", ""))
         if not _ensure_mixer():
             return
 
@@ -669,5 +772,3 @@ def get_tts_engine() -> TTSEngine:
 def reset_tts_engine() -> None:
     global _tts_engine
     _tts_engine = None
-
-

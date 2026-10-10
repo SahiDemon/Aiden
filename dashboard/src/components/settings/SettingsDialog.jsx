@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react'
-import { Brain, KeyRound, RefreshCw, Save, Search, Settings2, SlidersHorizontal } from 'lucide-react'
+import React, { useEffect, useMemo, useState, createContext, useContext } from 'react'
+import { Brain, KeyRound, RefreshCw, Save, Search, Settings2, SlidersHorizontal, Monitor as MonitorIcon } from 'lucide-react'
 import { toast } from 'react-hot-toast'
 
 import {
@@ -25,8 +25,10 @@ import {
   SelectValue,
 } from '../ui/select'
 import api from '../../lib/api'
+import useTheme, { themes } from '../../hooks/useTheme'
 
 const sections = [
+  { id: 'appearance', label: 'Appearance' },
   { id: 'overview', label: 'Overview' },
   { id: 'ai', label: 'AI & Models' },
   { id: 'prompts', label: 'Prompts' },
@@ -78,20 +80,24 @@ const getIn = (object, path, fallback = '') => {
   return path.split('.').reduce((acc, key) => (acc && acc[key] !== undefined ? acc[key] : undefined), object) ?? fallback
 }
 
+const FieldLabel = createContext('Setting')
 const SettingRow = ({ label, hint, children }) => (
-  <div className="space-y-2 border-b border-white/5 pb-4">
+  <div className="setting-row space-y-2 border-b border-white/5 pb-4">
     <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 md:gap-6">
       <div className="max-w-md">
         <Label className="text-sm font-medium text-white">{label}</Label>
         {hint && <p className="mt-1 text-xs text-white/45">{hint}</p>}
       </div>
-      <div className="w-full max-w-xl">{children}</div>
+      <div className="w-full max-w-xl"><FieldLabel.Provider value={label}>{children}</FieldLabel.Provider></div>
     </div>
   </div>
 )
 
 const SecretInput = ({ value, onChange, placeholder }) => (
   <Input
+    aria-label={useContext(FieldLabel)}
+    type="password"
+    autoComplete="new-password"
     value={value || ''}
     onChange={(event) => onChange(event.target.value)}
     placeholder={placeholder}
@@ -101,6 +107,7 @@ const SecretInput = ({ value, onChange, placeholder }) => (
 
 const TextInput = ({ value, onChange, type = 'text', placeholder }) => (
   <Input
+    aria-label={useContext(FieldLabel)}
     type={type}
     value={value ?? ''}
     onChange={(event) => onChange(type === 'number' ? Number(event.target.value) : event.target.value)}
@@ -114,7 +121,9 @@ const SettingsDialog = ({ open, onOpenChange }) => {
   const [savedSettings, setSavedSettings] = useState(null)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [activeSection, setActiveSection] = useState('overview')
+  const [activeSection, setActiveSection] = useState('appearance')
+  const { theme, setTheme } = useTheme()
+  const [loadError, setLoadError] = useState('')
   const [search, setSearch] = useState('')
   const [providerModels, setProviderModels] = useState({})
   const [providerStatus, setProviderStatus] = useState({})
@@ -140,11 +149,13 @@ const SettingsDialog = ({ open, onOpenChange }) => {
   const fetchSettings = async () => {
     try {
       setLoading(true)
+      setLoadError('')
       const response = await api.getSettings()
       setSettings(response.settings)
       setSavedSettings(response.settings)
       setProviderModels(response.settings?.model_options || {})
     } catch (error) {
+      setLoadError('Could not load settings. Check the connection and try Reload.')
       toast.error('Failed to load settings')
     } finally {
       setLoading(false)
@@ -204,18 +215,18 @@ const SettingsDialog = ({ open, onOpenChange }) => {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="!block h-[95vh] max-h-[95vh] max-w-[96vw] overflow-hidden border-white/10 bg-slate-950 p-0 text-white shadow-2xl">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.18),_transparent_28%),radial-gradient(circle_at_bottom_right,_rgba(14,165,233,0.15),_transparent_32%)]" />
+      <DialogContent className="settings-dialog !block h-[90dvh] max-h-[90dvh] max-w-[1120px] overflow-hidden border-white/10 bg-background p-0 text-white shadow-2xl">
+
         <div className="relative flex h-full flex-col">
           <DialogHeader className="border-b border-white/10 px-4 py-3 md:px-8 md:py-5 bg-white/[0.02]">
             <div className="flex flex-row items-center justify-between gap-2 md:gap-6">
-              <div className="min-w-0 flex-1 hidden md:block">
+              <div className="min-w-0 flex-1 settings-title">
                 <DialogTitle className="flex items-center gap-2 md:gap-3 text-base md:text-2xl font-bold tracking-tight text-white truncate">
-                  <Settings2 className="h-4 w-4 md:h-6 md:w-6 text-sky-300 shrink-0" />
-                  <span>Aiden Settings Console</span>
+                  <Settings2 className="h-4 w-4 md:h-6 md:w-6 text-primary shrink-0" />
+                  <span>Make Aiden yours</span>
                 </DialogTitle>
                 <DialogDescription className="mt-1 hidden md:block max-w-3xl text-xs md:text-sm text-white/55">
-                  Provider switching, detected models, prompts, speech, integrations, and runtime controls are managed here from one real settings contract.
+                  Your look, your voice, your everyday setup.
                 </DialogDescription>
               </div>
               <div className="md:hidden min-w-0 flex-1 pr-2">
@@ -233,15 +244,15 @@ const SettingsDialog = ({ open, onOpenChange }) => {
                 </Select>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                <Badge className="hidden sm:inline-flex border-sky-400/20 bg-sky-400/10 text-sky-200 text-xs">
+                <Badge className="hidden sm:inline-flex border-primary/20 bg-primary/10 text-primary text-xs">
                   Provider: {currentProvider}
                 </Badge>
                 {hasChanges && <Badge className="border-amber-400/20 bg-amber-400/10 text-amber-200 text-xs px-2 py-0.5">Unsaved</Badge>}
-                <Button variant="outline" size="sm" onClick={fetchSettings} className="h-9 w-9 md:w-auto md:px-2.5 px-0 text-xs border-white/10 bg-white/5 text-white hover:bg-white/10 flex justify-center items-center rounded-xl">
+                <Button variant="outline" size="sm" onClick={fetchSettings} aria-label="Reload settings" disabled={loading || saving} className="h-9 w-9 md:w-auto md:px-2.5 px-0 text-xs border-white/10 bg-white/5 text-white hover:bg-white/10 flex justify-center items-center rounded-xl">
                   <RefreshCw className="h-4 w-4 md:h-3.5 md:w-3.5 md:mr-1.5" />
                   <span className="hidden md:inline">Reload</span>
                 </Button>
-                <Button size="sm" onClick={handleSave} disabled={!hasChanges || saving} className="h-9 md:px-3 px-3 text-xs bg-sky-500 text-slate-950 font-semibold hover:bg-sky-400 flex justify-center items-center rounded-xl">
+                <Button size="sm" onClick={handleSave} aria-label="Save settings" disabled={!hasChanges || saving} className="h-9 md:px-3 px-3 text-xs bg-primary text-slate-950 font-semibold hover:bg-primary/90 flex justify-center items-center rounded-xl">
                   <Save className="h-4 w-4 md:h-3.5 md:w-3.5 md:mr-1.5" />
                   <span className="hidden md:inline">{saving ? 'Saving...' : 'Save'}</span>
                 </Button>
@@ -249,7 +260,7 @@ const SettingsDialog = ({ open, onOpenChange }) => {
             </div>
           </DialogHeader>
 
-          <div className="flex flex-col md:grid min-h-0 flex-1 md:grid-cols-[240px_minmax(0,1fr)_320px] overflow-hidden">
+          <div className="flex flex-col md:grid min-h-0 flex-1 md:grid-cols-[210px_minmax(0,1fr)] overflow-hidden">
             {/* Desktop Left Sidebar */}
             <aside className="hidden md:block border-r border-white/10 bg-white/[0.02] p-4 flex-shrink-0">
               <div className="relative mb-4">
@@ -261,14 +272,14 @@ const SettingsDialog = ({ open, onOpenChange }) => {
                   className="border-white/10 bg-white/5 pl-9 text-white"
                 />
               </div>
-              <ScrollArea className="h-[calc(95vh-180px)] pr-3">
+              <ScrollArea className="h-[calc(95dvh-180px)] pr-3">
                 <div className="flex flex-col space-y-1">
                   {filteredSections.map((section) => (
                     <button
                       key={section.id}
                       type="button"
                       onClick={() => setActiveSection(section.id)}
-                      className={`whitespace-nowrap rounded-xl px-4 py-2 text-left text-sm transition ${activeSection === section.id ? 'bg-sky-400/15 text-sky-200 font-medium' : 'text-white/65 hover:bg-white/5 hover:text-white'}`}
+                      className={`whitespace-nowrap rounded-xl px-4 py-2 text-left text-sm transition ${activeSection === section.id ? 'bg-primary/15 text-primary font-medium' : 'text-white/65 hover:bg-white/5 hover:text-white'}`}
                     >
                       {section.label}
                     </button>
@@ -278,7 +289,21 @@ const SettingsDialog = ({ open, onOpenChange }) => {
             </aside>
 
             <div className="h-full min-h-0 overflow-y-auto px-4 md:px-8 py-4 md:py-6">
-              {loading || !settings ? (
+              {activeSection === 'appearance' ? (
+                <section className="appearance-settings">
+                  <p className="section-kicker">APPEARANCE</p>
+                  <h2>A space that feels like you.</h2>
+                  <p>Choose a palette for chat, voice, and your connected workspace.</p>
+                  <div className="theme-options" role="group" aria-label="Dashboard theme">
+                    {themes.map(option => <button key={option.id} className={theme === option.id ? 'theme-option selected' : 'theme-option'} aria-pressed={theme === option.id} onClick={() => setTheme(option.id)}>
+                      <div className="theme-preview" style={{ background: option.colors[0] }}>
+                        <div style={{ background: option.colors[1] }} /><span style={{ background: option.colors[2] }} /><i style={{ background: option.colors[1] }} />
+                      </div><strong>{option.name}</strong><small>{option.description}</small><span className="theme-selection">{theme === option.id ? 'Selected' : 'Choose theme'}</span>
+                    </button>)}
+                  </div>
+                  <div className="appearance-note"><MonitorIcon /><div><strong>Just right on every screen.</strong><p>The theme applies immediately and is saved on this browser. It won’t change your PC, voice, or AI settings.</p></div></div>
+                </section>
+              ) : loadError ? <div role="alert" className="settings-load-error">{loadError}<Button onClick={fetchSettings}>Reload settings</Button></div> : loading || !settings ? (
                 <div className="flex h-full items-center justify-center text-white/55">Loading settings...</div>
               ) : (
                 <div className="space-y-8 pb-24">
@@ -371,7 +396,7 @@ const SettingsDialog = ({ open, onOpenChange }) => {
 
                         <div className="space-y-4">
                           <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                            <KeyRound className="h-4 w-4 text-sky-300" />
+                            <KeyRound className="h-4 w-4 text-primary" />
                             Provider Secrets
                           </div>
                           {['gemini.api_key', 'gemini.api_key_1', 'gemini.api_key_2', 'gemini.api_key_3', 'groq.api_key'].map((path) => (
@@ -388,7 +413,7 @@ const SettingsDialog = ({ open, onOpenChange }) => {
                     <div className="space-y-5">
                       {Object.entries(settings.prompts || {}).map(([key, value]) => (
                         <SettingRow key={key} label={key} hint="Prompt overrides persist in the database and apply at runtime.">
-                          <Textarea
+                          <Textarea aria-label={key}
                             value={value}
                             onChange={(event) => updateField(`prompts.${key}`, event.target.value)}
                             className="min-h-[220px] border-white/10 bg-white/5 text-white"
@@ -501,11 +526,11 @@ const SettingsDialog = ({ open, onOpenChange }) => {
               )}
             </div>
 
-            <aside className="h-full overflow-y-auto border-t md:border-l border-white/10 bg-white/[0.03] px-6 py-6 hidden md:block">
+            <aside className="hidden">
               <div className="space-y-6">
                 <div>
                   <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                    <Brain className="h-4 w-4 text-sky-300" />
+                    <Brain className="h-4 w-4 text-primary" />
                     Provider Health
                   </div>
                   <p className="mt-2 text-sm text-white/50">
@@ -523,7 +548,7 @@ const SettingsDialog = ({ open, onOpenChange }) => {
 
                 <div>
                   <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                    <SlidersHorizontal className="h-4 w-4 text-sky-300" />
+                    <SlidersHorizontal className="h-4 w-4 text-primary" />
                     Notes
                   </div>
                   <ul className="mt-3 space-y-2 text-sm text-white/50">

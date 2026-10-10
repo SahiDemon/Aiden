@@ -29,6 +29,61 @@ def _normalize_intent_text(text: str) -> str:
     return " ".join(normalized.split())
 
 
+def _repair_youtube_search_request(user_text: str, commands: List[dict]) -> List[dict]:
+    """Recover a dropped search phrase in one explicit YouTube playback request."""
+    match = re.fullmatch(
+        r"\s*(?:(?:can|could|would) you\s+)?(?:please\s+)?play\s+(.+?)\s+(?:on|using)\s+"
+        r"(youtube\s+music|youtube)\s*(?:please)?[.!?]*\s*",
+        user_text, re.IGNORECASE,
+    )
+    if not match or len(commands) > 1:
+        return commands
+    query = re.sub(r"^(?:some|a|the)\s+", "", match[1].strip(), flags=re.IGNORECASE)
+    if not query or query.lower() in {"it", "this", "that", "music", "playback"}:
+        return commands
+    if re.search(r"\b(?:and then|then|and (?:open|close|play|pause|turn|set))\b", query, re.IGNORECASE):
+        return commands
+    target = "youtube_music" if "music" in match[2].lower() else "youtube"
+    if commands and commands[0].get("type") == "media_control":
+        params = commands[0].get("params") or {}
+        if params.get("target") == target and params.get("query") and params.get("action") in {"play_track", "play_playlist"}:
+            return commands
+    playlist = bool(re.search(r"\bplaylist\b", query, re.IGNORECASE))
+    return [{"type": "media_control", "params": {
+        "action": "play_playlist" if playlist else "play_track", "target": target, "query": query,
+    }}]
+
+
+def _keep_spotify_correction_as_one_action(user_text: str, commands: List[dict]) -> Tuple[List[dict], Optional[str]]:
+    """A spoken correction replaces the earlier Spotify action in this utterance."""
+    normalized = _normalize_intent_text(user_text)
+    if "spotify" not in normalized:
+        return commands, None
+    corrections = re.split(r"\b(?:i mean|actually|rather)\b", normalized)
+    if len(corrections) < 2:
+        return commands, None
+    final_request = corrections[-1].strip()
+    media_reference = re.search(r"\b(?:spotify|playback|music|it)\b", final_request)
+    if not media_reference and not re.fullmatch(r"(?:please )?(?:pause|stop|resume|play)", final_request):
+        return commands, None
+    if re.search(r"\b(?:not|dont|don t|never)\b", final_request):
+        return commands, None
+    # 'post the playback' is a common phonetic transcription of 'pause the
+    # playback'. Limit that repair to this explicit playback correction.
+    if re.search(r"\b(?:pause|stop)\b", final_request) or re.search(r"\bpost (?:the )?playback\b", final_request):
+        action, response = "pause", "Spotify paused."
+    elif re.search(r"\bresume\b", final_request) or re.fullmatch(r"(?:please )?play(?: (?:the )?(?:playback|music|spotify|it))?", final_request):
+        action, response = "play", "Spotify playback resumed."
+    else:
+        return commands, None
+    retained = [command for command in commands if not (
+        command.get("type") == "media_control"
+        and command.get("params", {}).get("target") == "spotify"
+    )]
+    retained.append({"type": "media_control", "params": {"action": action, "target": "spotify"}})
+    return retained, response
+
+
 _SYSTEM_ACTION_TERMS = {
     "lock": ("lock",),
     "shutdown": ("shutdown", "shut down", "turn off the computer", "turn off computer", "turn off the pc"),
@@ -342,6 +397,8 @@ def infer_simple_fan_command(user_text: str) -> Optional[Dict[str, Any]]:
     # Only apply this heuristic to short, direct fan commands.
     if any(token in normalized.split() for token in {"and", "then", "after"}):
         return None
+    if re.search(r"\b(?:in|within)\s+(?:\d+|one|a|an)\s*(?:seconds?|minutes?|hours?)\b", normalized):
+        return None
 
     off_patterns = (
         r"\b(?:turn|trun|switch|shut)\s+(?:the\s+)?fan\s+(?:off|of)\b",
@@ -395,6 +452,9 @@ def build_fan_spoken_response(payload: Any) -> Optional[str]:
     device = payload.get("device") if isinstance(payload.get("device"), dict) else {}
     summary = device.get("summary") if isinstance(device, dict) else {}
     confirmed_state = str(summary.get("state") or "").lower() if isinstance(summary, dict) else ""
+
+    if control_id == "power" and payload.get("unverified_toggle"):
+        return "I sent a power toggle to the fan."
 
     if control_id == "power" and target in {"on", "off"}:
         if "already" in message:
@@ -487,9 +547,15 @@ class AidenAssistant:
         return False
 
     async def _play_activation_ready_cue(self, from_hotkey: bool) -> None:
-        """Play acknowledgement (for wake word) followed by the speak-now cue."""
-        if not from_hotkey:
-            await self._play_wake_acknowledgement()
+        """Play the cue while capture is already recording.
+
+        Spoken acknowledgements would be captured as speech and could end the
+        recording before the user starts. Use the same short cue for both paths.
+        """
+        started_at = getattr(self, "_activation_started_at", None)
+        if started_at is not None:
+            import time
+            logger.info("[TIMING] Activation to ready cue: %.0f ms", (time.monotonic() - started_at) * 1000)
         await self._play_sound_reliably("activation")
 
     async def _play_continuous_command_confirmation(self) -> None:
@@ -646,7 +712,7 @@ class AidenAssistant:
             return ai_response
 
         commands = ai_response.get("commands") or []
-        if any((cmd.get("type") or "").lower() == "fan_control" for cmd in commands):
+        if commands:
             return ai_response
 
         fan_response = infer_simple_fan_command(user_text)
@@ -680,15 +746,30 @@ class AidenAssistant:
             
             # Wait for TTS to finish speaking before listening
             logger.debug("Waiting for TTS to complete before auto-listen...")
-            await self.tts.wait_until_done(timeout=10.0)
+            if not await self._wait_for_voice_output():
+                logger.warning("Follow-up skipped because Aiden's audio has not finished")
+                return
             
             # Brief pause after TTS for natural conversation flow
             await asyncio.sleep(0.3)
             
-            # Listen for user response (activation sound plays automatically)
-            success, user_text, error = await self.stt.transcribe(play_activation_sound=True)
+            if getattr(self, "_voice_stop_requested", False):
+                return
+            # Follow-ups need the same exclusive microphone handoff as wake
+            # activation. TTS may have resumed the detector after its last word.
+            if not await self._acquire_voice_capture():
+                return
+            try:
+                self._is_listening = True
+                success, user_text, error = await self.stt.transcribe(play_activation_sound=True)
+            finally:
+                self._is_listening = False
+                await self._release_voice_capture()
             
             if not success:
+                if error in {"non_speech", "cancelled", "No speech detected"}:
+                    logger.info("No spoken follow-up; returning to standby (%s)", error)
+                    return
                 if error == "timeout":
                     logger.info("No follow-up response - timeout")
                     await self.context_manager.refresh_pending_clarification_grace()
@@ -1042,10 +1123,54 @@ class AidenAssistant:
             response = "Done."
         if not response:
             response = "Done."
-        for message in result_messages:
-            if message.casefold() not in response.casefold():
-                response = f"{response} {message}".strip()
+        # The proposed response already combines all requested actions in the
+        # user's language. Tool messages such as "Starting Spotify playback"
+        # are per-command status strings, not extra spoken replies.
         return response
+
+    async def _localized_failure_reply(
+        self,
+        llm: Any,
+        user_text: str,
+        proposed_response: str,
+        execution_results: List[Dict[str, Any]],
+        fallback: str,
+    ) -> str:
+        """Naturalize a mixed result without losing a failed action."""
+        outcomes = []
+        for result in execution_results:
+            params = result.get("params") or {}
+            success = bool(result.get("success"))
+            outcomes.append({
+                "command": result.get("command"),
+                "action": params.get("action") or params.get("operation"),
+                "target": params.get("target"),
+                "duration_seconds": params.get("duration_seconds"),
+                "success": success,
+                "failure": None if success else self._describe_failed_action(result),
+            })
+
+        try:
+            result = await llm.chat([
+                {"role": "system", "content": (
+                    "Write one short, natural spoken reply in the user's language. "
+                    "Use only the actual execution outcomes provided. Say which action failed "
+                    "and which succeeded; never say a failed action succeeded. "
+                    "Avoid raw tool status phrases. Return JSON with commands: [] and the reply in response."
+                )},
+                {"role": "user", "content": json.dumps({
+                    "request": user_text,
+                    "draft_reply": proposed_response,
+                    "outcomes": outcomes,
+                }, ensure_ascii=False)},
+            ])
+            if isinstance(result, dict) and result.get("commands") == []:
+                reply = result.get("response")
+                if isinstance(reply, str) and reply.strip():
+                    return reply.strip()
+        except Exception as exc:
+            logger.warning("Could not localize partial action result: %s", exc)
+        return fallback
     
     async def handle_voice_activation(
         self,
@@ -1061,12 +1186,20 @@ class AidenAssistant:
         """
         import asyncio
         
+        import time as _time
+        _t0 = _time.monotonic()
+        self._activation_started_at = _t0
+
         # BARGE-IN: Cancel the main conversation task if one is currently processing
         if self._current_request_task and not self._current_request_task.done():
             logger.warning("Barge-in: Cancelling old request context")
-            self._current_request_task.cancel()
+            self.request_immediate_stop()
+            previous_request = self._current_request_task
+            previous_request.cancel()
+            await asyncio.gather(previous_request, return_exceptions=True)
             
         self._current_request_task = asyncio.current_task()
+        self._voice_stop_requested = False
             
         # BARGE-IN: Cancel any currently downloading TTS sentences
         for task in list(self._speak_tasks):
@@ -1082,51 +1215,46 @@ class AidenAssistant:
         # The wake detector releases its PortAudio stream on another thread.
         # Wait for that handoff before reopening STT so the first command does
         # not land on a stale/silent stream after a long idle period.
-        try:
-            from src.core.wake_word_manager import get_wake_word_manager
-            manager = get_wake_word_manager()
-            detector = manager.detector if manager else None
-            wait_for_release = getattr(detector, "wait_until_stream_released", None)
-            if callable(wait_for_release):
-                released = await asyncio.to_thread(wait_for_release, 0.5)
-                if not released:
-                    logger.warning("Wake-word microphone did not release before STT handoff")
-        except Exception as exc:
-            logger.debug("Wake-word stream handoff check skipped: %s", exc)
+        if not await self._acquire_voice_capture():
+            self.is_processing = False
+            from src.utils.websocket_broadcast import broadcast_voice_status
+            await broadcast_voice_status("idle", speaking=False, active=False)
+            return
 
         from src.utils.websocket_broadcast import broadcast_voice_status
 
         duck_state = None
 
-        # Prepare media ducking before the mic-open cue so STT can start as soon
-        # as the sound finishes instead of doing this work afterward.
         try:
-            from src.media.media_router import get_media_router
-            duck_state = await get_media_router().duck_for_listening()
-        except Exception as exc:
-            logger.debug(f"STT media ducking unavailable before activation cue: {exc}")
+            # Prepare media ducking before the mic-open cue so STT can start as soon
+            # as the sound finishes instead of doing this work afterward.
+            try:
+                from src.media.media_router import get_media_router
+                duck_state = await get_media_router().duck_for_listening()
+            except Exception as exc:
+                logger.debug(f"STT media ducking unavailable before activation cue: {exc}")
 
-        captured_command = self._should_use_buffered_command(
-            from_hotkey,
-            wake_detection,
-        )
-        if captured_command:
-            # Audio is already complete, so this is a confirmation rather than
-            # a speak-now cue. Do not publish a misleading listening state.
-            await self._play_continuous_command_confirmation()
-        else:
-            # Refresh the USB capture stream *before* the cue. A stream that
-            # has been idle for a long time can appear open yet return silence.
-            # The activation sound must mean the fresh microphone is already
-            # ready, never that it is about to be opened.
-            mic_ready = await asyncio.to_thread(self.stt.refresh_microphone)
-            if not mic_ready:
-                logger.warning("STT microphone refresh failed; attempting normal listen")
-        
-        import time as _time
-        _t0 = _time.monotonic()
-
-        try:
+            captured_command = self._should_use_buffered_command(
+                from_hotkey,
+                wake_detection,
+            )
+            if captured_command:
+                # Audio is already complete, so this is a confirmation rather than
+                # a speak-now cue. Do not publish a misleading listening state.
+                await self._play_continuous_command_confirmation()
+            else:
+                # Refresh the USB capture stream *before* the cue. A stream that
+                # has been idle for a long time can appear open yet return silence.
+                # The activation sound must mean the fresh microphone is already
+                # ready, never that it is about to be opened.
+                mic_ready = await asyncio.to_thread(self.stt.refresh_microphone)
+                if not mic_ready:
+                    logger.warning("STT microphone refresh failed; attempting normal listen")
+                elif not from_hotkey:
+                    # Keep the friendly acknowledgement before the speak-now
+                    # cue. STT's readiness check clears its speaker echo before
+                    # capture is armed; the beep itself never contains voice.
+                    await self._play_wake_acknowledgement()
             # ── Step 1: STT ──────────────────────────────────────────────
             _t_stt_start = _time.monotonic()
             if captured_command and wake_detection is not None:
@@ -1189,6 +1317,8 @@ class AidenAssistant:
                     logger.info("No speech detected - timeout")
                 elif error == "cancelled":
                     logger.info("Voice listening cancelled by user hotkey")
+                elif error == "non_speech":
+                    logger.info("Ignoring cue/noise recognition; returning to standby")
                 else:
                     logger.warning(f"STT failed: {error}")
                     await self.tts.speak("Sorry, I didn't catch that.")
@@ -1199,6 +1329,9 @@ class AidenAssistant:
                 await broadcast_voice_status("idle", speaking=False, active=False)
                 return
             
+            # Capture is complete; release the device so a new wake phrase can
+            # interrupt background AI work instead of waiting for the reply.
+            await self._release_voice_capture()
             logger.info(f"USER: {user_text}")
             
             # Broadcast user message to dashboard
@@ -1244,10 +1377,15 @@ class AidenAssistant:
                     # the queued reply is audible prevents music from fighting
                     # Aiden's response and reliably resumes only what Aiden
                     # paused once the interaction is complete.
-                    await self._wait_for_voice_output()
-                    await get_media_router().restore_after_listening(duck_state)
+                    try:
+                        if not getattr(self, "_voice_stop_requested", False):
+                            await self._wait_for_voice_output()
+                    finally:
+                        await get_media_router().restore_after_listening(duck_state)
                 except Exception as exc:
                     logger.debug(f"Voice interaction media restore skipped: {exc}")
+            from src.media.audio_session_ducker import get_audio_session_ducker
+            get_audio_session_ducker().restore_all()
             self._is_listening = False
             self.is_processing = False
             # Broadcast idle status when conversation ends
@@ -1266,7 +1404,39 @@ class AidenAssistant:
             except Exception as e:
                 logger.debug(f"Could not resume wake word detector: {e}")
 
-    async def _wait_for_voice_output(self) -> None:
+    async def _acquire_voice_capture(self) -> bool:
+        """Pause wake detection and prove it released the shared microphone."""
+        from src.core.wake_word_manager import get_wake_word_manager
+        manager = get_wake_word_manager()
+        detector = manager.detector if manager else None
+        if detector is None:
+            return True
+        try:
+            detector.pause()
+            wait_for_release = getattr(detector, "wait_until_stream_released", None)
+            if callable(wait_for_release):
+                if not await asyncio.to_thread(wait_for_release, 5.0):
+                    logger.error("Wake-word microphone did not release; listening aborted before cue")
+                    detector.resume()
+                    return False
+            return True
+        except asyncio.CancelledError:
+            detector.resume()
+            raise
+        except Exception:
+            logger.exception("Wake-word microphone handoff failed; listening aborted before cue")
+            detector.resume()
+            return False
+
+    async def _release_voice_capture(self) -> None:
+        """Return microphone ownership to wake detection during AI work."""
+        await asyncio.to_thread(self.stt.close)
+        from src.core.wake_word_manager import get_wake_word_manager
+        manager = get_wake_word_manager()
+        if manager and manager.get_state() and manager.detector:
+            manager.detector.resume()
+
+    async def _wait_for_voice_output(self) -> bool:
         """Wait for background response generation and queued playback to end."""
         # _process_user_message intentionally starts some replies in the
         # background. Yielding once lets those tasks register themselves before
@@ -1283,11 +1453,12 @@ class AidenAssistant:
             if pending:
                 logger.warning("Timed out waiting for response generation before media restore.")
 
-        await self.tts.wait_until_done(timeout=60.0)
+        return await self.tts.wait_until_done(timeout=60.0)
 
     def request_immediate_stop(self) -> bool:
         """Best-effort synchronous stop for hotkey threads."""
         cancelled = False
+        self._voice_stop_requested = True
 
         if self._is_listening:
             self.stt.request_stop()
@@ -1313,6 +1484,11 @@ class AidenAssistant:
                 task.cancel()
                 cancelled = True
 
+        # Stop must immediately release Aiden's mutes even if capture was
+        # cancelled before its per-listen state was returned.
+        from src.media.audio_session_ducker import get_audio_session_ducker
+        get_audio_session_ducker().restore_all()
+
         if cancelled:
             try:
                 await self.tts.play_sound_now("stopped")
@@ -1321,7 +1497,7 @@ class AidenAssistant:
 
         return cancelled
     
-    async def handle_text_message(self, text: str, source: str = "local") -> str:
+    async def handle_text_message(self, text: str, source: str = "local", client_message_id: Optional[str] = None) -> str:
         """
         Handle text-based message (from dashboard/API)
         
@@ -1332,15 +1508,26 @@ class AidenAssistant:
         Returns:
             Assistant's response text
         """
-        from src.utils.websocket_broadcast import broadcast_voice_status
+        from src.utils.websocket_broadcast import broadcast_voice_status, broadcast_message
         try:
             logger.info(f"TEXT MESSAGE: {text} (source: {source})")
+            if not self.context_manager.current_conversation_id:
+                await self.context_manager.start_conversation(mode="text")
+            await broadcast_message("message", {
+                "role": "user",
+                "content": text,
+                "source": source,
+                "client_message_id": client_message_id,
+                "timestamp": __import__('datetime').datetime.now().isoformat(),
+            })
             
             # Broadcast processing status so the UI knows we're thinking
-            await broadcast_voice_status("processing", speaking=False, active=True)
+            if source != "web_text":
+                await broadcast_voice_status("processing", speaking=False, active=True)
             
             # Process with AI
-            response = await self._process_user_message(text, source=source)
+            options = {"client_message_id": client_message_id} if client_message_id else {}
+            response = await self._process_user_message(text, source=source, **options)
             
             # Note: tts.speak (inside _process_user_message) will broadcast "speaking" and then "idle"
             # But if it didn't speak (e.g. error or silent), we ensure it returns to idle here.
@@ -1352,7 +1539,8 @@ class AidenAssistant:
             
         except Exception as e:
             logger.error(f"Error handling text message: {e}", exc_info=True)
-            await broadcast_voice_status("idle", speaking=False, active=False)
+            if source != "web_text":
+                await broadcast_voice_status("idle", speaking=False, active=False)
             return "Sorry, something went wrong."
     
     @staticmethod
@@ -1398,7 +1586,7 @@ class AidenAssistant:
             "expecting_followup": False,
         }
 
-    async def _process_user_message(self, user_text: str, source: str = "local") -> str:
+    async def _process_user_message(self, user_text: str, source: str = "local", client_message_id: Optional[str] = None) -> str:
         """
         Core message processing logic with 2-pass AI system:
         Pass 1: AI decides what context it needs
@@ -1428,7 +1616,8 @@ class AidenAssistant:
                 if not ai_response:
                     logger.error(f"Empty response from {self.settings.app.llm_provider.upper()} AI (direct)")
                     response_text = "Sorry, I couldn't process that."
-                    await self.tts.speak(response_text, source=source)
+                    if source != "web_text":
+                        await self.tts.speak(response_text, source=source)
                     return response_text
                 needs_context = []
             else:
@@ -1440,7 +1629,8 @@ class AidenAssistant:
                 if not ai_response_pass1:
                     logger.error(f"Empty response from {self.settings.app.llm_provider.upper()} AI (Pass 1)")
                     response_text = "Sorry, I couldn't process that."
-                    await self.tts.speak(response_text, source=source)
+                    if source != "web_text":
+                        await self.tts.speak(response_text, source=source)
                     return response_text
 
                 needs_context = ai_response_pass1.get("needs_context", [])
@@ -1545,6 +1735,7 @@ class AidenAssistant:
             intent = ai_response.get("intent", "unknown")
             raw_commands = ai_response.get("commands", [])
             commands = _validated_ai_commands(raw_commands)
+            commands = _repair_youtube_search_request(user_text, commands)
             response_text = str(ai_response.get("response") or "Done.")
             update_context = ai_response.get("update_context", True)
             if isinstance(raw_commands, list) and len(commands) < len(raw_commands):
@@ -1559,6 +1750,11 @@ class AidenAssistant:
                 response_text = delayed_reply
                 ai_response["expecting_followup"] = False
                 logger.warning("Corrected a split or mistimed delayed-close plan")
+            commands, correction_reply = _keep_spotify_correction_as_one_action(user_text, commands)
+            if correction_reply:
+                response_text = correction_reply
+                ai_response["expecting_followup"] = False
+                logger.info("Using the final spoken Spotify correction as one action")
             
             logger.info(f"AI INTENT: {intent}")
             logger.info(f"AI COMMANDS: {len(commands)}")
@@ -1590,6 +1786,12 @@ class AidenAssistant:
                         )
                 response_text = self._response_after_execution(response_text, execution_results)
 
+                if len(execution_results) > 1 and any(not result.get("success") for result in execution_results):
+                    response_text = await self._localized_failure_reply(
+                        llm, user_text, str(ai_response.get("response") or ""),
+                        execution_results, response_text,
+                    )
+
                 if len(execution_results) == 1 and execution_results[0].get("success"):
                     fan_result = execution_results[0]
                     if fan_result.get("command") == "fan_control" and fan_result.get("response_data"):
@@ -1604,16 +1806,19 @@ class AidenAssistant:
                 from src.utils.websocket_broadcast import broadcast_message
                 await broadcast_message("message", {
                     "role": "assistant",
+                    "source": source,
+                    "client_message_id": client_message_id,
                     "content": response_text,
                     "timestamp": __import__('datetime').datetime.now().isoformat(),
                 })
             except Exception:
                 pass
 
-            if commands or expecting_followup:
-                await self._speak_async(response_text, source=source)
-            else:
-                asyncio.create_task(self._speak_async(response_text, source=source))
+            if source != "web_text":
+                if commands or expecting_followup:
+                    await self._speak_async(response_text, source=source)
+                else:
+                    asyncio.create_task(self._speak_async(response_text, source=source))
             
             # Update context if needed
             if update_context:
@@ -1642,7 +1847,8 @@ class AidenAssistant:
         except Exception as e:
             logger.error(f"Error processing message: {e}", exc_info=True)
             response_text = "Sorry, I encountered an error."
-            await self.tts.speak(response_text, source=source)
+            if source != "web_text":
+                await self.tts.speak(response_text, source=source)
             return response_text
     
     async def greet_user(self):

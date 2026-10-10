@@ -10,13 +10,30 @@ logger = get_logger(__name__)
 
 # Global broadcast callback
 _broadcast_callback: Optional[Callable] = None
+_broadcast_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
 def set_broadcast_callback(callback: Callable):
     """Set the broadcast callback function"""
-    global _broadcast_callback
+    global _broadcast_callback, _broadcast_loop
     _broadcast_callback = callback
+    try:
+        _broadcast_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        _broadcast_loop = None
     logger.info("WebSocket broadcast callback configured")
+
+
+def broadcast_from_thread(message_type: str, data: Dict[str, Any]) -> bool:
+    """Schedule display updates on the API loop from audio capture threads."""
+    loop = _broadcast_loop
+    if not _broadcast_callback or not loop or loop.is_closed():
+        return False
+    try:
+        loop.call_soon_threadsafe(lambda: asyncio.create_task(broadcast_message(message_type, data)))
+        return True
+    except RuntimeError:
+        return False
 
 
 async def broadcast_voice_status(status: str, speaking: bool = False, active: Optional[bool] = None):

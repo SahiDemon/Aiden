@@ -152,4 +152,19 @@ describe('SmartDeviceCard', () => {
 
     expect(api.controlESP32).toHaveBeenCalledWith({ control_id: 'speed', target: '3' })
   })
+  it('shows every timer duration in one selector and sends the selected target', async () => {
+    await act(async () => root.render(<SmartDeviceCard connected />))
+    const timer = container.querySelector('select[aria-label="Turn off after"]')
+    expect(timer.options.length).toBe(17)
+    await act(async () => { timer.value='7.5'; timer.dispatchEvent(new Event('change',{bubbles:true})) })
+    expect(api.controlESP32).toHaveBeenCalledWith({control_id:'timer',target:'7.5'})
+  })
+  it('keeps physical device controls disabled while the PC is offline', async () => {
+    await act(async () => root.render(<SmartDeviceCard connected={false} />))
+    const switches = [...container.querySelectorAll('[role="switch"]')]
+    expect(switches.length).toBeGreaterThan(0)
+    expect(switches.every(button=>button.disabled)).toBe(true)
+    expect(api.getESP32Device).not.toHaveBeenCalled()
+  })
+
 })

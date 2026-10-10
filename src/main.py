@@ -423,7 +423,10 @@ async def initialize_services():
         # ensures a wake acknowledgement is only possible after STT startup.
         logger.info("Pre-warming voice activation pipeline...")
         from src.media.media_router import get_media_router
-        get_media_router()
+        media_router = get_media_router()
+        media_router.spotify_client.refresh_token_in_background()
+        from src.ai.groq_client import get_groq_client
+        await get_groq_client()
         if assistant.stt.microphone_ready:
             logger.info("✅ Voice activation pipeline ready (microphone pre-warmed)")
         else:

@@ -420,7 +420,7 @@ class CommandExecutor:
         """Handle ESP32 fan control command.
 
         For power, speed, mode, osc, and timer commands the ESP32 exposes
-        simple shortcut GET routes (e.g. GET /off, GET /speed/3).  We use
+        simple shortcut GET routes (e.g. GET /power, GET /speed/3).  We use
         direct_toggle() which fires a SINGLE HTTP request with no pre/post
         state checks, keeping latency to <200 ms on LAN.
 
@@ -443,11 +443,12 @@ class CommandExecutor:
                 {"on", "off", "turn_on", "turn_off", "stop", "toggle"}):
             power_target = (target or str(legacy_action or "")).lower()
             if power_target in {"on", "turn_on"}:
-                target, shortcut_path = "on", "/on"
+                target = "on"
             elif power_target in {"off", "turn_off", "stop"}:
-                target, shortcut_path = "off", "/off"
-            else:
-                shortcut_path = "/power"
+                target = "off"
+            # The ESP32's reported state can disagree with the physical fan.
+            # /on and /off may then skip the IR signal as "already" done.
+            shortcut_path = "/power"
             control_id = "power"
         elif control_id in {"speed", "mode", "timer", "osc"} and target is not None:
             shortcut_path = f"/{control_id}/{target}"
@@ -469,6 +470,8 @@ class CommandExecutor:
             payload["type"] = "fan_control"
             payload["control_id"] = control_id
             payload["target"] = target
+            if control_id == "power":
+                payload["unverified_toggle"] = True
             return True, payload
 
         # ── Slow path: full metadata-aware request ────────────────────────

@@ -84,6 +84,9 @@ class OpenWakeWordDetector:
         self.strong_threshold = float(
             profile.get("strong_threshold", getattr(cfg, "oww_strong_threshold", 0.75))
         )
+        self.base_rescue_threshold = float(
+            profile.get("base_rescue_threshold", getattr(cfg, "oww_base_rescue_threshold", 1.0))
+        )
         self.smoothing_window = max(
             1,
             int(profile.get("smoothing_window", getattr(cfg, "oww_smoothing_window", 3))),
@@ -175,6 +178,7 @@ class OpenWakeWordDetector:
                 "strong_threshold",
                 "vad_threshold",
                 "verifier_gate",
+                "base_rescue_threshold",
             ):
                 if key in data and not 0.0 <= float(data[key]) <= 1.0:
                     raise ValueError(f"{key} must be between 0 and 1")
@@ -374,6 +378,7 @@ class OpenWakeWordDetector:
         self.threshold = self._legacy_threshold
         self.vad_threshold = self._legacy_vad_threshold
         self.strong_threshold = max(self.threshold, 1.0)
+        self.base_rescue_threshold = 1.0
         self.smoothing_window = 1
         self.smoothing_hits = 1
         self._score_history.clear()
@@ -536,7 +541,10 @@ class OpenWakeWordDetector:
                     base_score,
                 )
                 total_latency_ms = (time.perf_counter() - inference_started) * 1_000
-                activated, normal_hits = self._activation_decision(model_name, score)
+                activated, normal_hits = self._activation_decision(
+                    model_name, score, base_score=base_score,
+                    verifier_score=verifier_score, vad_score=vad_score,
+                )
 
                 if score >= min(self.threshold, self.verifier_gate):
                     self._log_near_miss(
@@ -633,7 +641,10 @@ class OpenWakeWordDetector:
         frames = list(prediction_buffer)[-7:-4]
         return float(max(frames)) if frames else 0.0
 
-    def _activation_decision(self, model_name: str, score: float) -> tuple[bool, int]:
+    def _activation_decision(
+        self, model_name: str, score: float, *, base_score: Optional[float] = None,
+        verifier_score: Optional[float] = None, vad_score: float = 0.0,
+    ) -> tuple[bool, int]:
         history = self._score_history.setdefault(
             model_name,
             collections.deque(maxlen=self.smoothing_window),
@@ -641,6 +652,18 @@ class OpenWakeWordDetector:
         history.append(score)
         normal_hits = sum(item >= self.threshold for item in history)
         activated = score >= self.strong_threshold or normal_hits >= self.smoothing_hits
+        rescue_threshold = getattr(self, "base_rescue_threshold", 1.0)
+        # A personal voice classifier can under-score a genuine pronunciation.
+        # An explicitly tuned profile may rescue a strong phrase-model match,
+        # but only with high speech confidence and some verifier agreement.
+        base_rescue = (
+            rescue_threshold < 1.0
+            and base_score is not None and base_score >= rescue_threshold
+            and verifier_score is not None
+            and verifier_score >= self.verifier_gate
+            and vad_score >= max(0.8, self.vad_threshold)
+        )
+        activated = activated or base_rescue
         return activated, normal_hits
 
     @staticmethod
@@ -718,19 +741,40 @@ class OpenWakeWordDetector:
         silence_frames = 0
         max_frames = int(5_000 / _FRAME_MS)
         stop_after_silence = max(4, int(560 / _FRAME_MS))
-        for _ in range(max_frames - probe_frames):
-            try:
-                frame = self._stream.read(_FRAME_SAMPLES, exception_on_overflow=False)
-            except Exception:
-                break
-            tail.append(frame)
-            value = self._rms(np.frombuffer(frame, dtype=np.int16))
-            if value >= gate:
-                silence_frames = 0
-            else:
-                silence_frames += 1
-                if silence_frames >= stop_after_silence:
+        from src.utils.websocket_broadcast import broadcast_from_thread
+        preview = None
+        if broadcast_from_thread("voice_activity", {
+            "status": "listening", "active": True, "speaking": False, "source": "local",
+        }):
+            from src.speech.live_transcript import LiveTranscript
+            preview = LiveTranscript(
+                get_settings().speech.vosk_model_path, _SAMPLE_RATE,
+                lambda text: broadcast_from_thread("voice_transcript", {"text": text, "source": "local"}),
+            )
+            for frame in tail:
+                preview.feed(frame)
+        try:
+            for _ in range(max_frames - probe_frames):
+                try:
+                    frame = self._stream.read(_FRAME_SAMPLES, exception_on_overflow=False)
+                except Exception:
                     break
+                tail.append(frame)
+                if preview:
+                    preview.feed(frame)
+                value = self._rms(np.frombuffer(frame, dtype=np.int16))
+                if value >= gate:
+                    silence_frames = 0
+                else:
+                    silence_frames += 1
+                    if silence_frames >= stop_after_silence:
+                        break
+        finally:
+            if preview:
+                preview.close()
+                broadcast_from_thread("voice_activity", {
+                    "status": "processing", "active": True, "speaking": False, "source": "local",
+                })
 
         # Include enough pre-roll for Whisper to hear and remove the wake phrase.
         pcm = b"".join(list(self._audio_history) + tail)

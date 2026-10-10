@@ -146,6 +146,59 @@ def test_debounce_uses_monotonic_trigger_interval():
     assert detector._is_debounced(102.0) is False
 
 
+def near_miss_detector():
+    detector = OpenWakeWordDetector.__new__(OpenWakeWordDetector)
+    detector.threshold = 0.30
+    detector.strong_threshold = 0.50
+    detector.smoothing_window = 3
+    detector.smoothing_hits = 1
+    detector.verifier_gate = 0.15
+    detector.vad_threshold = 0.2
+    detector.base_rescue_threshold = 0.75
+    detector._score_history = {}
+    return detector
+
+
+@pytest.mark.parametrize("base,verifier,vad", [
+    (0.805, 0.208, 0.976),
+    (0.444, 0.369, 0.980),
+    (0.183, 0.303, 0.984),
+    (0.231, 0.395, 0.929),
+    (0.424, 0.747, 0.948),
+])
+def test_user_confirmed_live_wake_samples_activate_on_their_first_hit(base, verifier, vad):
+    detector = near_miss_detector()
+    activated, _ = detector._activation_decision(
+        "hey_aiden_v5", verifier, base_score=base,
+        verifier_score=verifier, vad_score=vad,
+    )
+    assert activated
+
+
+@pytest.mark.parametrize("base,verifier,vad", [
+    (0.20, 0.20, 0.98),  # high speech probability alone is not a wake phrase
+    (0.70, 0.208, 0.98),  # base model below rescue threshold
+    (0.805, 0.05, 0.98),  # verifier has no agreement
+    (0.805, 0.208, 0.20),  # non-speech must not use the rescue path
+])
+def test_base_rescue_still_requires_phrase_speech_and_verifier_evidence(base, verifier, vad):
+    detector = near_miss_detector()
+    activated, _ = detector._activation_decision(
+        "hey_aiden_v5", verifier, base_score=base,
+        verifier_score=verifier, vad_score=vad,
+    )
+    assert not activated
+
+
+def test_base_rescue_is_disabled_for_untuned_profiles():
+    detector = near_miss_detector()
+    detector.base_rescue_threshold = 1.0
+    assert not detector._activation_decision(
+        "hey_aiden_v5", 0.208, base_score=0.805,
+        verifier_score=0.208, vad_score=0.976,
+    )[0]
+
+
 def test_detection_loop_does_not_open_microphone_after_stop_during_model_load():
     detector = OpenWakeWordDetector.__new__(OpenWakeWordDetector)
     detector._running = True
