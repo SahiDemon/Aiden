@@ -1601,6 +1601,7 @@ class AidenAssistant:
         """
         try:
             # Get conversation context
+            plan_started_at = time.perf_counter()
             context = await self.context_manager.get_context()
 
             llm = await self._ensure_llm_client()
@@ -1759,6 +1760,8 @@ class AidenAssistant:
             logger.info(f"AI INTENT: {intent}")
             logger.info(f"AI COMMANDS: {len(commands)}")
             logger.info(f"AI RESPONSE: {response_text}")
+            logger.info("[TIMING] Context + AI plan: %.0f ms",
+                        (time.perf_counter() - plan_started_at) * 1000)
 
             expecting_followup = ai_response.get("expecting_followup", False)
 
@@ -1822,10 +1825,13 @@ class AidenAssistant:
             
             # Update context if needed
             if update_context:
+                context_started_at = time.perf_counter()
                 await self.context_manager.update_context(
                     user_message=user_text,
                     ai_response=ai_response
                 )
+                logger.info("[TIMING] Conversation context save: %.0f ms",
+                            (time.perf_counter() - context_started_at) * 1000)
             
             # Let AI decide if we should continue listening
             if expecting_followup:

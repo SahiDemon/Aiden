@@ -16,6 +16,7 @@ import pygame
 import subprocess
 import sys
 import threading
+import time
 from contextlib import suppress
 import numpy as np
 
@@ -226,6 +227,7 @@ class TTSEngine:
                     elif task_type == "speak":
                         audio_data = task.get("data")
                         text = task.get("text")
+                        self._active_speech_requested_at = task.get("requested_at")
                         
                         from src.speech.playback_events import register_playback, wait_for_playback
                         source = task.get("source", "local")
@@ -291,6 +293,7 @@ class TTSEngine:
             return
         
         try:
+            requested_at = time.perf_counter()
             logger.info(f"TTS: Speaking: '{text[:50]}...'")
             
             # Broadcast speaking status (will be done in queue processor)
@@ -300,6 +303,8 @@ class TTSEngine:
             
             # Try cache with proper error handling
             cached_audio = await self._get_cached_audio(text)
+            logger.info("[TIMING] TTS cache lookup: %.0f ms | provider=%s hit=%s",
+                        (time.perf_counter() - requested_at) * 1000, self.provider, bool(cached_audio))
             
             if cached_audio:
                 logger.debug("TTS: Using cached audio")
@@ -308,12 +313,14 @@ class TTSEngine:
                     "type": "speak",
                     "data": cached_audio,
                     "text": text,
-                    "source": source
+                    "source": source,
+                    "requested_at": requested_at,
                 })
             else:
                 logger.debug("TTS: Generating new audio")
                 # Try online generation first, fallback to offline
                 audio_data = None
+                generation_started_at = time.perf_counter()
                 try:
                     # Use appropriate provider
                     if self.provider == "kitten":
@@ -340,16 +347,21 @@ class TTSEngine:
                         logger.error(f"TTS: Offline fallback also failed: {offline_e}")
                 
                 if audio_data:
-                    # Cache it
-                    await self._cache_audio(text, audio_data)
-                    
-                    # Queue for playback
+                    logger.info("[TIMING] TTS generation: %.0f ms | provider=%s",
+                                (time.perf_counter() - generation_started_at) * 1000, self.provider)
+                    # Audio is ready. Playback need not wait for Redis writes;
+                    # still await persistence here so caching is not abandoned.
                     await self.audio_queue.put({
                         "type": "speak",
                         "data": audio_data,
                         "text": text,
-                        "source": source
+                        "source": source,
+                        "requested_at": requested_at,
                     })
+                    cache_started_at = time.perf_counter()
+                    await self._cache_audio(text, audio_data)
+                    logger.info("[TIMING] TTS cache save (overlaps playback): %.0f ms",
+                                (time.perf_counter() - cache_started_at) * 1000)
                 else:
                     raise ValueError("TTS generation failed (both online and offline)")
                 
@@ -681,6 +693,10 @@ class TTSEngine:
             # Play using pygame
             pygame.mixer.music.load(temp_file)
             pygame.mixer.music.play()
+            requested_at = getattr(self, "_active_speech_requested_at", None)
+            if requested_at is not None:
+                logger.info("[TIMING] TTS first local playback: %.0f ms | provider=%s",
+                            (time.perf_counter() - requested_at) * 1000, self.provider)
             
             # Wait for playback to finish
             from src.utils.websocket_broadcast import broadcast_message

@@ -128,3 +128,65 @@ async def test_new_activation_stops_output_before_waiting_for_old_cleanup(monkey
     monkeypatch.setattr("src.utils.websocket_broadcast.broadcast_voice_status", AsyncMock())
     await assistant.handle_voice_activation(from_hotkey=True)
     assert previous.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_generated_speech_can_play_while_cache_save_is_blocked():
+    engine = TTSEngine.__new__(TTSEngine)
+    engine.provider = "edge"
+    engine.audio_queue = asyncio.Queue()
+    engine._get_cached_audio = AsyncMock(return_value=None)
+    engine._generate_speech = AsyncMock(return_value=b"speech-audio")
+    save_started = asyncio.Event()
+    finish_save = asyncio.Event()
+
+    async def save(text, audio):
+        save_started.set()
+        await finish_save.wait()
+
+    engine._cache_audio = save
+    speaking = asyncio.create_task(engine.speak("Opening Chrome."))
+    try:
+        await asyncio.wait_for(save_started.wait(), .5)
+        # A stalled Redis write must not hold back already generated speech.
+        queued = await asyncio.wait_for(engine.audio_queue.get(), .1)
+        assert queued["data"] == b"speech-audio"
+        assert queued["text"] == "Opening Chrome."
+        assert queued["source"] == "local"
+        assert not speaking.done()
+        finish_save.set()
+        await speaking
+        assert engine.audio_queue.empty()
+    finally:
+        finish_save.set()
+        await speaking
+
+
+@pytest.mark.asyncio
+async def test_cache_failure_does_not_prevent_generated_audio_playback(monkeypatch):
+    engine = TTSEngine.__new__(TTSEngine)
+    engine.provider = "edge"
+    engine.audio_queue = asyncio.Queue()
+    engine._get_cached_audio = AsyncMock(return_value=None)
+    engine._generate_speech = AsyncMock(return_value=b"speech-audio")
+    redis = SimpleNamespace(cache_tts_audio=AsyncMock(side_effect=OSError("cache unavailable")))
+    monkeypatch.setattr("src.speech.tts.get_redis_client", AsyncMock(return_value=redis))
+    await engine.speak("Opening Chrome.")
+    assert engine.audio_queue.get_nowait()["data"] == b"speech-audio"
+    assert engine.audio_queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_cached_speech_does_not_regenerate_or_save_again():
+    engine = TTSEngine.__new__(TTSEngine)
+    engine.provider = "edge"
+    engine.audio_queue = asyncio.Queue()
+    engine._get_cached_audio = AsyncMock(return_value=b"cached-audio")
+    engine._generate_speech = AsyncMock()
+    engine._cache_audio = AsyncMock()
+    await engine.speak("Opening Chrome.", source="web")
+    queued = engine.audio_queue.get_nowait()
+    assert queued["data"] == b"cached-audio"
+    assert queued["source"] == "web"
+    engine._generate_speech.assert_not_awaited()
+    engine._cache_audio.assert_not_awaited()
