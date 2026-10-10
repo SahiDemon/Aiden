@@ -6,6 +6,7 @@ Supports multiple TTS providers: Edge TTS, Google Chirp 3 HD, and offline pyttsx
 import asyncio
 import hashlib
 import json
+import math
 from collections import OrderedDict
 import logging
 import os
@@ -80,6 +81,7 @@ class TTSEngine:
         self.temp_dir = tempfile.gettempdir()
         self._word_timings = OrderedDict()
         self._stream_stop = threading.Event()
+        self._speech_generation = 0
         
         # Google TTS specific settings
         self.google_voice = self.settings.speech.google_tts_voice
@@ -225,6 +227,7 @@ class TTSEngine:
                         finally:
                             self._active_stream_task = None
                     elif task_type == "speak":
+                        playback_generation = getattr(self, "_speech_generation", 0)
                         audio_data = task.get("data")
                         text = task.get("text")
                         self._active_speech_requested_at = task.get("requested_at")
@@ -242,6 +245,13 @@ class TTSEngine:
                         )
                         if text:
                             await broadcast_message("assistant_speaking", playback)
+
+                        if playback_generation != getattr(self, "_speech_generation", 0):
+                            from src.speech.playback_events import cancel_playback
+                            cancel_playback(playback["speech_id"])
+                            if source == "web":
+                                await wait_for_playback(playback["speech_id"])
+                            continue
 
                         wake_word_paused = self._pause_wake_word_detection()
                         try:
@@ -286,6 +296,8 @@ class TTSEngine:
         if not text or source == "web_text":
             return
 
+        generation = getattr(self, "_speech_generation", 0)
+
         if self.provider == "kitten" and source == "local":
             # Generate inside the playback queue to preserve order and start
             # playing progressive PCM without awaiting the complete response.
@@ -303,6 +315,8 @@ class TTSEngine:
             
             # Try cache with proper error handling
             cached_audio = await self._get_cached_audio(text)
+            if generation != getattr(self, "_speech_generation", 0):
+                return
             logger.info("[TIMING] TTS cache lookup: %.0f ms | provider=%s hit=%s",
                         (time.perf_counter() - requested_at) * 1000, self.provider, bool(cached_audio))
             
@@ -320,6 +334,7 @@ class TTSEngine:
                 logger.debug("TTS: Generating new audio")
                 # Try online generation first, fallback to offline
                 audio_data = None
+                cache_generated_audio = True
                 generation_started_at = time.perf_counter()
                 try:
                     # Use appropriate provider
@@ -333,6 +348,8 @@ class TTSEngine:
                     else:  # offline
                         audio_data = await self._generate_offline_speech(text)
                 except Exception as e:
+                    if generation != getattr(self, "_speech_generation", 0):
+                        return
                     if self.provider == "kitten" and not self.settings.speech.kitten_fallback:
                         raise
                     error_str = str(e)
@@ -342,10 +359,13 @@ class TTSEngine:
                         logger.warning(f"TTS: {self.provider.upper()} failed, trying offline fallback: {e}")
                     
                     try:
+                        cache_generated_audio = False
                         audio_data = await self._generate_offline_speech(text)
                     except Exception as offline_e:
                         logger.error(f"TTS: Offline fallback also failed: {offline_e}")
                 
+                if generation != getattr(self, "_speech_generation", 0):
+                    return
                 if audio_data:
                     logger.info("[TIMING] TTS generation: %.0f ms | provider=%s",
                                 (time.perf_counter() - generation_started_at) * 1000, self.provider)
@@ -359,7 +379,8 @@ class TTSEngine:
                         "requested_at": requested_at,
                     })
                     cache_started_at = time.perf_counter()
-                    await self._cache_audio(text, audio_data)
+                    if cache_generated_audio:
+                        await self._cache_audio(text, audio_data)
                     logger.info("[TIMING] TTS cache save (overlaps playback): %.0f ms",
                                 (time.perf_counter() - cache_started_at) * 1000)
                 else:
@@ -381,7 +402,19 @@ class TTSEngine:
                 key = "tts:words:" + hashlib.sha256(audio).hexdigest()
                 raw = await redis.get(key)
                 if raw:
-                    self._remember_timings(audio, json.loads(raw))
+                    words = json.loads(raw)
+                    if not isinstance(words, list) or any(
+                        not isinstance(word, dict)
+                        or not isinstance(word.get("text"), str)
+                        or not isinstance(word.get("start"), (int, float))
+                        or not isinstance(word.get("end"), (int, float))
+                        or not math.isfinite(word["start"])
+                        or not math.isfinite(word["end"])
+                        or not 0 <= word["start"] <= word["end"]
+                        for word in words
+                    ):
+                        raise ValueError("Invalid cached word timings")
+                    self._remember_timings(audio, words)
                 elif self.provider == "edge" and audio[:4] != b"RIFF":
                     # Old audio has no boundaries. Regenerate once to populate them.
                     return None
@@ -408,7 +441,19 @@ class TTSEngine:
         if self.provider == "kitten":
             speech = self.settings.speech
             return f"kitten:{speech.kitten_tts_model}:{speech.kitten_tts_voice}:{speech.kitten_tts_speed}:{text}"
-        return text
+        if self.provider == "edge":
+            identity = [self.provider, getattr(self, "voice_id", ""), self._edge_rate()]
+        elif self.provider == "google":
+            identity = [self.provider, getattr(self, "google_voice", ""),
+                        getattr(self, "google_pitch", 0), getattr(self, "google_speaking_rate", 1)]
+        else:
+            identity = [self.provider, getattr(self, "voice_id", ""), getattr(self, "rate", 1)]
+        digest = hashlib.sha256(json.dumps([identity, text]).encode("utf-8")).hexdigest()
+        return f"tts:v2:{digest}"
+
+    def _edge_rate(self) -> str:
+        rate = getattr(self, "rate", 1)
+        return "+25%" if rate > 1.2 else "+5%" if rate < 0.8 else "+15%"
 
     async def _play_kitten_stream(self, text: str):
         from src.speech.kitten_client import KittenClient, PCM_RATE
@@ -493,11 +538,7 @@ class TTSEngine:
         """Generate speech audio using edge-tts"""
         try:
             # Calculate rate parameter
-            rate_value = "+15%"
-            if self.rate > 1.2:
-                rate_value = "+25%"
-            elif self.rate < 0.8:
-                rate_value = "+5%"
+            rate_value = self._edge_rate()
             
             # Generate audio
             communicate = edge_tts.Communicate(
@@ -508,11 +549,11 @@ class TTSEngine:
             )
             
             # Save to temporary file
-            audio_data = b""
+            audio_data = bytearray()
             words = []
             async for chunk in communicate.stream():
                 if chunk["type"] == "audio":
-                    audio_data += chunk["data"]
+                    audio_data.extend(chunk["data"])
                 elif chunk["type"] == "WordBoundary":
                     words.append({"text": chunk["text"], "start": chunk["offset"] / 10_000_000,
                                   "end": (chunk["offset"] + chunk["duration"]) / 10_000_000})
@@ -520,6 +561,7 @@ class TTSEngine:
             if not audio_data:
                 raise ValueError("No audio data generated by Edge TTS")
             
+            audio_data = bytes(audio_data)
             self._remember_timings(audio_data, words)
             return audio_data
             
@@ -643,6 +685,7 @@ class TTSEngine:
     
     async def _play_audio_data(self, audio_data: bytes, source: str = "local"):
         """Play audio data using pygame and broadcast to web clients"""
+        playback_generation = getattr(self, "_speech_generation", 0)
         
         # Broadcast audio to all connected web clients via WebSocket
         try:
@@ -667,6 +710,9 @@ class TTSEngine:
         except Exception as e:
             logger.error(f"Failed to broadcast TTS audio: {e}")
 
+        if playback_generation != getattr(self, "_speech_generation", 0):
+            return
+
         if source == "web":
             logger.info("TTS: Skipping local playback because request originated from web dashboard")
             return
@@ -675,6 +721,8 @@ class TTSEngine:
             logger.error("Pygame not available for local audio playback")
             return
 
+        temp_file = None
+        loaded = False
         try:
             # Save to temporary file
             import uuid
@@ -691,8 +739,13 @@ class TTSEngine:
                 f.write(audio_data)
             
             # Play using pygame
-            pygame.mixer.music.load(temp_file)
-            pygame.mixer.music.play()
+            from src.utils.audio_lock import AUDIO_DEVICE_LOCK
+            with AUDIO_DEVICE_LOCK:
+                if playback_generation != getattr(self, "_speech_generation", 0):
+                    return
+                pygame.mixer.music.load(temp_file)
+                loaded = True
+                pygame.mixer.music.play()
             requested_at = getattr(self, "_active_speech_requested_at", None)
             if requested_at is not None:
                 logger.info("[TIMING] TTS first local playback: %.0f ms | provider=%s",
@@ -709,14 +762,19 @@ class TTSEngine:
                 })
                 await asyncio.sleep(0.05)
             
-            # Cleanup
-            try:
-                os.remove(temp_file)
-            except:
-                pass
-                
         except Exception as e:
             logger.error(f"TTS playback error: {e}")
+        finally:
+            # Windows keeps a loaded music file open until it is unloaded.
+            if loaded:
+                with suppress(Exception):
+                    from src.utils.audio_lock import AUDIO_DEVICE_LOCK
+                    with AUDIO_DEVICE_LOCK:
+                        pygame.mixer.music.stop()
+                        pygame.mixer.music.unload()
+            if temp_file:
+                with suppress(OSError):
+                    os.remove(temp_file)
     
     async def play_sound(self, sound_name: str):
         """Play a sound effect"""
@@ -842,6 +900,9 @@ class TTSEngine:
 
     def stop_playback_now(self):
         """Thread-friendly immediate audio stop for global hotkey callbacks."""
+        # Invalidate requests still awaiting Redis or synthesis as well as
+        # stopping audio already playing. Late replies must not reappear.
+        self._speech_generation = getattr(self, "_speech_generation", 0) + 1
         if hasattr(self, "_stream_stop"):
             self._stream_stop.set()
         task = getattr(self, "_active_stream_task", None)

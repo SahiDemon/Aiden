@@ -48,6 +48,9 @@ class ProcessManager:
         Returns:
             True if process was killed successfully
         """
+        if not isinstance(process_name, str) or not process_name.strip():
+            logger.warning("Refusing process close with an empty or invalid name")
+            return False
         # Check if PID is embedded in process_name string (e.g., "Chrome.exe (PID: 1234)")
         if not pid and "(PID:" in process_name:
             try:
@@ -192,6 +195,9 @@ class ProcessManager:
     async def kill_process_by_pid(self, pid: int) -> bool:
         """Kill process by PID"""
         try:
+            if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+                logger.warning("Refusing process close with an invalid PID")
+                return False
             command = ["taskkill", "/F", "/PID", str(int(pid))]
             result = await asyncio.to_thread(subprocess.run, command, capture_output=True)
             return result.returncode == 0

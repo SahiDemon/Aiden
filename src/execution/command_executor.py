@@ -77,6 +77,13 @@ class CommandExecutor:
         Returns:
             Dict with success status and optional response data
         """
+        if (not isinstance(command, dict)
+                or not isinstance(command.get("type"), str)
+                or not command["type"].strip()
+                or not isinstance(command.get("params", {}), dict)):
+            logger.warning("Rejected malformed command payload")
+            return {"success": False, "command": None, "params": {},
+                    "response_data": None, "error": "Invalid command: expected a type and parameter object"}
         command_type = command.get("type")
         params = command.get("params", {})
         
@@ -209,6 +216,8 @@ class CommandExecutor:
             return commands
 
         def priority(command: Dict[str, Any]) -> int:
+            if not isinstance(command, dict) or not isinstance(command.get("params", {}), dict):
+                return 2
             command_type = command.get("type")
             params = command.get("params") or {}
             action = str(params.get("action") or "").lower()

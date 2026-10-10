@@ -213,7 +213,8 @@ def test_kitten_cache_is_separate_from_baseline():
     engine.settings.speech.kitten_tts_speed = 1.2
     assert engine._cache_key("Hello") != original
     engine.provider = "edge"
-    assert engine._cache_key("Hello") == "Hello"
+    assert engine._cache_key("Hello") != original
+    assert engine._cache_key("Hello").startswith("tts:v2:")
 
 
 @pytest.mark.asyncio
