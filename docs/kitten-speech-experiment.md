@@ -28,6 +28,11 @@ PowerShell terminal at the repository root:
 .\run_kitten_experiment.ps1 -Baseline
 ```
 
+After Ctrl+C, wait for `Goodbye!` / the guardian exit before launching the other
+mode. Single-instance protection belongs to the guardian and backend processes;
+the launcher no longer holds a PowerShell mutex that can survive an interrupted
+debug session. If a guardian is still alive, it will reject a duplicate launch.
+
 The launcher chooses providers for its child process; ordinary `run_aiden.ps1`
 launches retain the `.env` defaults. `SPEECH_KITTEN_EXPERIMENT=true` makes these
 process selectors override saved dashboard provider preferences. Keys never
