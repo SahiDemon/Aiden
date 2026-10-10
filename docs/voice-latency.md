@@ -30,3 +30,27 @@ Command ordering, audit persistence, recognition providers, and the silence
 threshold are unchanged. Investigate the slow stage from the new logs before
 changing those behaviors. In the supplied example, "open crook" meant Chrome;
 Gemini's interpretation was correct.
+
+## Follow-up microphone run
+
+The next captured run identified substantial command-side delays:
+
+| Stage | Close Chrome + fan off | Fan on + Notepad |
+| --- | ---: | ---: |
+| Final transcription | 259 ms | 240 ms |
+| Gemini generation | 1,600 ms | 6,878 ms |
+| Command actions | 14,755 ms | 209 ms |
+| Command history saves | 6,606 ms | 3,978 ms |
+| TTS request to local playback | 1,238 ms | 1,201 ms |
+
+Chrome closing invoked taskkill sequentially for 34 selected processes. PID
+closing now runs off the event loop with at most eight concurrent calls and
+awaits every selected target before returning. The next top-level command still
+executes in order. Spotify retains its existing close-and-verify behavior.
+
+Command history no longer refreshes the just-inserted row: the insert already
+populates its ID and timestamp. Commit remains awaited. A real database
+diagnostic verified ID, timestamp, and serialization before rollback; the
+redundant refresh alone took 472 ms in that trial. Database writes still incur
+network latency, and Gemini response time varies. Further microphone runs are
+needed to measure the combined improvement.
