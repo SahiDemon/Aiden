@@ -58,7 +58,8 @@ async def test_activation_cue_is_short_without_changing_other_sounds(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_mmm_acknowledgement_precedes_recording_and_beep(monkeypatch):
+@pytest.mark.parametrize("source", ["local", "web"])
+async def test_mmm_acknowledgement_precedes_recording_and_beep(monkeypatch, source):
     events = []
     assistant = AidenAssistant.__new__(AidenAssistant)
     assistant._current_request_task = None
@@ -68,6 +69,7 @@ async def test_mmm_acknowledgement_precedes_recording_and_beep(monkeypatch):
     assistant._play_sound_reliably = AsyncMock(side_effect=lambda name: events.append("beep"))
 
     async def transcribe(**kwargs):
+        assert kwargs["request_source"] == source
         events.append("capture")
         await kwargs["ready_cue"]()
         raise asyncio.CancelledError()
@@ -81,8 +83,10 @@ async def test_mmm_acknowledgement_precedes_recording_and_beep(monkeypatch):
     monkeypatch.setattr("src.core.wake_word_manager.get_wake_word_manager", lambda: None)
     monkeypatch.setattr("src.media.audio_session_ducker.get_audio_session_ducker",
                         lambda: SimpleNamespace(restore_all=Mock()))
-    monkeypatch.setattr("src.utils.websocket_broadcast.broadcast_voice_status", AsyncMock())
-    await assistant.handle_voice_activation()
+    status = AsyncMock()
+    monkeypatch.setattr("src.utils.websocket_broadcast.broadcast_voice_status", status)
+    await assistant.handle_voice_activation(source=source)
+    assert all(call.kwargs["source"] == source for call in status.await_args_list)
     assert events == ["microphone", "mmm", "capture", "beep", "closed"]
 
 

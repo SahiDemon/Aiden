@@ -7,12 +7,14 @@ import asyncio
 from difflib import SequenceMatcher
 import re
 import unicodedata
+import time
 from typing import Optional, Tuple
 
 # from src.execution.app_launcher import get_app_launcher  <-- Moved to inside method to avoid circular import
 from src.media.audio_session_ducker import get_audio_session_ducker
 from src.media.browser_media_controller import get_browser_media_controller
 from src.media.jellyfin_client import JellyfinClient, JellyfinError, get_jellyfin_client
+from src.media.playback_context import select_playback, session_key
 from src.media.spotify_client import (
     SpotifyClient,
     SpotifyError,
@@ -75,6 +77,7 @@ class MediaRouter:
         self._spotify_playback_revision = 0
         self._listening_pause_tasks = set()
         self._spotify_unmuted_volumes = {}
+        self._listening_contexts: list[dict] = []
         from src.execution.app_launcher import get_app_launcher
         self.app_launcher = get_app_launcher()
 
@@ -88,18 +91,158 @@ class MediaRouter:
         device_name: Optional[str] = None,
     ) -> Tuple[bool, dict]:
         action = action.lower()
-        if target in {"youtube", "youtube_music"}:
+        # Some model responses put the named player in query instead of
+        # target ("resume Jellyfin" -> query="jellyfin"). Recover that
+        # unambiguous control request before the generic browser fallback.
+        provider_query = re.sub(r"[^a-z0-9]", "", (query or "").casefold())
+        jellyfin_control = (
+            action in {"play", "pause", "resume"} and provider_query == "jellyfin"
+        ) or (
+            # Observed Whisper transcription. Restrict the alias to pause /
+            # resume so a song or title called Jellyfish keeps its meaning.
+            action in {"pause", "resume"} and provider_query == "jellyfish"
+        )
+        if not target and jellyfin_control:
+            target, query = "jellyfin", None
+        # Finish/cancel the listening handoff before a user command can be
+        # undone by a late background pause (for every provider, not Spotify only).
+        pending = list(getattr(self, "_listening_pause_tasks", ()))
+        for task in pending:
+            if not task.done():
+                task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        selected = None
+        if not target and action in {
+            "play", "pause", "stop", "resume", "play_pause", "next", "previous",
+            "volume_up", "volume_down", "set_volume", "mute", "unmute",
+            "seek_forward", "seek_backward",
+        } and not query:
+            candidates = await self._get_media_candidates()
+            last = getattr(self, "_last_media_context", None)
+            if last and time.monotonic() - last.get("seen_at", 0) > 600:
+                last = None
+            selected, error = select_playback(candidates, last)
+            if selected is None:
+                if not candidates and action in {"volume_up", "volume_down", "set_volume", "mute", "unmute"}:
+                    from src.execution.system_controller import get_system_controller
+                    return await get_system_controller().control_volume(action, level=volume)
+                return False, {"type": "media", "message": error}
+            target = selected["target"]
+        if action == "stop":
+            action = "pause"
+        if selected and target in {"youtube", "youtube_music"}:
+            result = await self.browser_controller.control_session(action, selected, volume)
+        elif target in {"youtube", "youtube_music"}:
             if query and action in {"play", "resume", "play_pause"}:
                 action = "play_track"
-            return await self.browser_controller.control(action_alias(action), target, query)
-        if target == "spotify":
-            return await self._handle_spotify(action, query, entity_type, volume, device_name)
-        if target == "jellyfin":
-            return await self._handle_jellyfin(action, query)
-        # Generic route: prefer Spotify if actively playing
-        if await self._spotify_is_active():
-            return await self._handle_spotify(action, query, entity_type, volume, device_name)
-        return await self.browser_controller.control(action_alias(action), None)
+            result = await self.browser_controller.control(action_alias(action), target, query)
+        elif target == "spotify":
+            result = await self._handle_spotify(
+                action, query, entity_type, volume,
+                device_name or (selected or {}).get("device_name"),
+            )
+        elif target == "jellyfin":
+            result = await self._handle_jellyfin(
+                action, query, volume=volume,
+                session_ids=[selected["id"]] if selected else None,
+            )
+        elif await self._spotify_is_active():
+            result = await self._handle_spotify(action, query, entity_type, volume, device_name)
+        else:
+            result = await self.browser_controller.control(action_alias(action), None, query)
+        if result[0]:
+            if selected:
+                self._last_media_context = {**selected, "seen_at": time.monotonic()}
+            self._preserve_requested_playback(action, target, selected)
+        return result
+
+    def _preserve_requested_playback(self, action: str, target: Optional[str], selected: Optional[dict]) -> None:
+        """Automatic restoration must not undo an explicit pause/resume/skip."""
+        # Follow-up STT owns a nested listening scope. A user action overrides
+        # every outstanding restore instruction, including the outer voice turn.
+        for state in self._get_listening_contexts():
+            self._preserve_context_playback(state, action, target, selected)
+
+    def _get_listening_contexts(self) -> list[dict]:
+        contexts = list(getattr(self, "_listening_contexts", []))
+        current = getattr(self, "_listening_context", None)
+        if current is not None and not any(state is current for state in contexts):
+            contexts.append(current)
+        return contexts
+
+    @staticmethod
+    def _preserve_context_playback(state: dict, action: str, target: Optional[str], selected: Optional[dict]) -> None:
+        if target == "jellyfin" and action in {"pause", "play", "resume", "play_pause"}:
+            state["jellyfin_session_ids"] = [
+                sid for sid in state.get("jellyfin_session_ids", [])
+                if selected and sid != selected["id"]
+            ]
+        if target in {"youtube", "youtube_music"} and action in {"pause", "play", "resume", "play_pause", "next", "previous"}:
+            browser = state.get("browser_media") or {}
+            controlled = (selected or {}).get("id")
+            if action in {"pause", "play", "resume", "play_pause"}:
+                browser["paused_sessions"] = [
+                    item for item in browser.get("paused_sessions", [])
+                    if controlled and item["id"] != controlled
+                ]
+            browser["toggled_handles"] = [
+                hwnd for hwnd in browser.get("toggled_handles", []) if controlled and hwnd != controlled
+            ]
+
+    async def _get_media_candidates(self) -> list[dict]:
+        """Inspect real playback concurrently; retain state from before ducking."""
+        async def spotify():
+            client = getattr(self, "spotify_client", None)
+            if client is None or not client.is_enabled():
+                return []
+            playback = await client.get_current_playback()
+            if not playback or not playback.get("item"):
+                return []
+            device = playback.get("device") or {}
+            return [{"target": "spotify", "id": device.get("id"),
+                     "device_name": device.get("name"), "is_playing": bool(playback.get("is_playing"))}]
+
+        async def jellyfin():
+            client = getattr(self, "jellyfin_client", None)
+            if client is None or not client.is_enabled():
+                return []
+            return [{"target": "jellyfin", "id": item["Id"],
+                     "is_playing": (item.get("PlayState") or {}).get("IsPaused") is False}
+                    for item in await client.get_sessions()
+                    if item.get("Id") and item.get("NowPlayingItem") and item.get("SupportsMediaControl", True)]
+
+        async def browser():
+            controller = getattr(self, "browser_controller", None)
+            if controller is None or not hasattr(controller, "get_playback_candidates"):
+                return []
+            return await controller.get_playback_candidates()
+
+        async def inspect(operation):
+            try:
+                return await asyncio.wait_for(operation(), timeout=3.5)
+            except Exception as exc:
+                logger.debug("Media playback inspection unavailable: %s", exc)
+                return []
+
+        results = await asyncio.gather(*(inspect(operation) for operation in (spotify, jellyfin, browser)))
+        candidates = [item for result in results for item in result]
+        before = []
+        for state in self._get_listening_contexts():
+            before.extend(state.get("browser_candidates") or [])
+            if state.get("spotify_was_playing"):
+                before.append({"target": "spotify", "id": state.get("spotify_device_id"),
+                               "device_name": state.get("spotify_device_name"), "is_playing": True})
+            before.extend({"target": "jellyfin", "id": sid, "is_playing": True} for sid in state.get("jellyfin_session_ids", []))
+        for old in before:
+            if not old.get("is_playing"):
+                continue
+            current = next((item for item in candidates if session_key(item) == session_key(old)), None)
+            if current is not None:
+                current["is_playing"] = True
+            else:
+                candidates.append(old)
+        return candidates
 
     async def duck_for_listening(self) -> dict:
         """Pause active media before capture and retain state for restoration."""
@@ -111,6 +254,15 @@ class MediaRouter:
             "browser_media": {"toggled_handles": []},
             "muted_app_sessions": {"muted_sessions": []},
         }
+        self._listening_contexts = self._get_listening_contexts() + [state]
+        self._listening_context = state
+        # Inspect browser audio before local muting hides the active player.
+        controller = getattr(self, "browser_controller", None)
+        if controller is not None and hasattr(controller, "get_playback_candidates"):
+            try:
+                state["browser_candidates"] = await asyncio.wait_for(controller.get_playback_candidates(), 1.0)
+            except Exception as exc:
+                logger.debug("Pre-listening browser context unavailable: %s", exc)
 
         # Muting is local and immediate. Once Spotify's desktop audio is muted,
         # its network pause can finish while capture is already running.
@@ -252,6 +404,7 @@ class MediaRouter:
             # Remember originally-playing media before sending that request.
             state["spotify_was_playing"] = True
             state["spotify_device_id"] = device_id
+            state["spotify_device_name"] = device.get("name")
         await self.spotify_client.pause(device_id=device_id)
         logger.info("Paused Spotify for STT listening window.")
         return True, device_id
@@ -305,6 +458,8 @@ class MediaRouter:
             if not pause_task.done():
                 pause_task.cancel()
             await asyncio.gather(pause_task, return_exceptions=True)
+        self._listening_contexts = [context for context in self._get_listening_contexts() if context is not state]
+        self._listening_context = self._listening_contexts[-1] if self._listening_contexts else None
 
         try:
             get_audio_session_ducker().restore_after_listening(
@@ -341,13 +496,14 @@ class MediaRouter:
         except Exception as exc:
             logger.debug(f"Spotify restore skipped: {exc}")
 
-    async def _handle_jellyfin(self, action: str, query: Optional[str] = None) -> Tuple[bool, dict]:
+    async def _handle_jellyfin(self, action: str, query: Optional[str] = None, *, volume: Optional[int] = None,
+                               session_ids: Optional[list[str]] = None) -> Tuple[bool, dict]:
         if not self.jellyfin_client.is_enabled():
             return False, {"type": "jellyfin", "message": "Jellyfin isn't set up yet."}
         # The general command schema uses play_track for a titled media item.
         if action == "play_track":
             action = "play_title"
-        if action not in {"pause", "play", "resume", "play_title", "play_movie", "play_series"}:
+        if action not in {"pause", "play", "resume", "play_title", "play_movie", "play_series", "next", "previous", "volume_up", "volume_down", "set_volume", "mute", "unmute"}:
             return False, {"type": "jellyfin", "message": "I can play movies or shows, or pause and resume Jellyfin."}
         try:
             sessions = await self.jellyfin_client.get_sessions()
@@ -423,8 +579,14 @@ class MediaRouter:
                 label = f"{title['Name']} ({year})" if year else title["Name"]
                 return True, {"type": "jellyfin", "message": f"Playing {label} on Jellyfin."}
             targets = [s for s in sessions if s.get("NowPlayingItem") and s.get("Id")]
+            if session_ids is not None:
+                targets = [s for s in targets if s["Id"] in session_ids]
             if not targets:
                 return False, {"type": "jellyfin", "message": "I can't find anything playing in Jellyfin right now."}
+            if action in {"next", "previous", "volume_up", "volume_down", "set_volume", "mute", "unmute"}:
+                for session in targets:
+                    await self.jellyfin_client.control_session(session["Id"], action, volume)
+                return True, {"type": "jellyfin", "message": f"Jellyfin {action.replace('_', ' ')} command sent."}
             paused = action == "pause"
             for session in targets:
                 if bool(session.get("PlayState", {}).get("IsPaused", False)) != paused:
@@ -573,7 +735,17 @@ class MediaRouter:
                 await self.spotify_client.previous_track(device_id=device_id)
                 return True, {"type": "spotify", "message": "Returned to the previous Spotify track."}
 
+            if action in {"volume_up", "volume_down"}:
+                current_volume = (device or {}).get("volume_percent")
+                if current_volume is None:
+                    playback = await self.spotify_client.get_current_playback()
+                    current_volume = ((playback or {}).get("device") or {}).get("volume_percent")
+                if current_volume is None:
+                    return False, {"type": "spotify", "message": "I couldn't read the current Spotify volume."}
+                volume = max(0, min(100, int(current_volume) + (10 if action == "volume_up" else -10)))
+                action = "set_volume"
             if action == "set_volume" and volume is not None:
+                volume = max(0, min(100, volume))
                 device_id = await self._activate_device(device, play=False)
                 await self.spotify_client.set_volume(volume, device_id=device_id)
                 return True, {"type": "spotify", "message": f"Spotify volume set to {volume}%."}

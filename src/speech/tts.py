@@ -230,7 +230,7 @@ class TTSEngine:
                         from src.utils.websocket_broadcast import broadcast_voice_status, broadcast_message
                         await broadcast_voice_status(
                             "processing" if source == "web" else "speaking",
-                            speaking=source != "web", active=True,
+                            speaking=source != "web", active=True, source=source,
                         )
                         if text:
                             await broadcast_message("assistant_speaking", playback)
@@ -253,7 +253,7 @@ class TTSEngine:
                             self._resume_wake_word_detection(wake_word_paused)
                         
                         # Broadcast idle status
-                        await broadcast_voice_status("idle", speaking=False)
+                        await broadcast_voice_status("idle", speaking=False, source=source)
                         
                     elif task_type == "sound":
                         sound_path = task.get("path")
@@ -369,7 +369,7 @@ class TTSEngine:
             print(f"[TTS ERROR]: {text}")
             # Broadcast idle on error
             from src.utils.websocket_broadcast import broadcast_voice_status
-            await broadcast_voice_status("idle", speaking=False)
+            await broadcast_voice_status("idle", speaking=False, source=source)
     
     async def _get_cached_audio(self, text: str) -> Optional[bytes]:
         """Get cached audio with proper error handling"""

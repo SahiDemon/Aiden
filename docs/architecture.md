@@ -39,7 +39,13 @@ flowchart LR
 
 Activation opens a listening session and pauses supported active media. Speech capture waits for microphone readiness and voice activity, then sends the captured command to Groq for transcription. Typed messages enter through the API without audio capture. The assistant builds context, requests a structured provider response, and routes commands through the executor. It broadcasts state/messages to the dashboard and overlay, speaks the response when appropriate, and restores playback when the listening interaction ends.
 
-The media router records which Jellyfin sessions it successfully paused. Restoration handles each session independently so one failed or disappeared session does not stop the others. Delayed commands and timers have explicit cancel paths and are shown in the dashboard.
+The media router inspects playback across Spotify, Jellyfin, and Windows browser media sessions. It retains the state from before listening so temporary pauses do not hide the current player. Listening scopes can nest during follow-up questions; a requested pause cancels the matching resume instructions across all outstanding scopes. Browser session controls use native play/pause operations, while explicit browser search and window controls remain available. Delayed commands and timers have explicit cancel paths and are shown in the dashboard.
+
+## Two-pass context selection
+
+For requests that may need PC information, Pass 1 asks the model what context it needs. When the response requests additional context, such as installed applications or running processes, the context manager gathers it and Pass 2 produces the response and action plan. If no extra context is requested, the first response is used directly. A local classifier can bypass the context-selection pass for simple requests. Repair and fallback requests are separate from this normal path.
+
+Speech activity detection uses the CPU ONNX Silero model when available, with WebRTC as a fallback. Before each listening cue, the capture worker verifies microphone delivery and warms the speech detector. A background worker also processes two synthetic silent frames every 30 seconds while the detector is idle. It skips active captures, never opens a microphone, and stops during engine shutdown.
 
 ## Configuration and prompts
 

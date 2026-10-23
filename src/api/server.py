@@ -656,7 +656,7 @@ async def activate_voice():
         if _voice_activation_callback:
             try:
                 # Call the voice activation callback (from dashboard)
-                _voice_activation_callback(from_hotkey=True)
+                _voice_activation_callback(from_hotkey=True, source="web")
                 logger.info("Voice activation triggered from dashboard")
             except Exception as e:
                 logger.error(f"Error calling voice activation callback: {e}")

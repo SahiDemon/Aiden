@@ -29,6 +29,35 @@ def _normalize_intent_text(text: str) -> str:
     return " ".join(normalized.split())
 
 
+def _repair_contextual_media_request(user_text: str, commands: List[dict]) -> List[dict]:
+    """A standalone playback request must not inherit an invented app target."""
+    text = _normalize_intent_text(user_text)
+    text = re.sub(r"^(?:(?:can|could|would) you )?(?:please )?", "", text)
+    text = re.sub(r" please$", "", text)
+    match = re.fullmatch(
+        r"(pause|stop|resume|play|next|previous|mute|unmute)(?: (?:it|this|that|the playback|playback|the music|music|song|track|video|episode|the song|the video))?",
+        text,
+    )
+    action = None
+    volume = None
+    if match:
+        action = {"stop": "pause", "play": "resume"}.get(match[1], match[1])
+    elif re.fullmatch(r"(?:volume up|(?:increase|raise|turn up) (?:the )?volume|turn (?:the )?volume up)", text):
+        action = "volume_up"
+    elif re.fullmatch(r"(?:volume down|(?:decrease|lower|reduce|turn down) (?:the )?volume|turn (?:the )?volume down)", text):
+        action = "volume_down"
+    else:
+        level = re.fullmatch(r"(?:set |turn )?(?:the )?volume(?: to)? (\d{1,3})(?: percent)?", text)
+        if level:
+            action, volume = "set_volume", max(0, min(100, int(level[1])))
+    if action is None:
+        return commands
+    params = {"action": action}
+    if volume is not None:
+        params["volume"] = volume
+    return [{"type": "media_control", "params": params}]
+
+
 def _repair_youtube_search_request(user_text: str, commands: List[dict]) -> List[dict]:
     """Recover a dropped search phrase in one explicit YouTube playback request."""
     match = re.fullmatch(
@@ -1176,6 +1205,7 @@ class AidenAssistant:
         self,
         from_hotkey: bool = False,
         wake_detection: Optional[WakeDetection] = None,
+        source: str = "local",
     ):
         """
         Handle voice activation (wake word or hotkey)
@@ -1218,7 +1248,7 @@ class AidenAssistant:
         if not await self._acquire_voice_capture():
             self.is_processing = False
             from src.utils.websocket_broadcast import broadcast_voice_status
-            await broadcast_voice_status("idle", speaking=False, active=False)
+            await broadcast_voice_status("idle", speaking=False, active=False, source=source)
             return
 
         from src.utils.websocket_broadcast import broadcast_voice_status
@@ -1275,6 +1305,7 @@ class AidenAssistant:
                         duck_state=duck_state,
                         media_already_ducked=True,
                         restore_media=False,
+                        request_source=source,
                         ready_cue=lambda: self._play_activation_ready_cue(from_hotkey=False),
                     )
                     self._is_listening = False
@@ -1285,6 +1316,7 @@ class AidenAssistant:
                     duck_state=duck_state,
                     media_already_ducked=True,
                     restore_media=False,
+                    request_source=source,
                     ready_cue=lambda: self._play_activation_ready_cue(from_hotkey),
                 )
                 self._is_listening = False
@@ -1302,6 +1334,7 @@ class AidenAssistant:
                     duck_state=duck_state,
                     media_already_ducked=True,
                     restore_media=False,
+                    request_source=source,
                     ready_cue=lambda: self._play_activation_ready_cue(from_hotkey=False),
                 )
                 self._is_listening = False
@@ -1312,7 +1345,7 @@ class AidenAssistant:
                 conversation_id = await self.context_manager.start_conversation(mode="voice")
             
             if not success:
-                await broadcast_voice_status("idle", speaking=False, active=False)
+                await broadcast_voice_status("idle", speaking=False, active=False, source=source)
                 if error == "timeout":
                     logger.info("No speech detected - timeout")
                 elif error == "cancelled":
@@ -1321,12 +1354,12 @@ class AidenAssistant:
                     logger.info("Ignoring cue/noise recognition; returning to standby")
                 else:
                     logger.warning(f"STT failed: {error}")
-                    await self.tts.speak("Sorry, I didn't catch that.")
+                    await self.tts.speak("Sorry, I didn't catch that.", source=source)
                 return
             
             if not user_text:
                 logger.warning("Empty transcription")
-                await broadcast_voice_status("idle", speaking=False, active=False)
+                await broadcast_voice_status("idle", speaking=False, active=False, source=source)
                 return
             
             # Capture is complete; release the device so a new wake phrase can
@@ -1340,17 +1373,18 @@ class AidenAssistant:
                 await broadcast_message("message", {
                     "role": "user",
                     "content": user_text,
+                    "source": source,
                     "timestamp": __import__('datetime').datetime.now().isoformat()
                 })
             except Exception:
                 pass  # Non-critical
             
             # Broadcast processing status
-            await broadcast_voice_status("processing", speaking=False, active=True)
+            await broadcast_voice_status("processing", speaking=False, active=True, source=source)
             
             # ── Step 2: AI ───────────────────────────────────────────────
             _t_ai_start = _time.monotonic()
-            await self._process_user_message(user_text)
+            await self._process_user_message(user_text, source=source)
             logger.info("[TIMING] AI+TTS queue: %.0f ms | Total wall: %.0f ms",
                         (_time.monotonic() - _t_ai_start) * 1000,
                         (_time.monotonic() - _t0) * 1000)
@@ -1359,9 +1393,9 @@ class AidenAssistant:
             logger.info("Voice activation cancelled by user")
         except Exception as e:
             logger.error(f"Error handling voice activation: {e}", exc_info=True)
-            await self.tts.speak("Sorry, something went wrong.")
+            await self.tts.speak("Sorry, something went wrong.", source=source)
             # Broadcast idle status on error
-            await broadcast_voice_status("idle", speaking=False, active=False)
+            await broadcast_voice_status("idle", speaking=False, active=False, source=source)
         finally:
             # Wake detection owns the microphone while idle. Do not leave an
             # STT stream open for hours until the next wake-word handoff.
@@ -1389,7 +1423,7 @@ class AidenAssistant:
             self._is_listening = False
             self.is_processing = False
             # Broadcast idle status when conversation ends
-            await broadcast_voice_status("idle", speaking=False, active=False)
+            await broadcast_voice_status("idle", speaking=False, active=False, source=source)
             logger.info("=" * 60)
             
             # CRITICAL: Resume wake word detector at the end of voice activation
@@ -1523,7 +1557,7 @@ class AidenAssistant:
             
             # Broadcast processing status so the UI knows we're thinking
             if source != "web_text":
-                await broadcast_voice_status("processing", speaking=False, active=True)
+                await broadcast_voice_status("processing", speaking=False, active=True, source=source)
             
             # Process with AI
             options = {"client_message_id": client_message_id} if client_message_id else {}
@@ -1540,7 +1574,7 @@ class AidenAssistant:
         except Exception as e:
             logger.error(f"Error handling text message: {e}", exc_info=True)
             if source != "web_text":
-                await broadcast_voice_status("idle", speaking=False, active=False)
+                await broadcast_voice_status("idle", speaking=False, active=False, source=source)
             return "Sorry, something went wrong."
     
     @staticmethod
@@ -1756,6 +1790,11 @@ class AidenAssistant:
                 response_text = correction_reply
                 ai_response["expecting_followup"] = False
                 logger.info("Using the final spoken Spotify correction as one action")
+            contextual_commands = _repair_contextual_media_request(user_text, commands)
+            if contextual_commands != commands:
+                commands = contextual_commands
+                response_text = "I'll control the current player."
+                ai_response["expecting_followup"] = False
             
             logger.info(f"AI INTENT: {intent}")
             logger.info(f"AI COMMANDS: {len(commands)}")

@@ -181,7 +181,7 @@ def test_first_vad_inference_runs_before_capture_is_armed(monkeypatch):
     monkeypatch.setattr(engine, "_read_live_frame", lambda *_args, **_kwargs: bytes(1024))
     monkeypatch.setattr(engine, "_listen_with_vad", lambda *_args: object())
     assert engine._listen_sync(lambda: events.append("ready"))[0]
-    assert events == ["warmed", "reset", "ready"]
+    assert events == ["reset", "reset", "warmed", "warmed", "reset", "ready"]
 
 
 def test_quiet_speech_rejected_by_silero_uses_valid_webrtc_frame():

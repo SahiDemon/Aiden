@@ -168,10 +168,12 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocke
             ws.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
+                    // Browser conversations have their own UI; leave the PC overlay alone.
+                    if (data.data?.source === 'web' || data.data?.source === 'web_text') return;
 
                     switch (data.type) {
                         case 'voice_transcript': {
-                            if (data.data?.source !== 'web_text' && overlayStateRef.current === 'listening') {
+                            if (overlayStateRef.current === 'listening') {
                                 setUserInput(typeof data.data?.text === 'string' ? data.data.text : '');
                             }
                             break;
@@ -189,13 +191,6 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocke
                                 scheduleOverlayHide();
                                 break;
                             }
-                            if (payload.source === 'web') {
-                                raiseActiveOverlay();
-                                setOverlayState('replying');
-                                overlayStateRef.current = 'replying';
-                                setSessionActive(true);
-                                sessionActiveRef.current = true;
-                            }
                             const position = payload.position;
                             if (typeof position === 'number' && Number.isFinite(position)) {
                                 const timings = wordsRef.current;
@@ -205,7 +200,6 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocke
                         }
                         case 'message': {
                             const message: Message = data.data;
-                            if (message.source === 'web_text') break;
 
                             if (message.role === 'user') {
                                 setUserInput(message.content);
@@ -218,7 +212,6 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocke
 
                         case 'voice_activity': {
                             const voiceActivity: VoiceActivity = data.data;
-                            if (voiceActivity.source === 'web_text') break;
                             const previous = overlayStateRef.current;
                             const changeStage = (stage: OverlayState) => {
                                 overlayStateRef.current = stage;
@@ -262,7 +255,6 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocke
                         }
 
                         case 'assistant_speaking': {
-                            if (data.data?.source === 'web_text') break;
                             const speakingText = data.data?.text || '';
                             speechIdRef.current = data.data?.speech_id || '';
                             wordsRef.current = Array.isArray(data.data?.words) ? data.data.words : [];
@@ -270,8 +262,8 @@ export const useWebSocket = (url = 'ws://localhost:5000/api/v1/ws'): UseWebSocke
                             setActiveWord(-1);
                             raiseActiveOverlay();
                             setCurrentText(speakingText);
-                            setOverlayState(data.data?.source === 'web' ? 'thinking' : 'replying');
-                            overlayStateRef.current = data.data?.source === 'web' ? 'thinking' : 'replying';
+                            setOverlayState('replying');
+                            overlayStateRef.current = 'replying';
                             setSessionActive(true);
                             sessionActiveRef.current = true;
                             break;

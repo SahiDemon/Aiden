@@ -9,7 +9,7 @@ export const useWebSpeech = ({ onResult, onEnd, onError, onStart }) => {
   
   // Keep callbacks fresh without triggering effect
   useEffect(() => {
-    callbacksRef.current = { onResult, onEnd, onError };
+    callbacksRef.current = { onResult, onEnd, onError, onStart };
   }, [onResult, onEnd, onError, onStart]);
 
   useEffect(() => {

@@ -9,7 +9,7 @@ function Probe() { state = useWebSocket('ws://test'); return null }
 beforeEach(() => {
   audios = []
   global.WebSocket = class { static OPEN = 1; constructor() { socket = this; this.readyState = 1 } send = jest.fn(); close() {} }
-  global.Audio = class { constructor(uri) { this.uri = uri; this.paused = true; this.play = jest.fn(() => Promise.reject(new Error('Autoplay blocked'))); this.pause = jest.fn(); audios.push(this) } }
+  global.Audio = class { constructor(uri) { this.src = uri; this.paused = true; this.play = jest.fn(() => Promise.reject(new DOMException('Autoplay blocked', 'NotAllowedError'))); this.pause = jest.fn(); audios.push(this) } }
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container)
   act(() => root.render(<Probe />))
 })
@@ -23,13 +23,42 @@ test('blocked phone audio can be retried and replies play in sequence', async ()
   expect(state.audioBlocked).toBe(false); expect(state.voiceActivity.status).toBe('speaking')
   act(() => audios[0].onended())
   await act(async () => {})
-  expect(audios[1].uri).toBe('reply-2')
+  expect(audios).toHaveLength(1); expect(audios[0].src).toBe('reply-2')
 })
 test('muting clears queued audio and prevents new playback on this device', async () => {
   await receive('reply-1'); await receive('reply-2')
   act(() => state.toggleAudio())
   expect(audios[0].pause).toHaveBeenCalled(); expect(state.audioEnabled).toBe(false); expect(state.audioBlocked).toBe(false)
   await receive('reply-3'); expect(audios).toHaveLength(1)
+})
+
+test('microphone gesture enables the same browser player used for subsequent replies', async () => {
+  const MockAudio = global.Audio
+  global.Audio = class extends MockAudio {
+    constructor(uri) {
+      super(uri)
+      this.play.mockImplementation(() => { this.paused = false; this.onplaying?.(); return Promise.resolve() })
+    }
+  }
+  act(() => state.unlockAudio())
+  const player = audios[0]
+  await act(async () => {})
+  await receive('reply-1')
+  expect(audios).toHaveLength(1)
+  expect(player.src).toBe('reply-1')
+  expect(state.voiceActivity.status).toBe('speaking')
+  act(() => player.onended())
+  await receive('reply-2')
+  expect(audios).toHaveLength(1)
+  expect(player.src).toBe('reply-2')
+})
+
+test('unsupported reply audio shows an error instead of silently finishing', async () => {
+  await receive('broken-reply')
+  act(() => audios[0].onerror())
+  expect(state.audioError).toContain('Could not play the voice reply')
+  expect(state.audioBlocked).toBe(false)
+  expect(state.voiceActivity.status).toBe('idle')
 })
 
 test('browser playback reports its real audio clock and stops reporting when muted', async () => {

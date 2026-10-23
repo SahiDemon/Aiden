@@ -69,6 +69,24 @@ class JellyfinClient:
     async def pause_session(self, session_id: str) -> None:
         await self.set_paused(session_id, paused=True)
 
+    async def control_session(self, session_id: str, action: str, volume: Optional[int] = None) -> None:
+        playback = {"next": "NextTrack", "previous": "PreviousTrack"}
+        general = {"volume_up": "VolumeUp", "volume_down": "VolumeDown", "mute": "Mute", "unmute": "Unmute"}
+        if action in playback:
+            path, body = f"Playing/{playback[action]}", None
+        elif action in general:
+            path, body = f"Command/{general[action]}", None
+        elif action == "set_volume" and volume is not None:
+            path, body = "Command", {"Name": "SetVolume", "Arguments": {"Volume": str(max(0, min(100, volume)))}}
+        else:
+            raise JellyfinError("Unsupported Jellyfin control.")
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                response = await client.post(f"{self._base_url}/Sessions/{session_id}/{path}", headers=self._headers, json=body)
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise JellyfinError("Jellyfin did not accept the media command.") from exc
+
     async def resume_session(self, session_id: str) -> None:
         await self.set_paused(session_id, paused=False)
 

@@ -8,7 +8,7 @@ const suggestions = [
   { icon: Globe, title: 'Explore an idea', detail: 'Ask a question. Go a little deeper.', prompt: 'Help me explore an interesting idea about technology.' },
   { icon: Music2, title: 'Set the mood', detail: 'Find something good to listen to', prompt: 'Play some relaxing music on YouTube.' },
 ]
-function ChatInterface({ messages = [], connected, voiceActivity, speakingText, mode = 'chat', setMode, onBusyChange, onOutgoing, onCompleted, audioBlocked, resumeAudio, audioEnabled = true, toggleAudio, sendMessage }) {
+function ChatInterface({ messages = [], connected, voiceActivity, speakingText, mode = 'chat', setMode, onBusyChange, onOutgoing, onCompleted, audioBlocked, audioError, unlockAudio, resumeAudio, audioEnabled = true, toggleAudio, sendMessage }) {
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
@@ -60,7 +60,7 @@ function ChatInterface({ messages = [], connected, voiceActivity, speakingText, 
       if (voicePreviewRef.current && !voiceFinalRef.current) publishPreview('', 'cancel')
       voicePreviewRef.current = false
     },
-    onError: reason => setError(reason === 'not-allowed' ? 'Allow microphone access in your browser. On your phone, microphone access requires HTTPS.' : `Microphone: ${reason}. You can still type a message.`),
+    onError: reason => setError(reason === 'not-allowed' ? 'Allow microphone access in your browser. On your phone, microphone access requires HTTPS.' : `Microphone: ${reason}. ${mode === 'voice' ? 'Try again or switch to Chat to type.' : 'You can still type a message.'}`),
   })
   const listening = isRecording || (mode === 'voice' && voiceActivity?.status === 'listening')
   const speaking = mode === 'voice' && (voiceActivity?.speaking || voiceActivity?.status === 'speaking')
@@ -72,8 +72,9 @@ function ChatInterface({ messages = [], connected, voiceActivity, speakingText, 
   const activateVoice = async () => {
     setError('')
     if (isRecording) { stopRecording(); return }
+    if (mode === 'voice') unlockAudio?.()
     if (micSource === 'device') {
-      if (!isSupported) { setError('This browser does not support voice recognition. Type your request or choose the PC microphone.'); return }
+      if (!isSupported) { setError('This browser does not support voice recognition. Switch to Chat to type your request or choose the PC microphone.'); return }
       startRecording()
     } else {
       try { await api.activateVoice() } catch (err) { setError(err.message || 'Could not activate the PC microphone') }
@@ -97,10 +98,11 @@ function ChatInterface({ messages = [], connected, voiceActivity, speakingText, 
       </div>}
       <div className="composer-area">
         {mode === 'voice' && audioBlocked && <div className="inline-notice"><Volume2 size={17} /><span>Your browser paused the voice reply.</span><button onClick={resumeAudio}>Play reply</button></div>}
+        {mode === 'voice' && audioError && <div className="inline-error" role="alert">{audioError}</div>}
         {error && <div className="inline-error" role="alert">{error}</div>}
         {!connected && <p className="offline-notice">Waiting for your PC. Keep Aiden running to send messages and commands.</p>}
         {interim && mode === 'chat' && <p className="interim-transcript">{interim}</p>}
-        <form className="composer" onSubmit={event => { event.preventDefault(); send(draft) }}><label className="sr-only" htmlFor="message-input">Message Aiden</label><textarea ref={inputRef} id="message-input" rows={2} maxLength={10000} value={draft} onChange={event => setDraft(event.target.value)} placeholder={connected ? 'Ask Aiden anything, or tell it what to do…' : 'Connect your PC to start a conversation…'} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (!processing && !speaking && !listening) send(draft) } }} /><div className="composer-bottom"><div className="composer-context"><Monitor size={14} />Runs on your PC</div><div className="composer-actions"><button type="button" className={`icon-button ${isRecording ? 'recording' : ''}`} onClick={activateVoice} disabled={!connected || processing || speaking || (listening && !isRecording)} aria-label={isRecording ? 'Stop listening' : 'Use microphone'}>{isRecording ? <MicOff size={18} /> : <Mic size={18} />}</button><button type="submit" className="send-button" disabled={!connected || !draft.trim() || processing || speaking || listening} aria-label="Send message"><ArrowUp size={19} /></button></div></div></form>
+        {mode === 'chat' && <form className="composer" onSubmit={event => { event.preventDefault(); send(draft) }}><label className="sr-only" htmlFor="message-input">Message Aiden</label><textarea ref={inputRef} id="message-input" rows={2} maxLength={10000} value={draft} onChange={event => setDraft(event.target.value)} placeholder={connected ? 'Ask Aiden anything, or tell it what to do…' : 'Connect your PC to start a conversation…'} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (!processing && !speaking && !listening) send(draft) } }} /><div className="composer-bottom"><div className="composer-context"><Monitor size={14} />Runs on your PC</div><div className="composer-actions"><button type="button" className={`icon-button ${isRecording ? 'recording' : ''}`} onClick={activateVoice} disabled={!connected || processing || speaking || (listening && !isRecording)} aria-label={isRecording ? 'Stop listening' : 'Use microphone'}>{isRecording ? <MicOff size={18} /> : <Mic size={18} />}</button><button type="submit" className="send-button" disabled={!connected || !draft.trim() || processing || speaking || listening} aria-label="Send message"><ArrowUp size={19} /></button></div></div></form>}
         <div className="composer-options">{mode === 'voice' ? <><label><Mic size={13} /><select aria-label="Microphone source" value={micSource} onChange={event => setMicSource(event.target.value)} disabled={listening || processing}><option value="device">This device’s microphone</option><option value="pc">PC microphone</option></select></label><button className="audio-toggle" onClick={toggleAudio} aria-pressed={audioEnabled}>{audioEnabled ? <Volume2 size={14} /> : <VolumeX size={14} />}{audioEnabled ? 'Reply audio on this device' : 'Reply audio muted'}</button></> : <span className="text-chat-hint">Text chat · Silent replies<span>Enter to send · Shift + Enter for a new line</span></span>}</div>
       </div>
     </section>

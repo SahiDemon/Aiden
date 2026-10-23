@@ -47,6 +47,23 @@ test('blocked phone reply audio exposes a retry action', () => {
   expect(resumeAudio).toHaveBeenCalledTimes(1)
 })
 
+test('voice mode has microphone and audio controls without a typing composer', () => {
+  const unlockAudio = jest.fn()
+  render({ mode: 'voice', unlockAudio })
+  expect(container.querySelector('textarea')).toBeNull()
+  expect(container.querySelector('form')).toBeNull()
+  expect(container.querySelector('[aria-label="Microphone source"]')).not.toBeNull()
+  act(() => container.querySelector('[aria-label="Start voice conversation"]').click())
+  expect(unlockAudio).toHaveBeenCalledTimes(1)
+  render({ mode: 'chat' })
+  expect(container.querySelector('textarea')).not.toBeNull()
+})
+
+test('voice playback failures are visible', () => {
+  render({ mode: 'voice', audioError: 'Could not play the voice reply' })
+  expect(container.querySelector('[role="alert"]').textContent).toContain('Could not play')
+})
+
 test('sending clears the composer immediately and allows drafting the next message', async () => {
   let resolve
   api.sendMessage.mockImplementation(() => new Promise(done => { resolve = done }))
