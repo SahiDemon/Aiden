@@ -342,7 +342,7 @@ async def test_listening_status_is_published_only_after_microphone_ready(monkeyp
     assert events[1] == (
         "broadcast",
         "listening",
-        {"speaking": False, "active": True},
+        {"speaking": False, "active": True, "source": "local"},
     )
 
 

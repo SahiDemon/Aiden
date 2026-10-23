@@ -32,7 +32,7 @@ SpeechRecognition>=3.10.0
 pyaudio>=0.2.14
 
 # Text-to-Speech (TTS)
-edge-tts>=7.2.8  # Updated to fix 403 errors from Microsoft
+edge-tts>=7.3.1,<8  # Sec-MS-GEC v2 handshake required by Microsoft since October 2026
 google-cloud-texttospeech>=2.16.0  # Google Chirp 3 HD voices
 pyttsx3>=2.90
 pygame>=2.5.2
@@ -48,6 +48,7 @@ pvporcupine>=4.0.0          # Must match the .ppn model version (Hey-Hayden_en_w
 # These dependencies are included below; their downloads can be large.
 torch>=2.0.0
 torchaudio>=2.0.0
+onnxruntime>=1.16.1  # Silero CPU inference without TorchScript cold-start stalls
 
 # openWakeWord — open-source wake word, no API key
 # Activate by setting SPEECH_USE_OPENWAKEWORD=true in .env
@@ -70,6 +71,10 @@ pywin32>=306; sys_platform == 'win32'
 psutil>=5.9.6
 pynput>=1.7.6  # Global hotkey listener
 pycaw>=20240210; sys_platform == 'win32'
+winrt-Windows.Media.Control>=3.2.1,<4; sys_platform == 'win32'
+winrt-Windows.Media>=3.2.1,<4; sys_platform == 'win32'
+winrt-Windows.Foundation>=3.2.1,<4; sys_platform == 'win32'
+winrt-Windows.Foundation.Collections>=3.2.1,<4; sys_platform == 'win32'
 
 # Utilities
 ytmusicapi>=1.4.1

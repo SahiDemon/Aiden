@@ -22,7 +22,7 @@ function App() {
   const [session, setSession] = useState(0)
   const seen = useRef(0)
   const { connected, messages: incoming, voiceActivity, systemMetrics, deviceUpdates, speakingText,
-    timerUpdates, audioBlocked, resumeAudio, audioEnabled, toggleAudio, sendMessage } = useWebSocket()
+    timerUpdates, audioBlocked, audioError, unlockAudio, resumeAudio, audioEnabled, toggleAudio, sendMessage } = useWebSocket()
   useEffect(() => {
     const fresh = incoming.slice(seen.current)
     seen.current = incoming.length
@@ -87,7 +87,7 @@ function App() {
       </aside>
       <div className="workspace-main">
         <header className="workspace-header"><div><span className="mobile-brand">aiden / </span>{mode === 'voice' ? 'Voice studio' : 'Conversation'}<span className="header-divider">/</span><span className="header-muted">Your everyday, assisted</span></div><div className="header-actions"><span className={`connection-pill ${connected ? 'connected' : ''}`}><i className="status-dot" />{connected ? 'PC connected' : 'PC offline'}</span><button className={`icon-button ${panel ? 'selected' : ''}`} aria-label="Toggle PC and devices" aria-expanded={panel} onClick={() => setPanel(!panel)}><Activity size={19} /></button></div></header>
-        <main id="conversation" className="conversation-workspace"><ChatInterface key={session} messages={messages} connected={connected} voiceActivity={voiceActivity} speakingText={speakingText} mode={mode} setMode={setMode} onBusyChange={setBusy} onOutgoing={addOutgoing} onCompleted={completeOutgoing} audioBlocked={audioBlocked} resumeAudio={resumeAudio} audioEnabled={audioEnabled} toggleAudio={toggleAudio} sendMessage={sendMessage} /></main>
+        <main id="conversation" className="conversation-workspace"><ChatInterface key={session} messages={messages} connected={connected} voiceActivity={voiceActivity} speakingText={speakingText} mode={mode} setMode={setMode} onBusyChange={setBusy} onOutgoing={addOutgoing} onCompleted={completeOutgoing} audioBlocked={audioBlocked} audioError={audioError} unlockAudio={unlockAudio} resumeAudio={resumeAudio} audioEnabled={audioEnabled} toggleAudio={toggleAudio} sendMessage={sendMessage} /></main>
         <nav className="mobile-nav" aria-label="Mobile workspace"><button className={mode === 'chat' ? 'selected' : ''} onClick={() => setMode('chat')}><MessageSquare size={20} />Chat</button><button className={mode === 'voice' ? 'selected' : ''} onClick={() => setMode('voice')}><Waves size={20} />Voice</button><button onClick={newConversation} disabled={!connected || working || resetting}><Plus size={20} />New</button><button onClick={() => setShowHistory(true)}><History size={20} />History</button><button onClick={() => setShowSettings(true)}><Settings size={20} />Settings</button></nav>
       </div>
       {panel && <aside className="device-panel" aria-label="PC and devices"><div className="panel-heading"><div><p className="eyebrow">CONNECTED WORKSPACE</p><h2>PC & smart home</h2></div><button className="icon-button" aria-label="Close PC and devices" onClick={() => setPanel(false)}><X size={20} /></button></div><p className="panel-description">Live readings. A little more control.</p><SystemStats connected={connected} systemMetrics={systemMetrics} /><SmartDeviceCard connected={connected} deviceUpdates={deviceUpdates} /><div className="remote-note"><Monitor size={20} /><p>Here or on your phone.<small>Your requests run on this PC. Voice replies play on the device you’re using.</small></p></div></aside>}

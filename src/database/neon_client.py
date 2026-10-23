@@ -370,7 +370,8 @@ class NeonDBClient:
             )
             session.add(command)
             await session.flush()
-            await session.refresh(command)
+            # INSERT RETURNING populates the ID; defaults are populated by
+            # flush. Avoid a redundant remote SELECT before the awaited commit.
             return command
     
     async def get_command_history(

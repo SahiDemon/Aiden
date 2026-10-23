@@ -126,12 +126,12 @@ test('live captions update only the listening turn and ignore silent text', () =
     receive('voice_transcript', { text: 'play', source: 'local' });
     expect(result.userInput).toBe('play');
     receive('voice_transcript', { text: 'play Thunder', source: 'web' });
-    expect(result.userInput).toBe('play Thunder');
+    expect(result.userInput).toBe('play');
     receive('voice_transcript', { text: 'silent text', source: 'web_text' });
-    expect(result.userInput).toBe('play Thunder');
+    expect(result.userInput).toBe('play');
     voice('processing');
     receive('voice_transcript', { text: 'late preview', source: 'local' });
-    expect(result.userInput).toBe('play Thunder');
+    expect(result.userInput).toBe('play');
 });
 
 test('spoken words follow audio boundaries and reject stale speech IDs', () => {
@@ -148,14 +148,38 @@ test('spoken words follow audio boundaries and reject stale speech IDs', () => {
     expect(result.overlayState).toBe('idle');
 });
 
-test('browser speaking waits for actual playback and survives autoplay retry', () => {
-    receive('assistant_speaking', { text: 'Hello', source: 'web', speech_id: 'phone', words: [{ text: 'Hello', start: 0, end: 1 }] });
-    expect(result.overlayState).toBe('thinking');
-    receive('tts_progress', { speech_id: 'phone', source: 'web', state: 'blocked', position: 0 });
+test.each(['web', 'web_text'])('browser %s requests never show the PC overlay', source => {
+    voice('listening', { active: true, source });
+    receive('voice_transcript', { text: 'Browser question', source });
+    receive('message', { role: 'user', content: 'Browser question', source });
+    voice('processing', { active: true, source });
+    receive('assistant_speaking', { text: 'Hello', source, speech_id: 'browser', words: [{ text: 'Hello', start: 0, end: 1 }] });
+    receive('message', { role: 'assistant', content: 'Hello', source });
+    for (const state of ['blocked', 'playing', 'progress', 'ended']) {
+        receive('tts_progress', { speech_id: 'browser', source, state, position: .1 });
+    }
+    voice('idle', { active: false, source });
     expect(result.overlayState).toBe('idle');
-    receive('tts_progress', { speech_id: 'phone', source: 'web', state: 'playing', position: .1 });
+    expect(result.sessionActive).toBe(false);
+    expect(result.currentText).toBe('');
+    expect(result.userInput).toBe('');
+    expect(result.words).toEqual([]);
+    expect(ipc).not.toHaveBeenCalledWith('overlay:raise');
+});
+
+test('browser events do not interrupt an ongoing PC conversation', () => {
+    receive('assistant_speaking', { text: 'PC reply', source: 'local', speech_id: 'pc', words: [{ text: 'PC', start: 0, end: 1 }] });
+    ipc.mockClear();
+    voice('processing', { active: true, source: 'web' });
+    receive('assistant_speaking', { text: 'Browser reply', source: 'web', speech_id: 'browser' });
+    receive('tts_progress', { speech_id: 'pc', source: 'web', state: 'ended', position: 1 });
+    voice('idle', { active: false, source: 'web' });
     expect(result.overlayState).toBe('replying');
+    expect(result.currentText).toBe('PC reply');
+    expect(result.sessionActive).toBe(true);
+    expect(ipc).not.toHaveBeenCalled();
+    receive('tts_progress', { speech_id: 'pc', source: 'local', state: 'progress', position: .1 });
     expect(result.activeWord).toBe(0);
-    receive('tts_progress', { speech_id: 'phone', source: 'web', state: 'ended', position: 1 });
+    receive('tts_progress', { speech_id: 'pc', source: 'local', state: 'ended', position: 1 });
     expect(result.overlayState).toBe('idle');
 });

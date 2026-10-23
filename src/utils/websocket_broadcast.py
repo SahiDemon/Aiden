@@ -36,13 +36,14 @@ def broadcast_from_thread(message_type: str, data: Dict[str, Any]) -> bool:
         return False
 
 
-async def broadcast_voice_status(status: str, speaking: bool = False, active: Optional[bool] = None):
+async def broadcast_voice_status(status: str, speaking: bool = False, active: Optional[bool] = None, source: str = "local"):
     """Broadcast voice activity status to dashboard"""
     if _broadcast_callback:
         try:
             payload = {
                 "status": status,
-                "speaking": speaking
+                "speaking": speaking,
+                "source": source,
             }
             if active is not None:
                 payload["active"] = active

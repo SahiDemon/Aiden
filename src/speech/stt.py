@@ -1,7 +1,7 @@
 """
 Speech-to-Text (STT) System — Silero VAD Edition
 
-Primary VAD: Silero VAD (PyTorch neural network, significantly more accurate than
+Primary VAD: Silero VAD (CPU ONNX neural network, significantly more accurate than
 WebRTC VAD at distinguishing speech from noise/music/TV).
 
 Fallback VAD: WebRTC VAD (used automatically if torch is not installed).
@@ -22,6 +22,7 @@ import io
 import time
 import struct
 import threading
+from contextlib import nullcontext
 from typing import Awaitable, Callable, Optional, Tuple, List
 
 import speech_recognition as sr
@@ -47,6 +48,9 @@ _SUPPORTED_RATES = (8000, 16000, 32000, 48000)
 _FRAME_DURATION_MS_WEBRTC = 30   # 10, 20, or 30 ms — 30 gives the best WebRTC accuracy
 _FRAME_DURATION_MS_SILERO = 32   # Silero requires exactly 512 samples @ 16 kHz = 32 ms
 _SAMPLE_WIDTH = 2                # 16-bit PCM = 2 bytes per sample
+# Two synthetic frames every 30 seconds keep the small VAD model exercised
+# while wake detection owns the microphone. No audio device is opened here.
+_IDLE_VAD_WARMUP_SECONDS = 30.0
 
 # Known Whisper hallucinations on silence / noise.
 # These are verbatim phrases Whisper reliably outputs when fed near-silence.
@@ -69,7 +73,7 @@ _WHISPER_HALLUCINATIONS: tuple[str, ...] = (
 
 class _SileroVAD:
     """
-    Thin wrapper around the Silero VAD model from torch.hub.
+    Silero's CPU ONNX model, loaded through its official torch.hub wrapper.
 
     Usage:
         vad = _SileroVAD(threshold=0.5, sample_rate=16000)
@@ -86,15 +90,19 @@ class _SileroVAD:
         self.sample_rate = sample_rate
         self._torch = torch
 
-        logger.info("SileroVAD: Loading model from torch.hub (first run may download ~2 MB)…")
+        logger.info("SileroVAD: Loading CPU ONNX model (first run may download model files)…")
         self._model, _ = torch.hub.load(
             repo_or_dir="snakers4/silero-vad",
             model="silero_vad",
             force_reload=False,
             verbose=False,
             trust_repo=True,
+            # The TorchScript model can stall on its first live frame after
+            # idle. Silero's ONNX wrapper uses one intra/inter-op CPU thread
+            # and avoids JIT compilation on the microphone capture path.
+            onnx=True,
+            force_onnx_cpu=True,
         )
-        self._model.eval()
         # Reset internal state (Silero is stateful per stream)
         self._model.reset_states()
         logger.info("SileroVAD: Model loaded successfully.")
@@ -138,6 +146,9 @@ class STTEngine:
         self.settings = get_settings()
         self.recognizer = sr.Recognizer()
         self._stop_requested = threading.Event()
+        self._vad_lock = threading.RLock()
+        self._idle_warmup_stop = threading.Event()
+        self._idle_warmup_thread: Optional[threading.Thread] = None
 
         # Configure from settings
         self.language = self.settings.speech.stt_language
@@ -205,7 +216,6 @@ class STTEngine:
         # Minimum recorded speech duration (seconds) before sending to Groq.
         # Anything shorter is almost certainly noise or a cough.
         self.min_speech_duration = 0.3
-        self._vad_warmed = False
         self._warm_vad()
 
         vad_name = "Silero" if self._silero else f"WebRTC (aggressiveness={self.vad_aggressiveness})"
@@ -226,6 +236,7 @@ class STTEngine:
             "STT input device: %s",
             selected_device_name or "system default microphone",
         )
+        self._start_idle_warmup()
 
     def _init_persistent_mic(self):
         """Pre-warm the PyAudio stream to eliminate 500ms+ startup latency."""
@@ -266,12 +277,46 @@ class STTEngine:
             logger.error(f"STT: Failed to initialize persistent microphone: {e}")
             self._persistent_mic = None
 
-    def _warm_vad(self) -> None:
-        """Pay first-inference setup once during startup, before activation."""
-        if self._silero and not getattr(self, "_vad_warmed", False):
+    def _warm_vad(self, *, log_readiness: bool = True) -> None:
+        """Warm the current capture worker before the cue, including after idle."""
+        if self._silero:
+            started = time.monotonic()
+            # Exercise both the empty and recurrent state paths. Startup
+            # warm-up alone cannot prove readiness hours later on a different
+            # thread, after Windows has reclaimed the model's working set.
+            self._silero.reset()
+            self._silero.is_speech(bytes(self.frame_bytes))
             self._silero.is_speech(bytes(self.frame_bytes))
             self._silero.reset()
-            self._vad_warmed = True
+            log = logger.info if log_readiness else logger.debug
+            log("[TIMING] Speech detector readiness: %.0f ms", (time.monotonic() - started) * 1000)
+
+    def _start_idle_warmup(self) -> None:
+        """Keep the VAD warm through light, periodic idle inference."""
+        if self._silero is None or self._idle_warmup_thread is not None:
+            return
+        self._idle_warmup_thread = threading.Thread(
+            target=self._idle_warmup_loop, name="stt-idle-warmup", daemon=True,
+        )
+        self._idle_warmup_thread.start()
+
+    def _idle_warmup_loop(self) -> None:
+        while not self._idle_warmup_stop.wait(_IDLE_VAD_WARMUP_SECONDS):
+            self._warm_idle_vad()
+
+    def _warm_idle_vad(self) -> None:
+        # Silero is stateful. Skip the entire tick if capture owns it, so a
+        # maintenance reset can never alter speech detection mid-command.
+        if not self._vad_lock.acquire(blocking=False):
+            return
+        try:
+            if not self._idle_warmup_stop.is_set():
+                self._warm_vad(log_readiness=False)
+        except Exception as exc:
+            # A maintenance failure must not disable future real captures.
+            logger.warning("STT: Idle speech detector warm-up failed: %s", exc)
+        finally:
+            self._vad_lock.release()
 
     def refresh_microphone(self) -> bool:
         """Reopen the input stream after a wake-word handoff.
@@ -349,6 +394,7 @@ class STTEngine:
         restore_media: bool = True,
         preserve_recent_audio: bool = False,
         ready_cue: Optional[Callable[[], Awaitable[object]]] = None,
+        request_source: str = "local",
     ) -> Tuple[bool, Optional[str], Optional[str]]:
         """
         Listen and transcribe speech to text.
@@ -379,10 +425,6 @@ class STTEngine:
 
                 ready_cue = play_default_ready_cue
 
-            # Reset Silero's per-stream state before each listen session
-            if self._silero:
-                self._silero.reset()
-
             # Start capture in the thread pool, but do not claim to be listening
             # until that thread has confirmed live microphone input. Audio
             # arriving during the cue is retained, including early speech.
@@ -393,11 +435,12 @@ class STTEngine:
             def publish_preview(text):
                 def dispatch():
                     if preview and not preview.closed.is_set():
-                        asyncio.create_task(broadcast_message("voice_transcript", {"text": text, "source": "local"}))
+                        asyncio.create_task(broadcast_message("voice_transcript", {"text": text, "source": request_source}))
                 loop.call_soon_threadsafe(dispatch)
 
+            speech_settings = getattr(getattr(self, "settings", None), "speech", None)
             preview = LiveTranscript(
-                getattr(getattr(getattr(self, "settings", None), "speech", None), "vosk_model_path", ""), getattr(self, "sample_rate", 16000), publish_preview,
+                getattr(speech_settings, "vosk_model_path", ""), getattr(self, "sample_rate", 16000), publish_preview,
             )
             self._live_preview = preview
             capture_started_at = loop.time()
@@ -447,7 +490,7 @@ class STTEngine:
                 if ready_task in done:
                     try:
                         from src.utils.websocket_broadcast import broadcast_voice_status
-                        await broadcast_voice_status("listening", speaking=False, active=True)
+                        await broadcast_voice_status("listening", speaking=False, active=True, source=request_source)
                     except Exception:
                         pass
 
@@ -478,15 +521,13 @@ class STTEngine:
 
             text = None
             if success and audio:
-                from src.ai.groq_client import get_groq_client
-                groq_client = await get_groq_client()
                 if self._stop_requested.is_set():
                     logger.info("STT: Stop requested before transcription — skipping")
                     return False, None, "cancelled"
                 try:
                     transcription_started_at = loop.time()
-                    text = await groq_client.transcribe_audio(audio.get_wav_data())
-                    logger.info("[TIMING] Whisper transcription: %.0f ms", (loop.time() - transcription_started_at) * 1000)
+                    text = await self._transcribe_audio(audio.get_wav_data())
+                    logger.info("[TIMING] Final transcription wait: %.0f ms", (loop.time() - transcription_started_at) * 1000)
                     if self._stop_requested.is_set():
                         logger.info("STT: Stop requested during transcription — discarding result")
                         return False, None, "cancelled"
@@ -497,7 +538,7 @@ class STTEngine:
                             text = None
                             error = "non_speech"
                         else:
-                            logger.info(f"STT: Recognized (Groq Whisper): '{text}'")
+                            logger.info(f"STT: Recognized: '{text}'")
                     else:
                         logger.warning("STT: Empty recognition result")
                         success = False
@@ -512,7 +553,7 @@ class STTEngine:
             # Broadcast idle status after listening completes
             try:
                 from src.utils.websocket_broadcast import broadcast_voice_status
-                await broadcast_voice_status("idle", speaking=False)
+                await broadcast_voice_status("idle", speaking=False, source=request_source)
             except Exception:
                 pass
 
@@ -522,7 +563,7 @@ class STTEngine:
             logger.error(f"STT error: {e}")
             try:
                 from src.utils.websocket_broadcast import broadcast_voice_status
-                await broadcast_voice_status("idle", speaking=False)
+                await broadcast_voice_status("idle", speaking=False, source=request_source)
             except Exception:
                 pass
             return False, None, str(e)
@@ -537,6 +578,11 @@ class STTEngine:
                 logger.debug(f"STT media restore skipped: {exc}")
             finally:
                 self._stop_requested.clear()
+
+    async def _transcribe_audio(self, wav_bytes: bytes) -> str:
+        """Transcribe captured audio with Groq Whisper."""
+        from src.ai.groq_client import get_groq_client
+        return await (await get_groq_client()).transcribe_audio(wav_bytes)
 
     async def transcribe_captured_pcm(
         self,
@@ -559,10 +605,7 @@ class STTEngine:
         try:
             normalized = self._normalize_pcm_gain(pcm_bytes)
             audio = sr.AudioData(normalized, self.sample_rate, _SAMPLE_WIDTH)
-            from src.ai.groq_client import get_groq_client
-
-            groq_client = await get_groq_client()
-            text = await groq_client.transcribe_audio(audio.get_wav_data())
+            text = await self._transcribe_audio(audio.get_wav_data())
             if not text:
                 return False, None, "No speech detected"
 
@@ -854,7 +897,25 @@ class STTEngine:
         on_capture_armed: Optional[Callable[[], None]] = None,
     ) -> Tuple[bool, Optional[sr.AudioData], Optional[str]]:
         """Synchronous listen operation (runs in thread pool)"""
+        # Own the model for the whole session, including readiness and cue
+        # capture. Idle maintenance must never reset its recurrent state.
+        with getattr(self, "_vad_lock", nullcontext()):
+            return self._listen_sync_locked(
+                on_listening_ready, preserve_recent_audio, start_capture, on_capture_armed,
+            )
+
+    def _listen_sync_locked(
+        self,
+        on_listening_ready: Optional[Callable[[], None]],
+        preserve_recent_audio: bool,
+        start_capture: Optional[threading.Event],
+        on_capture_armed: Optional[Callable[[], None]],
+    ) -> Tuple[bool, Optional[sr.AudioData], Optional[str]]:
+        """Capture while holding exclusive access to the speech detector."""
         try:
+            silero = getattr(self, "_silero", None)
+            if silero:
+                silero.reset()
             source = self._prepare_live_microphone(preserve_recent_audio)
             logger.debug(f"STT: Persistent microphone ready ({self.sample_rate}Hz)")
 
@@ -1007,6 +1068,17 @@ class STTEngine:
             except Exception as e:
                 logger.warning("STT: Error releasing persistent microphone: %s", e)
 
+    def shutdown(self) -> None:
+        """Stop idle maintenance permanently and release microphone resources."""
+        self.request_stop()
+        self._idle_warmup_stop.set()
+        worker = self._idle_warmup_thread
+        if worker is not None and worker is not threading.current_thread():
+            worker.join(timeout=2.0)
+            if worker.is_alive():
+                logger.warning("STT: Idle warm-up worker is still finishing inference")
+        self.close()
+
 
 # Global instance
 _stt_engine: Optional[STTEngine] = None
@@ -1023,5 +1095,5 @@ def get_stt_engine() -> STTEngine:
 def reset_stt_engine() -> None:
     global _stt_engine
     if _stt_engine is not None:
-        _stt_engine.close()
+        _stt_engine.shutdown()
     _stt_engine = None

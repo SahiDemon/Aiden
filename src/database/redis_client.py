@@ -398,10 +398,12 @@ async def close_redis_client():
         loop_id = id(loop)
         
         with _client_lock:
-            if loop_id in _redis_clients:
-                await _redis_clients[loop_id].disconnect()
-                del _redis_clients[loop_id]
-                logger.debug(f"Closed Redis client for event loop {loop_id}")
+            client = _redis_clients.pop(loop_id, None)
+        # Never await while holding a thread lock: another coroutine may
+        # need the registry before the disconnect can complete.
+        if client is not None:
+            await client.disconnect()
+            logger.debug(f"Closed Redis client for event loop {loop_id}")
     
     except Exception as e:
         logger.debug(f"Error closing Redis client: {e}")
@@ -410,10 +412,11 @@ async def close_redis_client():
 async def close_all_redis_clients():
     """Close all Redis clients (for shutdown)"""
     with _client_lock:
-        for loop_id, client in list(_redis_clients.items()):
-            try:
-                await client.disconnect()
-                logger.debug(f"Closed Redis client for event loop {loop_id}")
-            except Exception as e:
-                logger.debug(f"Error closing client {loop_id}: {e}")
+        clients = list(_redis_clients.items())
         _redis_clients.clear()
+    for loop_id, client in clients:
+        try:
+            await client.disconnect()
+            logger.debug(f"Closed Redis client for event loop {loop_id}")
+        except Exception as e:
+            logger.debug(f"Error closing client {loop_id}: {e}")

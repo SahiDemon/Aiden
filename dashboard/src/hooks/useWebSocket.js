@@ -17,15 +17,34 @@ export const useWebSocket = (url = getWsUrl()) => {
   const [timerUpdates, setTimerUpdates] = useState(null)
   const [audioBlocked, setAudioBlocked] = useState(false)
   const [audioEnabled, setAudioEnabled] = useState(true)
+  const [audioError, setAudioError] = useState('')
   const audioEnabledRef = useRef(true)
+  const playerRef = useRef(null)
   const audioRef = useRef(null)
   const audioQueueRef = useRef([])
+
+  // Reuse the element enabled by the microphone's user gesture, including on Safari.
+  const unlockAudio = useCallback(() => {
+    if (!audioEnabledRef.current) return
+    if (audioRef.current) { audioRef.current.play().catch(() => setAudioBlocked(true)); return }
+    if (playerRef.current) return
+    const audio = new Audio('data:audio/wav;base64,UklGRsQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')
+    playerRef.current = audio
+    audio.play().catch(() => {
+      if (!audioRef.current && playerRef.current === audio) playerRef.current = null
+    })
+  }, [])
 
   const playNextAudio = useCallback(() => {
     if (audioRef.current || !audioEnabledRef.current) return
     const item = audioQueueRef.current.shift()
     if (!item) return
-    const audio = new Audio(item.audio_uri)
+    const audio = playerRef.current || new Audio()
+    playerRef.current = audio
+    audio.src = item.audio_uri
+    audio.playbackItem = item
+    setAudioError('')
+    setSpeakingText(item.text || '')
     const report = state => {
       if (item.source === 'web' && item.speech_id && wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({ type: 'tts_playback', data: {
@@ -38,14 +57,16 @@ export const useWebSocket = (url = getWsUrl()) => {
     audio.reportEnd = () => { stopClock(); report('ended') }
     audio.onpause = () => {
       stopClock()
-      if (audioRef.current === audio) {
+      if (audioRef.current === audio && audio.playbackItem === item) {
         report('blocked')
+        setAudioBlocked(true)
         setVoiceActivity(prev => ({ ...prev, status: 'idle', speaking: false }))
       }
     }
     audio.ontimeupdate = () => report('progress')
     audioRef.current = audio
     audio.onplaying = () => {
+      if (audioRef.current !== audio || audio.playbackItem !== item) return
       report('playing')
       stopClock()
       if (item.source === 'web' && item.speech_id) clock = setInterval(() => report('progress'), 50)
@@ -53,7 +74,7 @@ export const useWebSocket = (url = getWsUrl()) => {
       setVoiceActivity(prev => ({ ...prev, status: 'speaking', speaking: true }))
     }
     const finish = () => {
-      if (audioRef.current !== audio) return
+      if (audioRef.current !== audio || audio.playbackItem !== item) return
       stopClock()
       report('ended')
       audioRef.current = null
@@ -62,9 +83,15 @@ export const useWebSocket = (url = getWsUrl()) => {
       playNextAudio()
     }
     audio.onended = finish
-    audio.onerror = finish
-    audio.play().catch(() => {
-      if (audioRef.current !== audio) return
+    const fail = () => {
+      if (audioRef.current !== audio || audio.playbackItem !== item) return
+      finish()
+      setAudioError('Could not play the voice reply on this device. Try another voice request or check your browser’s audio settings.')
+    }
+    audio.onerror = fail
+    audio.play().catch(error => {
+      if (audioRef.current !== audio || audio.playbackItem !== item) return
+      if (error.name !== 'NotAllowedError') { fail(); return }
       report('blocked')
       setAudioBlocked(true)
       setVoiceActivity(prev => ({ ...prev, status: 'idle', speaking: false }))
@@ -78,14 +105,18 @@ export const useWebSocket = (url = getWsUrl()) => {
     audioEnabledRef.current = enabled
     setAudioEnabled(enabled)
     if (!enabled) {
-      audioRef.current?.reportEnd?.()
-      audioRef.current?.pause()
+      const audio = audioRef.current
       audioRef.current = null
+      audio?.reportEnd?.()
+      playerRef.current?.pause()
+      playerRef.current = null
       audioQueueRef.current = []
       setAudioBlocked(false)
+      setAudioError('')
       setVoiceActivity(prev => ({ ...prev, status: 'idle', speaking: false }))
     }
-  }, [])
+    else unlockAudio()
+  }, [unlockAudio])
   
   const wsRef = useRef(null)
   const reconnectTimeoutRef = useRef(null)
@@ -251,6 +282,8 @@ export const useWebSocket = (url = getWsUrl()) => {
       shouldReconnectRef.current = false
       audioRef.current?.reportEnd?.()
       audioRef.current?.pause()
+      playerRef.current?.pause()
+      playerRef.current = null
       audioRef.current = null
       audioQueueRef.current = []
       clearInterval(heartbeat)
@@ -287,6 +320,8 @@ export const useWebSocket = (url = getWsUrl()) => {
     timerUpdates,
     sendMessage,
     audioBlocked,
+    audioError,
+    unlockAudio,
     resumeAudio,
     audioEnabled,
     toggleAudio,

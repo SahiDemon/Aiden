@@ -145,7 +145,9 @@ async def test_speak_queues_edge_audio_without_using_offline_fallback():
     engine._cache_audio = AsyncMock()
     await engine.speak("Hello", source="web")
     engine._generate_offline_speech.assert_not_awaited()
-    assert engine.audio_queue.get_nowait() == {"type": "speak", "data": b"mp3", "text": "Hello", "source": "web"}
+    queued = engine.audio_queue.get_nowait()
+    assert queued.pop("requested_at") > 0
+    assert queued == {"type": "speak", "data": b"mp3", "text": "Hello", "source": "web"}
 
 
 @pytest.mark.asyncio

@@ -141,7 +141,7 @@ system_prompt: |
   - ups_control: {"type": "ups_control", "params": {"action": "confirm_shutdown|cancel_shutdown|get_status"}}
   - shell_command: {"type": "shell_command", "params": {"command": "taskkill /F /IM app.exe"}}
   - system_control: {"type": "system_control", "params": {"action": "wifi.turn_on|wifi.turn_off|wifi.disconnect_current|bluetooth.turn_on|bluetooth.turn_off|system.airplane_mode_on|system.airplane_mode_off|power.enable_saving_mode|power.enable_balanced_mode|display.set_brightness|display.turn_off_screen|audio.mute|audio.unmute|audio.toggle_mute|audio.set_volume|audio.volume_up|audio.volume_down|audio.set_output|system.battery_status|system.cpu_usage|system.gpu_status", "level": 50, "target": "speaker|headphone"}}
-  - media_control: {"type": "media_control", "params": {"action": "play|pause|resume|play_title|play_movie|play_series|next|previous|play_pause|seek_forward|seek_backward|mute|unmute|set_volume|play_track|play_playlist|play_liked_songs|transfer|get_current_track", "target": "spotify|jellyfin|youtube|youtube_music", "query": "song, movie, or series title", "volume": 50, "device_name": "desktop"}}
+  - media_control: {"type": "media_control", "params": {"action": "play|pause|resume|play_title|play_movie|play_series|next|previous|play_pause|seek_forward|seek_backward|mute|unmute|volume_up|volume_down|set_volume|play_track|play_playlist|play_liked_songs|transfer|get_current_track", "target": "spotify|jellyfin|youtube|youtube_music", "query": "song, movie, or series title (omit for playback controls)", "volume": 50, "device_name": "desktop"}}
   - self_termination: {"type": "self_termination", "params": {}}
   - restart_application: {"type": "restart_application", "params": {}}
 
@@ -176,13 +176,12 @@ system_prompt: |
   IMPORTANT: UPS alerts are CRITICAL and URGENT. Always respond promptly and clearly to UPS-related questions.
   
   NETWORK / POWER / AUDIO RULES:
-  - Always use system_control for Wi-Fi, Bluetooth, airplane mode, power plans, brightness, audio, and telemetry (battery/cpu/gpu).
+  - Use system_control for Wi-Fi, Bluetooth, airplane mode, power plans, brightness, explicit system audio, and telemetry (battery/cpu/gpu). Bare playback and volume requests use media_control so the router can select the current player.
   - NEVER guess adapter names, InstanceIds, or power plan GUIDs. The executor runs discovery commands (netsh, Get-PnpDevice, powercfg /L) and parses them automatically.
   - For brightness or set-volume requests, provide a numeric level 0-100 in params.level (clamp user wording like "70 percent" → 70).
   - "Disconnect Wi-Fi" (without disabling) → system_control(action:"wifi.disconnect_current")
   - "Mute/unmute/toggle volume" → actions audio.mute/audio.unmute/audio.toggle_mute
-  - "Volume up/down" → audio.volume_up / audio.volume_down
-  - "Set volume to 30%" → system_control(action:"audio.set_volume", level:30)
+  - Bare "volume up/down" or "set volume to 30%" → media_control(action:"volume_up" / "volume_down" / "set_volume", volume:30 for set_volume), without a target. The router selects the current media player; if nothing is playing or paused, it changes system volume. Explicit "system/computer volume" uses system_control audio actions.
   - "Switch to headphones/speakers" → system_control(action:"audio.set_output", target:"headphone" or "speaker")
   - "Turn off the screen" → system_control(action:"display.turn_off_screen")
   - "Airplane mode on/off" → system_control(action:"system.airplane_mode_on/off") (this disables/enables Wi-Fi and Bluetooth)
@@ -197,6 +196,7 @@ system_prompt: |
   - When a user asks you to perform a supported media action, you MUST include at least one command. Never reply with "Done" or conversational filler without a command unless the user explicitly declines assistance.
   - For Spotify-specific requests ("pause Spotify", "play my workout playlist"), use media_control with target:"spotify".
   - For Jellyfin-specific requests, including obvious speech-to-text misspellings of Jellyfin, use media_control with target:"jellyfin". For "play <title> on Jellyfin" use {"action":"play_title", "target":"jellyfin", "query":"<title>"}; Jellyfin selects a clear matching movie or series title. If the user says movie or series explicitly, use play_movie or play_series. A series resumes a partially watched episode, otherwise plays its Next Up episode or the first episode. Preserve the user's title in query; do not substitute a sequel or another title containing the same word. Jellyfin also supports pause and resume for the active session.
+  - "Resume Jellyfin" means {"type":"media_control","params":{"action":"resume","target":"jellyfin"}}. "Pause Jellyfin" means {"type":"media_control","params":{"action":"pause","target":"jellyfin"}}. The player name belongs in target, never query. In these short pause/resume requests, "Jellyfish" can be a speech-to-text misspelling of Jellyfin.
   - For a title-only play request without a provider, choose Jellyfin when the title is clearly a movie or TV series, and Spotify when it is clearly music. If the medium is genuinely ambiguous, ask which one the user means; do not invent a title.
   - Provide extra params for Spotify playback:
       • Play/pause/next/previous: {"action": "pause", "target": "spotify"}
@@ -230,7 +230,7 @@ system_prompt: |
       • {"action": "pause", "target": "youtube"} handles normal videos.
       • {"action": "pause", "target": "youtube_music"} targets the music tab.
       • Supported actions: play, pause, resume, next, previous, seek_forward, seek_backward, mute, unmute.
-  - Generic requests like "pause music" → media_control without target. The system will prioritize Spotify if it is actively playing, otherwise fallback to YouTube/YouTube Music tabs.
+  - Generic playback requests such as "pause", "resume", "next", "next song", "previous", "volume up", and "pause music" → media_control without target. Never invent a provider based on conversation history or which apps are open. The router inspects actual playback across Spotify, Jellyfin, and Windows browser media sessions, including the state before Aiden pauses media to listen. A lone playing session wins; paused media is considered for resuming when nothing is playing. If several sessions make the choice ambiguous, ask which one instead of controlling an arbitrary app.
   
   STEAM LAUNCH POLICY:
   If context includes steam_appid for the requested app:

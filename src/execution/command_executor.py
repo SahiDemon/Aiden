@@ -77,12 +77,19 @@ class CommandExecutor:
         Returns:
             Dict with success status and optional response data
         """
+        if (not isinstance(command, dict)
+                or not isinstance(command.get("type"), str)
+                or not command["type"].strip()
+                or not isinstance(command.get("params", {}), dict)):
+            logger.warning("Rejected malformed command payload")
+            return {"success": False, "command": None, "params": {},
+                    "response_data": None, "error": "Invalid command: expected a type and parameter object"}
         command_type = command.get("type")
         params = command.get("params", {})
         
         logger.info(f"Executing command: {command_type} with params: {params}")
         
-        start_time = time.time()
+        start_time = time.perf_counter()
         success = False
         error_message = None
         response_data = None  # ESP32 response or other command output
@@ -140,7 +147,10 @@ class CommandExecutor:
         
         finally:
             # Log to database
-            execution_time_ms = int((time.time() - start_time) * 1000)
+            execution_time_ms = int((time.perf_counter() - start_time) * 1000)
+            logger.info("[TIMING] Command action: %d ms | type=%s success=%s",
+                        execution_time_ms, command_type, success)
+            log_started_at = time.perf_counter()
             
             try:
                 db = await get_db_client()
@@ -154,6 +164,9 @@ class CommandExecutor:
                 )
             except Exception as e:
                 logger.error(f"Error logging command: {e}")
+            finally:
+                logger.info("[TIMING] Command history save: %.0f ms | type=%s",
+                            (time.perf_counter() - log_started_at) * 1000, command_type)
         
         return {
             "success": success,
@@ -203,6 +216,8 @@ class CommandExecutor:
             return commands
 
         def priority(command: Dict[str, Any]) -> int:
+            if not isinstance(command, dict) or not isinstance(command.get("params", {}), dict):
+                return 2
             command_type = command.get("type")
             params = command.get("params") or {}
             action = str(params.get("action") or "").lower()

@@ -48,6 +48,9 @@ class ProcessManager:
         Returns:
             True if process was killed successfully
         """
+        if not isinstance(process_name, str) or not process_name.strip():
+            logger.warning("Refusing process close with an empty or invalid name")
+            return False
         # Check if PID is embedded in process_name string (e.g., "Chrome.exe (PID: 1234)")
         if not pid and "(PID:" in process_name:
             try:
@@ -89,32 +92,36 @@ class ProcessManager:
             
             # Kill all matching processes
             killed_any = False
+            pid_targets = [proc for proc in matching_processes if proc.get("pid")]
+            # Chromium has many helpers. Await all exits, but avoid serial
+            # taskkill startup costs and blocking the assistant's event loop.
+            limiter = asyncio.Semaphore(8)
+
+            async def kill_target(proc):
+                async with limiter:
+                    logger.info("Killing %s by PID %s", proc.get("name", ""), proc["pid"])
+                    return await self.kill_process_by_pid(proc["pid"])
+
+            if pid_targets:
+                killed_any = any(await asyncio.gather(*(kill_target(proc) for proc in pid_targets)))
             for proc in matching_processes:
                 proc_pid = proc.get("pid")
                 proc_name = proc.get("name", "")
                 
                 # Prefer killing by PID if available
                 if proc_pid:
-                    logger.info(f"Killing {proc_name} by PID {proc_pid}")
-                    if await self.kill_process_by_pid(proc_pid):
-                        killed_any = True
                     continue
                 
                 # Fallback to killing by name (with proper quoting for names with spaces)
                 if not proc_name:
                     continue
                 
-                # Quote the process name if it contains spaces
-                if ' ' in proc_name:
-                    command = f'taskkill /F /IM "{proc_name}"'
-                else:
-                    command = f"taskkill /F /IM {proc_name}"
+                command = ["taskkill", "/F", "/IM", proc_name]
                 
                 logger.info(f"Executing: {command}")
                 
-                result = subprocess.run(
+                result = await asyncio.to_thread(subprocess.run,
                     command,
-                    shell=True,
                     capture_output=True,
                     text=True
                 )
@@ -188,8 +195,11 @@ class ProcessManager:
     async def kill_process_by_pid(self, pid: int) -> bool:
         """Kill process by PID"""
         try:
-            command = f"taskkill /F /PID {pid}"
-            result = subprocess.run(command, shell=True, capture_output=True)
+            if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+                logger.warning("Refusing process close with an invalid PID")
+                return False
+            command = ["taskkill", "/F", "/PID", str(int(pid))]
+            result = await asyncio.to_thread(subprocess.run, command, capture_output=True)
             return result.returncode == 0
         except Exception as e:
             logger.error(f"Error killing process {pid}: {e}")

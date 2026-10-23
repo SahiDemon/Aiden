@@ -233,7 +233,84 @@ class BrowserMediaController:
     """Controls media playback for YouTube / YouTube Music in Chromium browsers."""
 
     def __init__(self):
-        pass
+        self._saved_browser_volumes = {}
+
+    async def get_playback_candidates(self) -> list[dict]:
+        """Read Windows media sessions, including background browser tabs."""
+        try:
+            from winrt.windows.media.control import (
+                GlobalSystemMediaTransportControlsSessionManager as Manager,
+                GlobalSystemMediaTransportControlsSessionPlaybackStatus as Status,
+            )
+        except ImportError:
+            return []
+        manager = await Manager.request_async()
+        candidates = []
+        for session in manager.get_sessions():
+            source = session.source_app_user_model_id.lower()
+            process = next((name for name in ("chrome", "msedge", "brave", "vivaldi") if name in source), None)
+            if process is None:
+                continue
+            info = session.get_playback_info()
+            if info.playback_status not in {Status.PLAYING, Status.PAUSED}:
+                continue
+            properties = await session.try_get_media_properties_async()
+            if not properties.title:
+                continue
+            # Controls go to the native session itself, so background tabs do
+            # not need to be activated and the wrong tab cannot receive keys.
+            candidates.append({"target": "youtube", "id": f"{source}:{properties.title}",
+                               "title": properties.title, "process_name": process + ".exe",
+                               "is_playing": info.playback_status == Status.PLAYING,
+                               "native_session": session})
+        return candidates
+
+    async def control_session(self, action: str, candidate: dict, volume: Optional[int] = None) -> Tuple[bool, dict]:
+        """Control a detected session without guessing from open windows."""
+        session = candidate["native_session"]
+        if action in {"volume_up", "volume_down", "set_volume", "mute", "unmute"}:
+            return self._control_session_volume(action, candidate, volume)
+        methods = {"play": "try_play_async", "resume": "try_play_async", "pause": "try_pause_async",
+                   "next": "try_skip_next_async", "previous": "try_skip_previous_async",
+                   "play_pause": "try_toggle_play_pause_async"}
+        method = methods.get(action)
+        if not method:
+            return False, {"type": "browser_media", "message": "That control isn't available for the current browser player."}
+        accepted = await getattr(session, method)()
+        if not accepted:
+            return False, {"type": "browser_media", "message": "The current browser player didn't accept that command."}
+        return True, {"type": "browser_media", "message": f"{action.replace('_', ' ').title()} command sent to the current browser player."}
+
+    def _control_session_volume(self, action: str, candidate: dict, volume: Optional[int]) -> Tuple[bool, dict]:
+        """Change the selected browser's app volume, leaving system volume alone."""
+        try:
+            from pycaw.pycaw import AudioUtilities
+            changed = False
+            for audio in AudioUtilities.GetAllSessions():
+                process = audio.Process
+                if not process or process.name().lower() != candidate["process_name"]:
+                    continue
+                control = audio.SimpleAudioVolume
+                current = round(control.GetMasterVolume() * 100)
+                key = getattr(audio, "InstanceIdentifier", process.pid)
+                if action == "mute":
+                    if current:
+                        self._saved_browser_volumes[key] = current
+                    requested = 0
+                elif action == "unmute":
+                    requested = self._saved_browser_volumes.get(key, current or 50)
+                elif action == "set_volume":
+                    if volume is None:
+                        return False, {"type": "browser_media", "message": "What volume should I use?"}
+                    requested = volume
+                else:
+                    requested = current + (10 if action == "volume_up" else -10)
+                control.SetMasterVolume(max(0, min(100, requested)) / 100, None)
+                changed = True
+            return changed, {"type": "browser_media", "message": "Browser volume adjusted." if changed else "I couldn't find the browser's audio session."}
+        except Exception as exc:
+            logger.debug("Browser volume control unavailable: %s", exc)
+            return False, {"type": "browser_media", "message": "I couldn't change the current browser's volume."}
 
     async def control(self, action: str, target: Optional[str] = None, query: Optional[str] = None) -> Tuple[bool, dict]:
         """Execute a media action (play/pause/etc.) for the target browser tab."""
@@ -241,10 +318,22 @@ class BrowserMediaController:
 
     async def duck_for_listening(self) -> dict:
         """Best-effort pause of active browser media while STT is listening."""
-        return await asyncio.to_thread(self._duck_for_listening_sync)
+        paused = []
+        for candidate in await self.get_playback_candidates():
+            try:
+                if candidate["is_playing"] and await candidate["native_session"].try_pause_async():
+                    paused.append(candidate)
+            except Exception as exc:
+                logger.debug("Browser session disappeared during listening pause: %s", exc)
+        return {"toggled_handles": [], "paused_sessions": paused}
 
     async def restore_after_listening(self, state: Optional[dict]) -> None:
         """Resume browser media that we paused for STT."""
+        for candidate in (state or {}).get("paused_sessions", []):
+            try:
+                await candidate["native_session"].try_play_async()
+            except Exception as exc:
+                logger.debug("Browser session disappeared during listening restore: %s", exc)
         await asyncio.to_thread(self._restore_after_listening_sync, state or {})
 
     def _control_sync(self, action: str, target: Optional[str], query: Optional[str] = None) -> Tuple[bool, dict]:

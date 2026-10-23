@@ -253,20 +253,17 @@ async def _verify_cloudflare_tunnel_start(process: object, metrics_port: int, lo
         )
 
 
-def _set_high_priority():
-    """Set process priority to HIGH_PRIORITY_CLASS on Windows.
-
-    Ensures Aiden's audio capture, wake-word, and AI threads are
-    scheduled ahead of background apps for responsive interaction.
-    """
+def _set_normal_priority() -> None:
+    """Set normal Windows process priority to share CPU time fairly with games."""
     if sys.platform != "win32":
         return
     try:
         import ctypes
         handle = ctypes.windll.kernel32.GetCurrentProcess()
-        # HIGH_PRIORITY_CLASS = 0x00000080
-        ctypes.windll.kernel32.SetPriorityClass(handle, 0x00000080)
-        logger.info("✅ Process priority set to HIGH_PRIORITY_CLASS")
+        # NORMAL_PRIORITY_CLASS = 0x00000020
+        if not ctypes.windll.kernel32.SetPriorityClass(handle, 0x00000020):
+            raise OSError("SetPriorityClass failed")
+        logger.info("✅ Process priority set to NORMAL_PRIORITY_CLASS")
     except Exception as e:
         logger.warning(f"Could not set process priority: {e}")
 
@@ -274,6 +271,7 @@ def _set_high_priority():
 def handle_activation(
     detection: Optional[WakeDetection] = None,
     from_hotkey: bool = False,
+    source: str = "local",
 ):
     """Handle voice activation (from wake word or hotkey) non-blockingly."""
     try:
@@ -304,6 +302,7 @@ def handle_activation(
             assistant.handle_voice_activation(
                 from_hotkey=from_hotkey,
                 wake_detection=detection,
+                source=source,
             ),
             main_loop
         )
@@ -398,8 +397,8 @@ async def initialize_services():
         logger.info("AIDEN AI ASSISTANT - STARTING UP")
         logger.info("=" * 70)
         
-        # Set high process priority for responsive audio processing
-        _set_high_priority()
+        # Use normal process priority to share CPU time fairly with games.
+        _set_normal_priority()
         
         settings = get_settings()
         

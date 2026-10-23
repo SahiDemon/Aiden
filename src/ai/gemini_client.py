@@ -6,6 +6,7 @@ Supports automatic API key rotation on rate limit errors
 import asyncio
 import json
 import logging
+import time
 from typing import Dict, List, Optional, Any
 import google.generativeai as genai
 from google.api_core import exceptions as google_exceptions
@@ -213,7 +214,11 @@ class GeminiClient:
                 else:
                     full_prompt = f"{full_system_prompt}\n\n{history_text}User: {user_message}"
                 
+                request_started_at = time.perf_counter()
                 response = await asyncio.to_thread(model.generate_content, full_prompt)
+                logger.info("[TIMING] Gemini generation: %.0f ms | model=%s attempt=%d",
+                            (time.perf_counter() - request_started_at) * 1000,
+                            self.settings.gemini.model, attempt + 1)
                 
                 # If not using JSON format, return plain text wrapped in expected dict format
                 if not use_json_format:
