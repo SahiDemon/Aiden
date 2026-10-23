@@ -27,7 +27,7 @@ function Assert-NativeSuccess {
     }
 }
 
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$scriptDir = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..")).Path
 Set-Location $scriptDir
 
 $buildTempDir = Join-Path $scriptDir ".build-tmp"
@@ -80,8 +80,8 @@ if (-not $SkipBackendBuild) {
     }
 
     Invoke-Step "Build Aiden backend executable" {
-        & $pythonExe -m PyInstaller --noconfirm Aiden.spec
-        Assert-NativeSuccess "$pythonExe -m PyInstaller --noconfirm Aiden.spec"
+        & $pythonExe -m PyInstaller --noconfirm (Join-Path $scriptDir "packaging\Aiden.spec")
+        Assert-NativeSuccess "$pythonExe -m PyInstaller --noconfirm packaging\Aiden.spec"
     }
 
     Invoke-Step "Prepare blank release configuration and create aiden.cmd" {

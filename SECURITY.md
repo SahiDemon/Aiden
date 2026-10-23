@@ -14,8 +14,8 @@ Cloudflare account MFA protects the administrative account; Access MFA protects 
 
 - Store secrets only in local `.env` or appropriate environment variables; commit placeholders in `.env.example`.
 - Do not commit tunnel tokens, service-account JSON, personal wake models, transcripts, or diagnostic recordings.
-- `build_release.ps1` writes a blank configuration template into the packaged backend, including reused build output.
-- `build_exe.ps1` is intended for a personal executable and can copy the local `.env`; do not redistribute it without sanitizing configuration.
+- `scripts/release/build_release.ps1` writes a blank configuration template into the packaged backend, including reused build output.
+- `scripts/release/build_exe.ps1` is intended for a personal executable and can copy the local `.env`; do not redistribute it without sanitizing configuration.
 - Review `dist/Aiden`, Electron extra resources, and optional tools before publishing artifacts. Ignoring files in Git does not automatically exclude them from packaging.
 
 ## Data flow

@@ -32,9 +32,9 @@ From the repository root, `install.ps1 -IncludeOverlay` installs and builds the 
 
 ## Package an installer
 
-`npm run build` runs `build:app` followed by Electron Builder. Packaging expects the PyInstaller backend at `../dist/Aiden`. For the coordinated release workflow, use `build_release.ps1` from the repository root. Release configuration is blank; configure credentials after installing.
+`npm run build` runs `build:app` followed by Electron Builder. Packaging expects the PyInstaller backend at `../dist/Aiden`. For the coordinated release workflow, use `scripts/release/build_release.ps1` from the repository root. Release configuration is blank; configure credentials after installing.
 
-`npm run package` packages existing compiled assets. Do not distribute output from the personal `build_exe.ps1` workflow without checking its copied `.env`. See [SECURITY.md](../SECURITY.md).
+`npm run package` packages existing compiled assets. Do not distribute output from the personal `scripts/release/build_exe.ps1` workflow without checking its copied `.env`. See [SECURITY.md](../SECURITY.md).
 
 ## Troubleshooting
 

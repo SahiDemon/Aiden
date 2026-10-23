@@ -8,6 +8,8 @@ These scripts are opt-in developer tools, separate from the automated suite. Rea
 
 | Tool/workflow | Effect |
 | --- | --- |
+| `app_launch.py` | Standalone application index and interactive launcher; can open apps |
+| `debug_wake_word.bat` | Double-click entry point for the advanced microphone debugger |
 | `steam_lookup.py` | Finds Steam libraries and resolves game identifiers |
 | `fuzzy_search.py` | Investigates app matching; launch options can open applications |
 | `process_context.py` | Interactive process viewer with explicit process termination commands |
@@ -18,4 +20,4 @@ These scripts are opt-in developer tools, separate from the automated suite. Rea
 | Live wake/record/train/calibrate scripts | Access microphone/model assets; recording scripts can save audio |
 | UPS scripts | Inspect/simulate power events; review whether they send real application events |
 
-Do not run live microphone tools alongside Aiden. Personal model assets and recorded data remain local. Automated checks use `python -m pytest` from the root and collect only `tests/test_*.py`.
+Do not run live microphone tools alongside Aiden. Personal model assets and recorded data remain local. Automated checks use `python -m pytest` from the root and collect regression tests in `tests/` and beside modules under `src/`.

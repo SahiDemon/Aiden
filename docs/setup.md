@@ -79,4 +79,4 @@ NirCmd supports additional audio/display actions; ClickMonitorDDC supports compa
 
 ## Packaged releases
 
-`build_release.ps1` builds the dashboard, PyInstaller backend, and Electron installer. Release output contains the blank `.env.example` template as `.env`, including when reusing an existing backend build. Configure credentials after installation. `build_exe.ps1` is a personal/local executable workflow that can copy your `.env`; do not redistribute that output. See [security](../SECURITY.md).
+`scripts/release/build_release.ps1` builds the dashboard, PyInstaller backend, and Electron installer. Release output contains the blank `.env.example` template as `.env`, including when reusing an existing backend build. Configure credentials after installation. `scripts/release/build_exe.ps1` is a personal/local executable workflow that can copy your `.env`; do not redistribute that output. See the [release guide](../scripts/release/README.md) and [security](../SECURITY.md).
