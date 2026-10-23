@@ -1,15 +1,19 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
+from pathlib import Path
+
+project_root = Path(SPECPATH).resolve().parent
 
 vosk_binaries = collect_dynamic_libs('vosk')
 pvporcupine_data = collect_data_files('pvporcupine')
 
 a = Analysis(
-    ['src\\main.py'],
-    pathex=[],
+    [str(project_root / 'src' / 'main.py')],
+    pathex=[str(project_root)],
     binaries=vosk_binaries,
-    datas=[('config', 'config'), ('dashboard/build', 'dashboard/build'), ('sounds', 'sounds'), ('vosk_models', 'vosk_models'), ('tools', 'tools')] + pvporcupine_data,
+    datas=[(str(project_root / source), destination) for source, destination in
+           [('config', 'config'), ('dashboard/build', 'dashboard/build'), ('sounds', 'sounds'), ('vosk_models', 'vosk_models'), ('tools', 'tools')]] + pvporcupine_data,
     hiddenimports=['engineio.async_drivers.threading'],
     hookspath=[],
     hooksconfig={},
@@ -36,7 +40,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['overlay\\public\\icon.ico'],
+    icon=[str(project_root / 'overlay' / 'public' / 'icon.ico')],
 )
 coll = COLLECT(
     exe,

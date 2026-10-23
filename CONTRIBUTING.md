@@ -24,7 +24,7 @@ cd ../overlay
 npm run build:app
 ```
 
-Run checks relevant to your change. Python tests live in `tests/test_*.py`; manual diagnostics live in `scripts/diagnostics` and are excluded from collection. For voice changes, run `.\run_aiden.ps1 -Debug`, check the intended wake engine, microphone capture, follow-ups, playback restoration, and WebSocket state updates. For dashboard changes, check wake status, system context, ESP32 controls, and timers. Describe any hardware checks you could not perform.
+Run checks relevant to your change. Python tests live in `tests/` and beside modules under `src/`; manual diagnostics live in `scripts/diagnostics` and are excluded from collection. For voice changes, run `.\run_aiden.ps1 -Debug`, check the intended wake engine, microphone capture, follow-ups, playback restoration, and WebSocket state updates. For dashboard changes, check wake status, system context, ESP32 controls, and timers. Describe any hardware checks you could not perform.
 
 ## Code and design
 

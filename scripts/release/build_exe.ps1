@@ -1,7 +1,7 @@
 param([switch]$RunAfterBuild)
 
 $ErrorActionPreference = "Stop"
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$scriptDir = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..")).Path
 Set-Location $scriptDir
 
 $pythonExe = Join-Path $scriptDir ".venv\Scripts\python.exe"
@@ -20,7 +20,7 @@ if ($LASTEXITCODE -ne 0) {
 
 # 1. Build the single Aiden.exe (console=False, tray mode)
 Write-Host "Building Aiden.exe with PyInstaller..." -ForegroundColor Cyan
-& $pythonExe -m PyInstaller --noconfirm Aiden.spec
+& $pythonExe -m PyInstaller --noconfirm (Join-Path $scriptDir "packaging\Aiden.spec")
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Build failed with exit code $LASTEXITCODE." -ForegroundColor Red
@@ -70,5 +70,5 @@ Write-Host ""
 
 if ($RunAfterBuild) {
     Write-Host "Starting Aiden now..." -ForegroundColor Cyan
-    Start-Process "$distDir\Aiden.exe"
+    Start-Process "$distDir\Aiden.exe" -WindowStyle Hidden
 }

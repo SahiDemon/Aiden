@@ -5,6 +5,8 @@
 - `src/core/`, `src/ai/`, `src/speech/`, `src/execution/`, and `src/utils/` host conversational flow, Groq access, audio handling, command runners, and helpers.
 - `src/api/` (REST/WebSocket), `src/tray/`, and `smart_home/` power the dashboard bridge, tray UX, and ESP32 automation. Keep UI code in `dashboard/` and builds in `dashboard/build/`.
 - Assets live in `config/`, `sounds/`, `vosk_models/`, `logs/`, and `src/temp/`; keep binaries out of Python packages to simplify environments.
+- Keep PyInstaller definitions in `packaging/`, build scripts in `scripts/release/`, Windows helpers in `scripts/windows/`, and manual diagnostics in `scripts/diagnostics/`. Everyday install/run/stop commands stay at the root.
+- Design context is documented in `docs/design-context.md`; project history lives in `docs/CHANGELOG.md`.
 
 ## Build, Test, and Development Commands
 - `powershell -ExecutionPolicy Bypass -File .\install.ps1` — bootstraps the venv, dependencies, and Vosk model.

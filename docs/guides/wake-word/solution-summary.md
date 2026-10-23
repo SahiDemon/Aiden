@@ -35,27 +35,26 @@ I've built a complete debugging and analysis toolkit to help you identify and fi
 **When to use:** Before debugging to understand your settings, or when choosing new values
 
 ### 4. Easy Launchers
-- `run_wake_word_debug.ps1` - PowerShell script with options
-- `debug_wake_word.bat` - Double-click Windows batch file
+- `scripts/diagnostics/debug_wake_word.bat` - Double-click Windows batch file
 
 ## How To Use (Step-by-Step)
 
 ### Step 1: Understand Your Current Settings
 ```powershell
-python scripts/test_wake_word_settings.py
+python scripts/diagnostics/test_wake_word_settings.py
 ```
 This shows what settings you're currently using and what they mean.
 
 ### Step 2: Run the Debugger
 ```powershell
 # Option A: Basic (recommended first)
-.\run_wake_word_debug.ps1
+.\.venv\Scripts\python.exe scripts/debug_wake_word.py
 
 # Option B: Advanced (both models)
-.\run_wake_word_debug.ps1 -Advanced
+.\.venv\Scripts\python.exe scripts/debug_wake_word_advanced.py
 
 # Option C: Double-click
-debug_wake_word.bat
+.\scripts\diagnostics\debug_wake_word.bat
 ```
 
 ### Step 3: Reproduce the Problem
@@ -147,10 +146,10 @@ Once satisfied, run Aiden normally:
 
 ```
 Aiden/
-├── debug_wake_word.bat                         # Windows double-click launcher
 ├── scripts/
 │   ├── debug_wake_word.py                      # Basic debugger (Vosk)
 │   ├── debug_wake_word_advanced.py             # Advanced debugger (both models)
+│   ├── diagnostics/debug_wake_word.bat         # Windows double-click launcher
 │   └── diagnostics/test_wake_word_settings.py  # Settings viewer/tester
 ├── docs/guides/wake-word/
 │   ├── debugging.md                            # Detailed documentation
@@ -215,16 +214,13 @@ This makes the detector specifically tuned to YOUR pronunciation.
 
 ```powershell
 # View current settings
-python scripts/test_wake_word_settings.py
+python scripts/diagnostics/test_wake_word_settings.py
 
 # Run basic debugger
-.\run_wake_word_debug.ps1
+.\.venv\Scripts\python.exe scripts/debug_wake_word.py
 
 # Run advanced debugger
-.\run_wake_word_debug.ps1 -Advanced
-
-# Get help
-.\run_wake_word_debug.ps1 -Help
+.\.venv\Scripts\python.exe scripts/debug_wake_word_advanced.py
 
 # After changes, test in production
 .\run_aiden.ps1
@@ -258,4 +254,4 @@ You now have:
 - ✅ Easy-to-use launchers
 - ✅ Comprehensive documentation
 
-**Next step:** Run `.\run_wake_word_debug.ps1` and start collecting data!
+**Next step:** Run `.\.venv\Scripts\python.exe scripts/debug_wake_word.py` and start collecting data!

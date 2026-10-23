@@ -9,7 +9,7 @@ import shutil
 from pathlib import Path
 
 
-APP_CACHE_PATH = Path(__file__).resolve().parent / "src" / "temp" / "app_cache.json"
+APP_CACHE_PATH = Path(__file__).resolve().parents[2] / "src" / "temp" / "app_cache.json"
 
 # ---------- Helper: locate executable ----------
 def find_executable_in_path(app_name):

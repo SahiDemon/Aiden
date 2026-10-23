@@ -9,6 +9,10 @@ Start with [Windows setup](setup.md), then use [configuration](configuration.md)
 | [Troubleshooting](troubleshooting.md) | Startup, audio, dashboard, and service connection problems |
 | [Architecture](architecture.md) | Assistant flow, module boundaries, persistence, and UI events |
 | [Design](design.md) | Dashboard tone, timers, and visual consistency |
+| [Design context](design-context.md) | Product context, visual direction, and motion guidance |
+| [Changelog](CHANGELOG.md) | Project history |
+| [Build and release](../scripts/release/README.md) | Executable definitions and installer commands |
+| [Script directory](../scripts/README.md) | Utilities, diagnostics, and Windows helpers |
 | [Contributing](../CONTRIBUTING.md) | Development commands, checks, and PR expectations |
 | [Security](../SECURITY.md) | Credential handling and remote access |
 

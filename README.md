@@ -195,8 +195,9 @@ Aiden/
 ├── dashboard/           React dashboard
 ├── overlay/             Electron + React desktop overlay
 ├── config/              Shared prompts and configuration assets
+├── packaging/           Backend executable definitions
 ├── tests/               Backend regression tests
-├── scripts/             Utilities and opt-in diagnostics
+├── scripts/             Release builds, Windows helpers, and diagnostics
 ├── tools/               Optional local Windows helpers
 └── docs/                Setup, architecture, and integration guides
 ```
@@ -216,6 +217,8 @@ npm run build
 
 If setup reused `venv`, substitute it for `.venv`. The overlay has its own [development guide](overlay/README.md).
 
+Everyday `install.ps1`, `run_aiden.ps1`, and `stop_aiden.ps1` stay at the root. Build and maintenance tools are grouped in the [script directory](scripts/README.md); the [release guide](scripts/release/README.md) covers executable and installer builds.
+
 Environments, model binaries, logs, caches, and generated builds stay local. Some opt-in diagnostics can change playback or Windows state; keep them separate from automated tests. [Contribution guide →](CONTRIBUTING.md)
 
 </details>
@@ -231,7 +234,7 @@ Environments, model binaries, logs, caches, and generated builds stay local. Som
 | [Troubleshooting](docs/troubleshooting.md) | Something is not working as expected. |
 | [Voice latency](docs/voice-latency.md) | You are investigating response timing. |
 | [Security](SECURITY.md) | You are configuring credentials or remote access. |
-| [Changelog](CHANGELOG.md) | You want the project history. |
+| [Changelog](docs/CHANGELOG.md) | You want the project history. |
 
 ---
 
